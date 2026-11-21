@@ -144,6 +144,24 @@ export function readingExpiry(
   return expired;
 }
 
+// The commit that a reading reads: the asked position, when the store reads
+// it exactly, or else the newest position, with the numbering it is of.
+export function readingNumber(
+  numbered: Numbering | null,
+  asked: Position | undefined,
+  store: NumberedStore,
+  where: string,
+): (Numbering & { readonly number: number }) | { readonly expired: string } {
+  if (asked !== undefined) {
+    const expired = readingExpiry(numbered, asked, store, where);
+    if (expired !== undefined) return { expired };
+  }
+  const number = asked?.number ?? numbered?.ends.at(-1);
+  if (numbered === null || number === undefined)
+    return { expired: `There is no position of ${where} yet` };
+  return { ...numbered, number };
+}
+
 function unnumbered({ epoch, number }: Position, store: NumberedStore): string {
   return `Position ${epoch}:${number} is of commits this ${store.noun} does not have`;
 }

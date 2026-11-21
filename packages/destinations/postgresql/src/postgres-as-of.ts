@@ -1,6 +1,6 @@
 import type postgres from 'postgres';
 
-import { parsePosition, readingExpiry } from '@eltjs/elt';
+import { parsePosition, readingNumber } from '@eltjs/elt';
 
 import {
   committedAt,
@@ -45,32 +45,25 @@ export async function readAsOf(
   stack.defer(async () => {
     await sql.unsafe('ROLLBACK');
   });
-  const numbered = await numberingIn(sql, settled);
-  if (asked !== undefined) {
-    const expired = readingExpiry(
-      numbered,
-      asked,
-      postgresDatabase,
-      'the database',
-    );
-    if (expired !== undefined) return { expired };
-  }
-  const number = asked?.number ?? numbered?.ends.at(-1);
-  const commit =
-    number === undefined ? undefined : await committedAt(sql, number);
-  if (numbered === null || number === undefined || commit === undefined)
+  const read = readingNumber(
+    await numberingIn(sql, settled),
+    asked,
+    postgresDatabase,
+    'the database',
+  );
+  if ('expired' in read) return read;
+  const { epoch, number } = read;
+  const commit = await committedAt(sql, number);
+  if (commit === undefined)
     return {
-      expired:
-        position === undefined
-          ? 'The database has no position yet'
-          : `Position ${position} names no commit of the database`,
+      expired: `Position ${epoch}:${number} names no commit of the database`,
     };
   if (number < commit.newest)
     await sql`SELECT set_config('elt.position', ${String(number)}, true)`;
   const owned = stack.move();
   return {
     sql,
-    position: `${numbered.epoch}:${number}`,
+    position: `${epoch}:${number}`,
     at: Temporal.Instant.fromEpochMilliseconds(commit.at.getTime()),
     [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };

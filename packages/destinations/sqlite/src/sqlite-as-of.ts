@@ -6,6 +6,7 @@ import {
   type Position,
   parsePosition,
   readingExpiry,
+  readingNumber,
   staleness,
 } from '@eltjs/elt';
 
@@ -94,25 +95,19 @@ export function readAsOf(
   using stack = new DisposableStack();
   stack.use(database);
   database.exec('BEGIN');
-  const numbered = readNumbering(database);
-  if (asked !== undefined) {
-    const expired = readingExpiry(numbered, asked, sqliteFile, path);
-    if (expired !== undefined) return { expired };
-  }
-  const number = asked?.number ?? numbered?.ends.at(-1);
-  const at = number === undefined ? undefined : committedAt(database, number);
-  if (numbered === null || number === undefined || at === undefined)
+  const read = readingNumber(readNumbering(database), asked, sqliteFile, path);
+  if ('expired' in read) return read;
+  const { epoch, number, settled } = read;
+  const at = committedAt(database, number);
+  if (at === undefined)
     return {
-      expired:
-        position === undefined
-          ? `${path} has no position yet`
-          : `Position ${position} names no commit of ${path}`,
+      expired: `Position ${epoch}:${number} names no commit of ${path}`,
     };
-  shadow(database, number, number < numbered.settled);
+  shadow(database, number, number < settled);
   stack.move();
   return {
     sql: database,
-    position: `${numbered.epoch}:${number}`,
+    position: `${epoch}:${number}`,
     at: Temporal.Instant.from(at),
     [Symbol.dispose]: () => database.close(),
   };

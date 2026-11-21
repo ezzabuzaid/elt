@@ -51,9 +51,12 @@ import {
   errorMessage,
   isCalendarDate,
   isTimestamp,
+  numbering,
+  parsePosition,
   passChannels,
   passError,
   passStatus,
+  readingNumber,
   validateRecords,
 } from './index.ts';
 
@@ -3445,4 +3448,57 @@ test('a partitioned stream that lists no partitions reads nothing, and a later r
 
   assert.deepEqual(empty, []);
   assert.deepEqual(source.received, [['a', null]]);
+});
+
+test('a reading reads the asked position when the store reads it exactly, else the newest one, and a store with no position or a position past its newest commit gives the reason', () => {
+  const file = { engine: 'SQLite', noun: 'file' };
+  const loaded = numbering({
+    epoch: 'e',
+    minValid: 0,
+    expiredBy: null,
+    settled: 4,
+    spans: [
+      { first: 1, last: 2 },
+      { first: 3, last: 4 },
+    ],
+  });
+  const opening = numbering({
+    epoch: 'e',
+    minValid: 0,
+    expiredBy: null,
+    settled: 1,
+    spans: [{ first: 1, last: null }],
+  });
+
+  const newest = readingNumber(loaded, undefined, file, 'the file');
+  const asked = readingNumber(
+    loaded,
+    parsePosition('e:2', file),
+    file,
+    'the file',
+  );
+  const past = readingNumber(
+    loaded,
+    parsePosition('e:9', file),
+    file,
+    'the file',
+  );
+  const unloaded = readingNumber(null, undefined, file, 'the file');
+  const open = readingNumber(opening, undefined, file, 'the file');
+
+  assert.deepEqual(
+    'expired' in newest ? newest : [newest.epoch, newest.number],
+    ['e', 4],
+  );
+  assert.deepEqual('expired' in asked ? asked : [asked.epoch, asked.number], [
+    'e',
+    2,
+  ]);
+  assert.deepEqual(past, {
+    expired: 'Position e:9 is past the newest commit of this file, 4',
+  });
+  assert.deepEqual(unloaded, {
+    expired: 'There is no position of the file yet',
+  });
+  assert.deepEqual(open, { expired: 'There is no position of the file yet' });
 });

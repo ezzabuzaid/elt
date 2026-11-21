@@ -1147,6 +1147,7 @@ A destination that numbers its commits gives positions, so a reader can read it 
 - `parsePosition(text, store)` reads `<epoch>:<number>`, and refuses other text with a `TypeError` that names the store, such as `{ engine: 'SQLite', noun: 'file' }`.
 - `positionsAfter(numbering, since, store)` gives the positions after `since`, or each one, or `{ expired }` with the reason.
 - `readingExpiry(numbering, position, store, where)` gives why a reading cannot read as of a position: of another epoch, past the high-water mark, or before `min_valid` and what set it (the retention, a change of type that is not a widening, or a clear). It throws a `TypeError` for a commit inside a pass.
+- `readingNumber(numbering, asked, store, where)` gives the commit that a reading reads, with the numbering: the asked position after `readingExpiry`, or the newest position when none is asked. A store with no position gives `{ expired }`. The destination then reads that commit in its own snapshot.
 - `staleness({ epoch, minValid, expiredBy }, position, store)` gives why a position that the store once had is no longer read exactly: of another epoch, or before `min_valid`. A reader that knows only these three values, such as a guard inside a view, asks it.
 
 ## Derived datasets of a destination

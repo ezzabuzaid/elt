@@ -81,6 +81,7 @@ export {
   parsePosition,
   positionsAfter,
   readingExpiry,
+  readingNumber,
   staleness,
 } from './core/position.ts';
 export { type ReaderRelation, readerCatalog } from './core/reader-relation.ts';

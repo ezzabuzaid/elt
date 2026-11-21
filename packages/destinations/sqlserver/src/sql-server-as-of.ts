@@ -1,4 +1,4 @@
-import { parsePosition, readingExpiry } from '@eltjs/elt';
+import { parsePosition, readingNumber } from '@eltjs/elt';
 import type {
   SqlServerConnection,
   SqlServerDatabase,
@@ -52,25 +52,18 @@ export async function readAsOf(
   await connection.query(
     'SET TRANSACTION ISOLATION LEVEL SNAPSHOT; BEGIN TRANSACTION',
   );
-  const numbered = await numberingIn(connection, settled);
-  if (asked !== undefined) {
-    const expired = readingExpiry(
-      numbered,
-      asked,
-      sqlServerDatabase,
-      'the database',
-    );
-    if (expired !== undefined) return { expired };
-  }
-  const number = asked?.number ?? numbered?.ends.at(-1);
-  const commit =
-    number === undefined ? undefined : await committedAt(connection, number);
-  if (numbered === null || number === undefined || commit === undefined)
+  const read = readingNumber(
+    await numberingIn(connection, settled),
+    asked,
+    sqlServerDatabase,
+    'the database',
+  );
+  if ('expired' in read) return read;
+  const { epoch, number } = read;
+  const commit = await committedAt(connection, number);
+  if (commit === undefined)
     return {
-      expired:
-        position === undefined
-          ? 'The database has no position yet'
-          : `Position ${position} names no commit of the database`,
+      expired: `Position ${epoch}:${number} names no commit of the database`,
     };
   await connection.query(
     `DECLARE @position bigint = CAST(@number AS bigint);
@@ -80,7 +73,7 @@ export async function readAsOf(
   const owned = stack.move();
   return {
     sql: connection,
-    position: `${numbered.epoch}:${number}`,
+    position: `${epoch}:${number}`,
     at: Temporal.Instant.fromEpochMilliseconds(commit.at.getTime()),
     [Symbol.asyncDispose]: () => owned.disposeAsync(),
   };
