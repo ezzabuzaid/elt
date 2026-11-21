@@ -1,6 +1,6 @@
 {
   "name": "@eltjs/elt-sqlserver",
-  "version": "0.10.0",
+  "version": "0.10.1",
   "description": "The SQL Server destination of elt: each stream is a typed table in _warehouse, with a reader view in marts that the host names, numbered commits that readers read as of a position, and a checkpoint store and a sync history in the same database.",
   "license": "Apache-2.0",
   "repository": {
@@ -38,8 +38,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@eltjs/elt": "^0.10.0",
-    "@eltjs/sdk-microsoft-sql-server": "^0.10.0",
+    "@eltjs/elt": "^0.10.1",
+    "@eltjs/sdk-microsoft-sql-server": "^0.10.1",
     "@zukhruf/async": "^0.8.51",
     "@zukhruf/mutex": "^0.8.31",
     "@zukhruf/vectors": "^0.8.51"
