@@ -69,11 +69,16 @@ export class SqlServerConnection
   // batch with parameters runs through sp_executesql, which must end with the
   // transaction count it began with and drops each #temp table it makes at its
   // end; a batch with none runs as it is, so it can begin or end a
-  // transaction, or make a #temp table that the session keeps.
+  // transaction, or make a #temp table that the session keeps. The signal
+  // cancels the batch: the driver sends SQL Server's attention and settles
+  // once the server confirms it, so the session is free for the next batch.
   async query(
     text: string,
     parameters: Readonly<Record<string, string | null>> = {},
+    options?: { readonly signal?: AbortSignal },
   ): Promise<Record<string, unknown>[]> {
+    const signal = options?.signal;
+    signal?.throwIfAborted();
     if (this.#ended.signal.aborted)
       throw new SqlServerUnavailableError(
         this.#location,
@@ -83,13 +88,18 @@ export class SqlServerConnection
     const named = Object.entries(parameters);
     for (const [name, value] of named)
       request.input(name, sql.NVarChar(sql.MAX), value);
+    const cancel = () => request.cancel();
+    signal?.addEventListener('abort', cancel, { once: true });
     try {
       const { recordsets } = await (named.length === 0
         ? request.batch<Record<string, unknown>>(text)
         : request.query<Record<string, unknown>>(text));
       return recordsets.flat();
     } catch (error) {
+      if (signal?.aborted) throw signal.reason;
       throw readError(error, this.#location);
+    } finally {
+      signal?.removeEventListener('abort', cancel);
     }
   }
 

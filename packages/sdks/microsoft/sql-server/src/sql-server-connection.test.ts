@@ -92,3 +92,72 @@ test('a connection whose session the server ends tells its owner, and never conn
     'The session of this connection ended',
   );
 });
+
+test('a signal that aborts while a batch runs cancels the batch on the server and rejects with its reason, and the next batch runs on the same session', async () => {
+  await using scratch = await sqlServer.database();
+  const database = new SqlServerDatabase({
+    server: scratch.host,
+    port: scratch.port,
+    database: scratch.database,
+    user: scratch.user,
+    password: scratch.password,
+    trustServerCertificate: true,
+  });
+  await using connection = await database.connect();
+  await connection.query('CREATE TABLE dbo.notes (note nvarchar(max) NULL)');
+  const [before] = await connection.query('SELECT @@SPID AS spid');
+  const stop = new AbortController();
+  const reason = new Error('the model ran out of time');
+  const timer = setTimeout(() => stop.abort(reason), 200);
+
+  try {
+    const stopped = await connection
+      .query(
+        "WAITFOR DELAY '00:00:30'; INSERT INTO dbo.notes (note) VALUES (N'late')",
+        {},
+        { signal: stop.signal },
+      )
+      .then(
+        () => assert.fail('the batch ran to its end'),
+        (error: unknown) => error,
+      );
+    const [after] = await connection.query(
+      'SELECT @@SPID AS spid, (SELECT COUNT(*) FROM dbo.notes) AS notes',
+    );
+
+    assert.equal(stopped, reason);
+    assert.deepEqual(after, { spid: before?.spid, notes: 0 });
+  } finally {
+    clearTimeout(timer);
+  }
+});
+
+test('a signal that is already aborted sends no batch and rejects with its reason', async () => {
+  await using scratch = await sqlServer.database();
+  const database = new SqlServerDatabase({
+    server: scratch.host,
+    port: scratch.port,
+    database: scratch.database,
+    user: scratch.user,
+    password: scratch.password,
+    trustServerCertificate: true,
+  });
+  await using connection = await database.connect();
+  await connection.query('CREATE TABLE dbo.notes (note nvarchar(max) NULL)');
+  const reason = new Error('the model ran out of time');
+
+  const refused = await connection
+    .query(
+      'INSERT INTO dbo.notes (note) VALUES (@note)',
+      { note: 'sent' },
+      { signal: AbortSignal.abort(reason) },
+    )
+    .then(
+      () => assert.fail('the batch ran'),
+      (error: unknown) => error,
+    );
+  const notes = await connection.query('SELECT note FROM dbo.notes');
+
+  assert.equal(refused, reason);
+  assert.deepEqual(notes, []);
+});
