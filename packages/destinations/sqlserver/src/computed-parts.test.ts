@@ -592,6 +592,81 @@ test('an index of the parts table on a column that only the raw table has is ref
   );
 });
 
+// Pieces whose parts each have a vector of 3 dimensions.
+const vectorPieces = () =>
+  new Pieces({
+    output: {
+      ...content,
+      vector: {
+        type: 'vector',
+        dimensions: 3,
+        description: 'The piece as a vector.',
+      },
+    },
+  });
+
+test('two vector indexes of the parts table are refused when the dataset is constructed, as marts.pieces_parts_nearest searches one', () => {
+  assert.throws(
+    () =>
+      new ComputedDataset({
+        into: new SqlServerDestination({ login: 'Server=none;Database=none' }),
+        name: 'pieces',
+        description: 'The pieces of each note.',
+        from: [],
+        compute: vectorPieces(),
+        partIndexes: [
+          { type: 'vector', column: 'vector', metric: 'cosine' },
+          { type: 'vector', column: 'vector', metric: 'dot' },
+        ],
+      }),
+    new TypeError(
+      'Computed dataset pieces declares 2 vector indexes on [_warehouse].[raw_pieces_parts], and [marts].[pieces_parts_nearest] searches one',
+    ),
+  );
+});
+
+test('a computed dataset with a vector index of its parts refuses a pipeline whose copy makes Pieces_Parts_Nearest, before anything is made', async () => {
+  await using database = await scratch();
+  const source = new Notes();
+  const destination = new SqlServerDestination({ login: database.login });
+  const target = destination.table('Pieces_Parts_Nearest');
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SqlServerSyncHistory({ login: database.login }),
+    connections: [
+      new Connection({
+        name: 'notes',
+        source,
+        destination,
+        steps: [new Copy(source.notes, target)],
+      }),
+    ],
+    derived: [
+      new ComputedDataset({
+        into: destination,
+        name: 'pieces',
+        description: 'The pieces of each note.',
+        from: [target],
+        compute: vectorPieces(),
+        partIndexes: [{ type: 'vector', column: 'vector', metric: 'cosine' }],
+      }),
+    ],
+  });
+
+  await assert.rejects(
+    pipeline.run(),
+    new TypeError(
+      'Computed dataset pieces needs marts.pieces_parts_nearest, which a copy of the pipeline makes',
+    ),
+  );
+  assert.deepEqual(
+    await database.rows(
+      "SELECT OBJECT_ID(N'_warehouse.raw_pieces') AS [dataset], OBJECT_ID(N'marts.Pieces_Parts_Nearest') AS [copied]",
+    ),
+    [{ dataset: null, copied: null }],
+  );
+});
+
 test('a computed dataset with a table rule refuses a pipeline whose copy makes Pieces_Parts, in another case, before anything is made', async () => {
   await using database = await scratch();
   const source = new Notes();

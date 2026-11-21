@@ -102,6 +102,8 @@ export class SqlServerPartsTable {
     this.indexes = new TableIndexes({
       dataset,
       table: this.table,
+      reader: view.name,
+      keys: [rule.key.name, 'seq'],
       columns: this.declared,
       indexes,
     });

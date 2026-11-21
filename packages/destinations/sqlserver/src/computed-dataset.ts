@@ -176,6 +176,8 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
       indexes: new TableIndexes({
         dataset: name,
         table,
+        reader: name,
+        keys: [compute.key.name],
         columns: declared,
         indexes,
       }),
@@ -231,6 +233,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
       this.qualifiedName,
       `${warehouse}.${rawTable(this.name)}`,
       ...('parts' in this.#compute ? this.#compute.parts.names : []),
+      ...this.#tables.flatMap(({ indexes }) => indexes.names),
     ])
       if (relations.has(identifiers.key(relation)))
         throw new TypeError(

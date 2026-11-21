@@ -38,7 +38,7 @@ The leaders:
 - An `NVARCHAR(MAX)` column, such as `status`, cannot be an index key (error 1919), so the engine columns of a dataset are not index keys; `committed_in` is.
 - The declaration type lives in this package only (strike 1). It moves into elt when a second destination needs indexes.
 - Azure SQL Database makes the DiskANN index on the `bigint` `_elt_row`, with no preview feature, and the `MERGE` of each commit and its `OUTPUT deleted.*` work on the indexed table (the Azure probe below).
-- `VECTOR_SEARCH` uses the index only when its `TABLE` is the raw table and its result is not joined in the same query block. Through the reader view `marts.<name>`, a `UNION ALL` of the raw table and its history, it runs as an exact scan. Thus an approximate search reads `_warehouse.raw_<name>` as it is now, and a reader that searches needs `SELECT` on that table. A search as of a position reads `marts.<name>` in a reading, with no index.
+- `VECTOR_SEARCH` uses the index only when its `TABLE` is the raw table and its result is not joined in the same query block. Through the reader view `marts.<name>`, a `UNION ALL` of the raw table and its history, it runs as an exact scan. Thus an approximate search reads `_warehouse.raw_<name>` as it is now, through the search function `marts.<name>_nearest` that the destination makes for the vector index ([ADR 0014](./0014-each-vector-index-has-a-search-function-in-marts.md)). A search as of a position reads `marts.<name>` in a reading, with no index.
 
 Sources: backlog #5099; ADR 0008; `@zukhruf/vectors` README.
 

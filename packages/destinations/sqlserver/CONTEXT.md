@@ -13,7 +13,7 @@ What the destination connects with: the parts of a SQL Server login, or an ADO.N
 _Avoid_: URL (SQL Server has no URL form that `mssql` reads), connection (a connection is one session of the login)
 
 **Raw table**:
-The table that a copy loads, `_warehouse.raw_<name>` for the reader name `<name>`, for example `_warehouse.raw_drive_items`. Readers query its reader view. Only an approximate vector search reads the raw table of a computed dataset, because `VECTOR_SEARCH` uses a vector index only on a table.
+The table that a copy loads, `_warehouse.raw_<name>` for the reader name `<name>`, for example `_warehouse.raw_drive_items`. Readers query its reader view. Only the search function of a vector index reads the raw table of a computed dataset for a reader, because `VECTOR_SEARCH` uses a vector index only on a table.
 _Avoid_: Staging table, source table
 
 **Reader view**:
@@ -139,6 +139,10 @@ _Avoid_: Embedding (the model's output before it is a column), blob
 **Declared index**:
 An index that a computed dataset declares on its raw table (`indexes`) or its parts table (`partIndexes`): a nonclustered index over key columns, or a DiskANN vector index over a vector column with its metric. The destination names it `ix_elt_<hash>` from its declaration and reconciles the declared indexes with `sys.indexes` at each refresh, so an index of another name, such as a person's own, stays.
 _Avoid_: Hook, `afterCreate` (removed), post-hook (dbt's word), physical property (SQLMesh's word for more than indexes)
+
+**Search function**:
+The inline table-valued function `marts.<reader>_nearest(@query, @k)` that the destination makes for the vector index of a table, named after the reader view of the table. It gives the key (and `seq` for a parts table) and the `distance` of the `k` nearest rows of the raw table as it is now, through `VECTOR_SEARCH` with `TOP … WITH APPROXIMATE`. A reader with `SELECT` on `marts` calls it with no permission on `_warehouse`.
+_Avoid_: Search API, match function (Supabase's word), search service (Snowflake's word)
 
 **Parts table**:
 The table `_warehouse.raw_<name>_parts` that a computed dataset of a table rule keeps beside its raw table, with one row for each part, for example `_warehouse.raw_document_chunks_parts`. Readers query the view `marts.<name>_parts`. It has a row number, the key, `seq`, `part_hash`, the content and place columns of the rule, and the key hash, and it is unique on the key hash and `seq`.

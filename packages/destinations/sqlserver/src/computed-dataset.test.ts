@@ -664,6 +664,115 @@ for (const [index, error] of [
     );
   });
 
+// A rule whose key is named distance, as the column of the distance that the
+// search of a vector index gives.
+class DistanceMeasure extends Measure {
+  override readonly key = { name: 'distance', description: 'The record.' };
+}
+
+for (const [compute, indexes, error] of [
+  [
+    new Measure(),
+    [
+      { type: 'vector', column: 'vector', metric: 'cosine' },
+      { type: 'vector', column: 'vector', metric: 'euclidean' },
+    ],
+    'Computed dataset measures declares 2 vector indexes on [_warehouse].[raw_measures], and [marts].[measures_nearest] searches one',
+  ],
+  [
+    new DistanceMeasure(),
+    [{ type: 'vector', column: 'vector', metric: 'cosine' }],
+    'Computed dataset measures cannot search [_warehouse].[raw_measures] through [marts].[measures_nearest]: its column distance has the name of the distance that the search gives',
+  ],
+] as const)
+  test(`a search function whose name or columns clash is refused when the dataset is constructed: ${error}`, () => {
+    assert.throws(
+      () =>
+        new ComputedDataset({
+          into: new SqlServerDestination({
+            login: 'Server=none;Database=none',
+          }),
+          name: 'measures',
+          description: 'The measures of each record.',
+          from: [],
+          compute,
+          indexes,
+        }),
+      new TypeError(error),
+    );
+  });
+
+test('a computed dataset with a vector index refuses a pipeline whose copy makes Measures_Nearest, in another case, before anything is made', async () => {
+  await using database = await scratch();
+  const source = new Records(['r1']);
+  const destination = new SqlServerDestination({ login: database.login });
+  const target = destination.table('Measures_Nearest');
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SqlServerSyncHistory({ login: database.login }),
+    connections: [
+      new Connection({
+        name: 'records',
+        source,
+        destination,
+        steps: [new Copy(source.records, target)],
+      }),
+    ],
+    derived: [
+      new ComputedDataset({
+        into: destination,
+        name: 'measures',
+        description: 'The measures of each record.',
+        from: [target],
+        compute: new Measure(),
+        indexes: [{ type: 'vector', column: 'vector', metric: 'cosine' }],
+      }),
+    ],
+  });
+
+  await assert.rejects(
+    pipeline.run(),
+    new TypeError(
+      'Computed dataset measures needs marts.measures_nearest, which a copy of the pipeline makes',
+    ),
+  );
+  assert.deepEqual(
+    plain(
+      await database.admin.query(
+        "SELECT OBJECT_ID(N'_warehouse.raw_measures') AS [dataset], OBJECT_ID(N'marts.Measures_Nearest') AS [copied]",
+      ),
+    ),
+    [{ dataset: null, copied: null }],
+  );
+});
+
+// The container cannot make the search function of a vector index: it
+// parses no SELECT TOP (@k) WITH APPROXIMATE (error 102), and it refuses the
+// index on the bigint _elt_row (error 42217), which Azure SQL makes (ADR
+// 0014). Thus the test makes marts.measures_nearest in place of the one that
+// a refresh on Azure SQL made, with a body that the container runs.
+test('a refresh whose declaration names no vector index drops marts.measures_nearest, the search that an earlier vector index had, and a function of another name in marts stays', async () => {
+  await using database = await scratch();
+  const source = new Records(['r1']);
+  const measure = new Measure();
+  await measuresPipeline(database.login, source, measure).pipeline.run();
+  for (const name of ['measures_nearest', 'measures_by_hand'])
+    await database.admin.query(
+      `CREATE FUNCTION marts.${name}(@query vector(3), @k int) RETURNS TABLE AS RETURN SELECT TOP (@k) [id], VECTOR_DISTANCE('cosine', [vector], @query) AS [distance] FROM _warehouse.raw_measures ORDER BY [distance]`,
+    );
+
+  await measuresPipeline(database.login, source, measure).pipeline.run();
+
+  assert.deepEqual(
+    plain(
+      await database.admin.query(
+        "SELECT [name] FROM sys.objects WHERE [schema_id] = SCHEMA_ID(N'marts') AND [type] = N'IF' ORDER BY [name]",
+      ),
+    ),
+    [{ name: 'measures_by_hand' }],
+  );
+});
+
 // A claim of the type checker: the function is never called.
 test('a computed dataset of a rule takes no indexes of a parts table, which only a table rule has', () => {
   void (() =>
