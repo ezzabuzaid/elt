@@ -227,7 +227,12 @@ export async function forgetCommit(
 // does: the newest position whose commit is older than the window becomes
 // min_valid, and the numbering then keeps no commit before it and no closed
 // load left with none. min_valid only moves forward, as commits of other
-// connections run at the same time.
+// connections run at the same time. A commit that waited here for a row that
+// another commit or an open holds, while that one waited for this commit's
+// row of _elt_epoch or a load it deletes, would deadlock (ADR 0009): the
+// DELETE of the commits seeks the rowversion, so it reads no commit after
+// min_valid, and the DELETE of the loads skips each row that another
+// transaction holds, which a later retention deletes.
 async function retain(
   connection: SqlServerConnection,
   at: Date,
@@ -250,8 +255,8 @@ async function retain(
     `UPDATE ${epochs} SET [min_valid] = CAST(@expired AS bigint), [expired_by] = N'retention' WHERE [min_valid] < CAST(@expired AS bigint);
      IF @@ROWCOUNT > 0
      BEGIN
-       DELETE FROM ${commits} WHERE CAST([number] AS bigint) < CAST(@expired AS bigint);
-       DELETE FROM ${loads} WHERE [closed_at] IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ${commits} AS c WHERE c.[load] = ${loads}.[id]);
+       DELETE FROM ${commits} WHERE [number] < CAST(CAST(@expired AS bigint) AS binary(8));
+       DELETE FROM ${loads} WITH (READPAST) WHERE [closed_at] IS NOT NULL AND NOT EXISTS (SELECT 1 FROM ${commits} AS c WHERE c.[load] = ${loads}.[id]);
      END;`,
     { expired: String(expired) },
   );

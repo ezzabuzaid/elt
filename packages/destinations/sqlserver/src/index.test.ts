@@ -19,7 +19,10 @@ import {
   type SourceMessage,
   Stream,
 } from '@eltjs/elt';
-import { SqlServerDatabase } from '@eltjs/sdk-microsoft-sql-server';
+import {
+  type SqlServerConnection,
+  SqlServerDatabase,
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import {
   SqlServerCheckpointStore,
@@ -296,29 +299,68 @@ test('the first run into a new database makes what its targets share under the l
   ]);
 });
 
+// A connection whose source has one note, which it copies into the table of
+// its name.
+function notesConnection(
+  name: string,
+  destination: SqlServerDestination,
+  login: SqlServerLogin,
+) {
+  const source = new Notes();
+  source.upstream = [{ n: 1, text: `the note of ${name}` }];
+  return {
+    source,
+    connection: new Connection({
+      name,
+      source,
+      destination,
+      checkpoints: new SqlServerCheckpointStore({ login }),
+      steps: [
+        new Copy(source.stream, destination.table(name), {
+          id: `${name}:notes`,
+          syncMode: 'incremental',
+          destinationSyncMode: 'append',
+        }),
+      ],
+    }),
+  };
+}
+
+// Waits until count requests of the database wait for a lock, each in a
+// batch or for a lock whose name has text, or until run ends first.
+async function waitingIn(
+  admin: SqlServerConnection,
+  text: string,
+  run: Promise<unknown>,
+  count = 1,
+): Promise<void> {
+  let ended = false;
+  const settled = run.finally(() => {
+    ended = true;
+  });
+  const poll = async (): Promise<void> => {
+    if (ended) return;
+    const [requests] = await admin.query(
+      `SELECT COUNT(*) AS waiting FROM sys.dm_exec_requests AS r CROSS APPLY sys.dm_exec_sql_text(r.sql_handle) AS t
+       WHERE r.blocking_session_id <> 0 AND r.database_id = DB_ID() AND CHARINDEX(@text, CONCAT(t.text, r.wait_resource)) > 0`,
+      { text },
+    );
+    if (Number(requests?.waiting) >= count) return;
+    await setTimeout(100);
+    return poll();
+  };
+  await Promise.race([poll(), settled]);
+}
+
 test('connections of one pipeline that open their loads in one database at the same time each load their notes, and none is chosen as a deadlock victim', async () => {
   await using database = await scratch();
   const { login } = database;
   const warehouse = new SqlServerDestination({ login });
   const history = new SqlServerSyncHistory({ login });
   const names = Array.from({ length: 4 }, (_, index) => `notes_${index}`);
-  const connections = names.map((name) => {
-    const source = new Notes();
-    source.upstream = [{ n: 1, text: `the note of ${name}` }];
-    return new Connection({
-      name,
-      source,
-      destination: warehouse,
-      checkpoints: new SqlServerCheckpointStore({ login }),
-      steps: [
-        new Copy(source.stream, warehouse.table(name), {
-          id: `${name}:notes`,
-          syncMode: 'incremental',
-          destinationSyncMode: 'append',
-        }),
-      ],
-    });
-  });
+  const connections = names.map(
+    (name) => notesConnection(name, warehouse, login).connection,
+  );
   const [first] = connections;
   assert.ok(first !== undefined);
   await new Pipeline({
@@ -364,6 +406,145 @@ test('connections of one pipeline that open their loads in one database at the s
   assert.deepEqual(
     loaded,
     names.map((name) => ({ text: `the note of ${name}` })),
+  );
+});
+
+test('connections whose commits apply the retention at the same time each load their notes, and none is chosen as a deadlock victim', async () => {
+  await using database = await scratch();
+  const { login, admin } = database;
+  // With no retention, each commit expires each position before the end of
+  // the last pass that ended.
+  const warehouse = new SqlServerDestination({
+    login,
+    retention: Temporal.Duration.from({ seconds: 0 }),
+  });
+  const history = new SqlServerSyncHistory({ login });
+  const copies = ['notes_0', 'notes_1'].map((name) =>
+    notesConnection(name, warehouse, login),
+  );
+  const run = (...runs: typeof copies) =>
+    new Pipeline({
+      clock: globalThis,
+      history,
+      connections: runs.map(({ connection }) => connection),
+    }).run();
+  const [first] = copies;
+  assert.ok(first !== undefined);
+  await run(first);
+  first.source.upstream.push({ n: 2, text: 'the second note of notes_0' });
+  // Each source reads once both passes opened their loads.
+  const opened = Promise.withResolvers<void>();
+  const read = Promise.withResolvers<void>();
+  let waiting = 0;
+  for (const { source } of copies)
+    source.waits = async () => {
+      waiting += 1;
+      if (waiting === copies.length) opened.resolve();
+      await read.promise;
+    };
+
+  const running = run(...copies);
+  await Promise.race([opened.promise, running]);
+  // A session holds the row of the numbering, so each commit waits for it at
+  // its retention, until both commits wait there (platform setup that no
+  // operation of the destination gives).
+  await using holder = await new SqlServerDatabase(login).connect();
+  await holder.query(
+    'BEGIN TRANSACTION; UPDATE _warehouse._elt_epoch SET min_valid = min_valid',
+  );
+  read.resolve();
+  try {
+    await waitingIn(admin, "N'retention'", running, copies.length);
+  } finally {
+    await holder.query('COMMIT');
+  }
+  await running;
+
+  assert.deepEqual(
+    [
+      ...(await admin.query('SELECT text FROM marts.notes_0')),
+      ...(await admin.query('SELECT text FROM marts.notes_1')),
+    ],
+    [
+      { text: 'the note of notes_0' },
+      { text: 'the second note of notes_0' },
+      { text: 'the note of notes_1' },
+    ],
+  );
+});
+
+test('a commit that applies the retention while another connection opens its load commits, and neither is chosen as a deadlock victim', async () => {
+  await using database = await scratch();
+  const { login, admin } = database;
+  // With no retention, each commit expires each position before the end of
+  // the last pass that ended.
+  const warehouse = new SqlServerDestination({
+    login,
+    retention: Temporal.Duration.from({ seconds: 0 }),
+  });
+  const history = new SqlServerSyncHistory({ login });
+  const [retainer, opener] = ['notes_0', 'notes_1'].map((name) =>
+    notesConnection(name, warehouse, login),
+  );
+  assert.ok(retainer !== undefined && opener !== undefined);
+  const run = (copy: typeof retainer) =>
+    new Pipeline({
+      clock: globalThis,
+      history,
+      connections: [copy.connection],
+    }).run();
+  // After two passes, the first commit of a third expires each commit of the
+  // first pass, so its retention deletes the load of the first pass.
+  await run(retainer);
+  retainer.source.upstream.push({ n: 2, text: 'the second note of notes_0' });
+  await run(retainer);
+  retainer.source.upstream.push({ n: 3, text: 'the third note of notes_0' });
+  const opened = Promise.withResolvers<void>();
+  const read = Promise.withResolvers<void>();
+  retainer.source.waits = async () => {
+    opened.resolve();
+    await read.promise;
+  };
+  const retaining = run(retainer);
+  await Promise.race([opened.promise, retaining]);
+  // One session holds the lock that each open of a load takes, and another
+  // holds the load of the second pass, which the retention reads after the
+  // load of the first pass, until the open has inserted its load and the
+  // retention has deleted the load of the first pass (platform setup that no
+  // operation of the destination gives).
+  await using opens = await new SqlServerDatabase(login).connect();
+  await opens.query(
+    "BEGIN TRANSACTION; DECLARE @result int; EXEC @result = sp_getapplock @Resource = N'elt:_warehouse._elt_loads', @LockMode = N'Exclusive', @LockOwner = N'Transaction';",
+  );
+  await using second = await new SqlServerDatabase(login).connect();
+  await second.query(
+    'BEGIN TRANSACTION; UPDATE _warehouse._elt_loads SET closed_at = closed_at WHERE id = (SELECT MAX(id) FROM _warehouse._elt_loads WHERE closed_at IS NOT NULL)',
+  );
+
+  const opening = run(opener);
+  try {
+    await waitingIn(admin, 'elt:_warehouse._elt_loads', opening);
+    read.resolve();
+    await waitingIn(admin, "N'retention'", retaining);
+    await opens.query('COMMIT');
+    await waitingIn(admin, 'INTO @load', opening);
+  } finally {
+    await opens.query('IF @@TRANCOUNT > 0 COMMIT');
+    await second.query('COMMIT');
+  }
+  await Promise.all([retaining, opening]);
+
+  assert.deepEqual(
+    [
+      ...(await admin.query('SELECT text FROM marts.notes_0')),
+      ...(await admin.query('SELECT text FROM marts.notes_1')),
+    ],
+    [
+      { text: 'the note of notes_0' },
+      { text: 'the second note of notes_0' },
+      { text: 'the third note of notes_0' },
+      { text: 'the note of notes_1' },
+    ],
   );
 });
 
