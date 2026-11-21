@@ -141,7 +141,7 @@ An index that a computed dataset declares on its raw table (`indexes`) or its pa
 _Avoid_: Hook, `afterCreate` (removed), post-hook (dbt's word), physical property (SQLMesh's word for more than indexes)
 
 **Search function**:
-The inline table-valued function `marts.<reader>_nearest(@query, @k)` that the destination makes for the vector index of a table, named after the reader view of the table. It gives the key (and `seq` for a parts table) and the `distance` of the `k` nearest rows of the raw table as it is now, through `VECTOR_SEARCH` with `TOP … WITH APPROXIMATE`. A reader with `SELECT` on `marts` calls it with no permission on `_warehouse`.
+The inline table-valued function `marts.<reader>_nearest(@query, @k)` that the destination makes for the vector index of a table, named after the reader view of the table. It gives the key (and `seq` for a parts table) and the `distance` of the `k` nearest rows of the raw table as it is now, through `VECTOR_SEARCH` with `TOP … WITH APPROXIMATE`. A reader with `SELECT` on `marts` calls it with no permission on `_warehouse`, and finds it in `marts.catalog` with its parameters, its columns and its description, which names the dataset and the metric.
 _Avoid_: Search API, match function (Supabase's word), search service (Snowflake's word)
 
 **Parts table**:

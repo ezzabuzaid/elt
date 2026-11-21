@@ -37,7 +37,7 @@ The leaders give the reader a search object and permission on it, not on the tab
 - A table has at most one vector index. A second vector column that needs a search is a gap of this decision.
 - SQL Server 2025 in Docker (RTM-CU11) parses no `TOP … WITH APPROXIMATE` (error 102, with `PREVIEW_FEATURES` on or off), and it refuses the vector index of a computed dataset before the function (error 42217, ADR 0013). Thus the tests in Docker check the refusals and the drop of the function, and only Azure SQL shows the function that the destination makes.
 - The optimizer of Azure SQL chooses between the index and an exact scan by cost. On a small table, and while the graph of a new index is not built, the plan through the function is an exact scan, as it is on the raw table.
-- The function exists in `marts`, but the `catalog` of the sync history lists views and their columns only, so a reader that reads the catalog does not find it.
+- Each refresh writes the `MS_Description` of the function and of its columns from the declaration, and `marts.catalog` lists the function with its parameters and columns (#5146). Only Azure SQL shows the descriptions that the destination writes, since Docker cannot make the function.
 
 ## Probe (2026-11-21): a search function on Azure SQL Database
 

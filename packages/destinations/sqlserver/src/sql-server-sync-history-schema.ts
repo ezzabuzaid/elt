@@ -116,18 +116,30 @@ export const syncHistoryViews: readonly SqlServerView[] = Object.values(
   query: `SELECT * FROM (${queries[relation.name]}) AS [history] WHERE 1 = IIF(${position} = ${now}, 1, CAST(N'The sync history cannot be read as of a position: it keeps no row versions' AS int))`,
 }));
 
-// Lists what readers of marts query, its views, from the descriptions every
-// load and publication writes there.
+// Lists what readers of marts query, its views and its inline table-valued
+// functions, such as the search of a vector index (ADR 0014), from the
+// descriptions every load and publication writes there.
 export const catalog: SqlServerView = {
   ...readerCatalog,
-  query: `SELECT N'view' AS [kind], v.[name] AS [name], CAST(NULL AS nvarchar(max)) AS [data_type], CAST(ep.[value] AS nvarchar(max)) AS [description]
-    FROM sys.views AS v
-    LEFT JOIN sys.extended_properties AS ep ON ep.[class] = 1 AND ep.[major_id] = v.[object_id] AND ep.[minor_id] = 0 AND ep.[name] = N'MS_Description'
-    WHERE v.[schema_id] = SCHEMA_ID(N'${marts}')
+  description: `${readerCatalog.description} A function, such as the search of a vector index, is listed with each of its parameters and each column that it gives.`,
+  columns: {
+    ...readerCatalog.columns,
+    kind: 'view, function, parameter or column.',
+    name: 'Relation name, relation.column, or function.@parameter.',
+  },
+  query: `SELECT IIF(o.[type] = N'V', N'view', N'function') AS [kind], o.[name] AS [name], CAST(NULL AS nvarchar(max)) AS [data_type], CAST(ep.[value] AS nvarchar(max)) AS [description]
+    FROM sys.objects AS o
+    LEFT JOIN sys.extended_properties AS ep ON ep.[class] = 1 AND ep.[major_id] = o.[object_id] AND ep.[minor_id] = 0 AND ep.[name] = N'MS_Description'
+    WHERE o.[schema_id] = SCHEMA_ID(N'${marts}') AND o.[type] IN (N'V', N'IF')
     UNION ALL
-    SELECT N'column', v.[name] + N'.' + c.[name], ${columnType}, CAST(ep.[value] AS nvarchar(max))
-    FROM sys.views AS v
-    JOIN sys.columns AS c ON c.[object_id] = v.[object_id]
-    LEFT JOIN sys.extended_properties AS ep ON ep.[class] = 1 AND ep.[major_id] = v.[object_id] AND ep.[minor_id] = c.[column_id] AND ep.[name] = N'MS_Description'
-    WHERE v.[schema_id] = SCHEMA_ID(N'${marts}')`,
+    SELECT N'column', o.[name] + N'.' + c.[name], ${columnType}, CAST(ep.[value] AS nvarchar(max))
+    FROM sys.objects AS o
+    JOIN sys.columns AS c ON c.[object_id] = o.[object_id]
+    LEFT JOIN sys.extended_properties AS ep ON ep.[class] = 1 AND ep.[major_id] = o.[object_id] AND ep.[minor_id] = c.[column_id] AND ep.[name] = N'MS_Description'
+    WHERE o.[schema_id] = SCHEMA_ID(N'${marts}') AND o.[type] IN (N'V', N'IF')
+    UNION ALL
+    SELECT N'parameter', o.[name] + N'.' + c.[name], ${columnType}, CAST(NULL AS nvarchar(max))
+    FROM sys.objects AS o
+    JOIN sys.parameters AS c ON c.[object_id] = o.[object_id]
+    WHERE o.[schema_id] = SCHEMA_ID(N'${marts}') AND o.[type] = N'IF'`,
 };

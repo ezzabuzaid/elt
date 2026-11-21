@@ -5,9 +5,9 @@ import type { SqlServerConnection } from '@eltjs/sdk-microsoft-sql-server';
 const mostBytes = 7500;
 
 // A target's descriptions as SQL Server keeps them: one MS_Description
-// extended property on the table or its view, and one on each column, the
-// property that SQL Server Management Studio and the SQL Server source of
-// elt read. A null description removes the property.
+// extended property on the table, its view or its function, and one on each
+// column, the property that SQL Server Management Studio and the SQL Server
+// source of elt read. A null description removes the property.
 export class TargetDescriptions {
   readonly #table: string;
   readonly #columns: Readonly<Record<string, string | null>>;
@@ -28,7 +28,7 @@ export class TargetDescriptions {
 
   async write(
     connection: SqlServerConnection,
-    kind: 'TABLE' | 'VIEW',
+    kind: 'TABLE' | 'VIEW' | 'FUNCTION',
     schema: string,
     name: string,
   ): Promise<void> {

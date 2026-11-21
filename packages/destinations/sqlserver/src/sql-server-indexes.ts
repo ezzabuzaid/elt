@@ -2,6 +2,7 @@ import { hash } from 'node:crypto';
 
 import type { SqlServerConnection } from '@eltjs/sdk-microsoft-sql-server';
 
+import { TargetDescriptions } from './sql-server-descriptions.ts';
 import { identifiers, quote } from './sql-server-identifiers.ts';
 import type { Declared } from './sql-server-rule-columns.ts';
 import { inMarts, marts } from './sql-server-schemas.ts';
@@ -42,11 +43,15 @@ export class TableIndexes {
   readonly #table: string;
   // The statement that makes each declared index, by its name.
   readonly #declared: ReadonlyMap<string, string>;
-  // The function that searches the vector index, in marts.
+  // The function that searches the vector index, in marts, by its name.
+  readonly #name: string;
   readonly #search: string;
-  // The definition of the search, from FUNCTION on, as SQL Server keeps it;
-  // undefined when the table has no vector index.
-  readonly #nearest: string | undefined;
+  // The definition of the search, from FUNCTION on, as SQL Server keeps it,
+  // and its descriptions, which the catalog lists; undefined when the table
+  // has no vector index.
+  readonly #nearest:
+    | { readonly definition: string; readonly descriptions: TargetDescriptions }
+    | undefined;
 
   // Refuses an index that the table cannot have, before anything is made: a
   // column that the table does not have, a vector index on a column that is
@@ -110,6 +115,7 @@ export class TableIndexes {
       }),
     );
     const name = identifiers.relation(`${reader}_nearest`);
+    this.#name = name;
     this.#search = inMarts(name);
     const vectors = indexes.filter((index) => index.type === 'vector');
     const [vector] = vectors;
@@ -128,7 +134,21 @@ export class TableIndexes {
     if (vector === undefined) this.#nearest = undefined;
     else {
       const searched = column(vector.column);
-      this.#nearest = `FUNCTION ${this.#search}(@query ${searched.type}, @k int) RETURNS TABLE AS RETURN SELECT TOP (@k) WITH APPROXIMATE ${keys.map((key) => `t.${quote(key)}`).join(', ')}, r.[distance] FROM VECTOR_SEARCH(TABLE = ${table} AS t, COLUMN = ${quote(searched.name)}, SIMILAR_TO = @query, METRIC = '${vector.metric}') AS r ORDER BY r.[distance]`;
+      this.#nearest = {
+        definition: `FUNCTION ${this.#search}(@query ${searched.type}, @k int) RETURNS TABLE AS RETURN SELECT TOP (@k) WITH APPROXIMATE ${keys.map((key) => `t.${quote(key)}`).join(', ')}, r.[distance] FROM VECTOR_SEARCH(TABLE = ${table} AS t, COLUMN = ${quote(searched.name)}, SIMILAR_TO = @query, METRIC = '${vector.metric}') AS r ORDER BY r.[distance]`,
+        descriptions: new TargetDescriptions(
+          `The approximate nearest rows of ${marts}.${reader} to @query, a ${searched.type}, by the ${vector.metric} distance of ${searched.name}, through its vector index: the @k nearest rows of the table as it is now, nearest first. A search as of a position reads ${marts}.${reader} with VECTOR_DISTANCE.`,
+          {
+            ...Object.fromEntries(
+              keys.map((key) => [
+                key,
+                `The ${key} of the row in ${marts}.${reader}.`,
+              ]),
+            ),
+            distance: `The ${vector.metric} distance of ${searched.name} from @query; a smaller distance is nearer.`,
+          },
+        ),
+      };
     }
     Object.freeze(this);
   }
@@ -136,10 +156,10 @@ export class TableIndexes {
   // Drops each managed index of the table that is no longer declared, then
   // makes each declared index that the table does not have, then makes the
   // search of the vector index, or makes it again when its stored
-  // definition differs, or drops it when the table has no vector index.
-  // Each statement runs outside a transaction, since SQL Server makes a
-  // vector index only there (error 574); a refresh that stops between two of
-  // them makes the rest the next time.
+  // definition differs, and writes its descriptions, or drops it when the
+  // table has no vector index. Each statement runs outside a transaction,
+  // since SQL Server makes a vector index only there (error 574); a refresh
+  // that stops between two of them makes the rest the next time.
   async reconcile(connection: SqlServerConnection): Promise<void> {
     const stored = new Set(
       (
@@ -158,8 +178,16 @@ export class TableIndexes {
     if (this.#nearest === undefined) {
       if (search !== undefined)
         await connection.query(`DROP FUNCTION ${this.#search}`);
-    } else if (search !== this.#nearest)
-      await connection.query(`CREATE OR ALTER ${this.#nearest}`);
+    } else {
+      if (search !== this.#nearest.definition)
+        await connection.query(`CREATE OR ALTER ${this.#nearest.definition}`);
+      await this.#nearest.descriptions.write(
+        connection,
+        'FUNCTION',
+        marts,
+        this.#name,
+      );
+    }
   }
 }
 

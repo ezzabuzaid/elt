@@ -773,6 +773,65 @@ test('a refresh whose declaration names no vector index drops marts.measures_nea
   );
 });
 
+// The container cannot make the search function (see above), so the test
+// makes marts.measures_nearest and its descriptions in place of the ones that
+// a refresh on Azure SQL makes, and reads the catalog that the run publishes.
+test('marts.catalog lists a search function of marts with its description, each parameter with its type, and each column that it gives', async () => {
+  await using database = await scratch();
+  await measuresPipeline(
+    database.login,
+    new Records(['r1']),
+    new Measure(),
+  ).pipeline.run();
+  await database.admin.query(
+    `CREATE FUNCTION marts.measures_nearest(@query vector(3), @k int) RETURNS TABLE AS RETURN SELECT TOP (@k) [id], VECTOR_DISTANCE('cosine', [vector], @query) AS [distance] FROM _warehouse.raw_measures ORDER BY [distance]`,
+  );
+  await database.admin.query(
+    `EXEC sp_addextendedproperty N'MS_Description', N'The nearest measures.', 'SCHEMA', 'marts', 'FUNCTION', 'measures_nearest';
+     EXEC sp_addextendedproperty N'MS_Description', N'How near.', 'SCHEMA', 'marts', 'FUNCTION', 'measures_nearest', 'COLUMN', 'distance';`,
+  );
+
+  assert.deepEqual(
+    plain(
+      await database.admin.query(
+        "SELECT [kind], [name], [data_type], [description] FROM marts.catalog WHERE [name] LIKE N'measures[_]nearest%' ORDER BY [kind], [name]",
+      ),
+    ),
+    [
+      {
+        kind: 'column',
+        name: 'measures_nearest.distance',
+        data_type: 'float',
+        description: 'How near.',
+      },
+      {
+        kind: 'column',
+        name: 'measures_nearest.id',
+        data_type: 'nvarchar(max)',
+        description: null,
+      },
+      {
+        kind: 'function',
+        name: 'measures_nearest',
+        data_type: null,
+        description: 'The nearest measures.',
+      },
+      {
+        kind: 'parameter',
+        name: 'measures_nearest.@k',
+        data_type: 'int',
+        description: null,
+      },
+      {
+        kind: 'parameter',
+        name: 'measures_nearest.@query',
+        data_type: 'vector(3)',
+        description: null,
+      },
+    ],
+  );
+});
+
 // A claim of the type checker: the function is never called.
 test('a computed dataset of a rule takes no indexes of a parts table, which only a table rule has', () => {
   void (() =>
