@@ -433,14 +433,15 @@ test('a view redeclared over a table its copy has not loaded yet leaves no view 
   await using database = await scratch();
   const sources = { records: new Records(['r1']), inputs: new Inputs(['r1']) };
   sources.inputs.failing = true;
-  await judgedPipeline(
-    database.login,
-    sources,
-    { sql: 'SELECT id FROM records', columns: { id: 'Record id.' } },
-    { sql: 'SELECT id FROM candidates', columns: { id: 'Record id.' } },
-  )
-    .run()
-    .catch(() => undefined);
+  const first = await rejection(
+    judgedPipeline(
+      database.login,
+      sources,
+      { sql: 'SELECT id FROM records', columns: { id: 'Record id.' } },
+      { sql: 'SELECT id FROM candidates', columns: { id: 'Record id.' } },
+    ).run(),
+  );
+  assert.ok(first instanceof PipelineError, String(first));
   const ownViews = (names: readonly string[]) =>
     names.filter((name) => name === 'candidates' || name === 'judgment_inputs');
   const before = ownViews(await views(database));
@@ -460,6 +461,7 @@ test('a view redeclared over a table its copy has not loaded yet leaves no view 
   assert.ok(error instanceof PipelineError, String(error));
   assert.deepEqual(
     {
+      first: first.errors.map(({ message }: Error) => message),
       before,
       error: error.errors.map(({ message }: Error) => message),
       after: ownViews(await views(database)),
@@ -470,6 +472,7 @@ test('a view redeclared over a table its copy has not loaded yet leaves no view 
       ),
     },
     {
+      first: ['the store is gone'],
       before: ['candidates', 'judgment_inputs'],
       error: ['the store is gone'],
       after: [],

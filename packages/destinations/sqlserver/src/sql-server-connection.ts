@@ -50,18 +50,20 @@ export async function transaction<T>(
   }
 }
 
-// Serializes, until the transaction ends, the DDL that makes a schema and the
-// objects its loads, views and checkpoints share: SQL Server refuses a second
+// Holds the application lock elt:<name> until the transaction ends, so the
+// transactions that take the lock of one name run one at a time (ADR 0009).
+// The DDL that makes a schema and the objects its loads, views and
+// checkpoints share takes the lock of the schema: SQL Server refuses a second
 // session's CREATE SCHEMA or CREATE TABLE of the same name.
-export async function lockSchema(
+export async function takeLock(
   connection: SqlServerConnection,
-  schema: string,
+  name: string,
 ): Promise<void> {
   await connection.query(
     `DECLARE @result int;
      EXEC @result = sp_getapplock @Resource = @resource, @LockMode = N'Exclusive', @LockOwner = N'Transaction', @LockTimeout = -1;
-     IF @result < 0 THROW 50000, N'The lock of the schema was not granted', 1;`,
-    { resource: `elt:${schema}` },
+     IF @result < 0 THROW 50000, N'The lock was not granted', 1;`,
+    { resource: `elt:${name}` },
   );
 }
 
@@ -77,7 +79,7 @@ export async function makeSchema(
   );
   if (made?.made === 1) return;
   await transaction(connection, async () => {
-    await lockSchema(connection, schema);
+    await takeLock(connection, schema);
     await connection.query(
       `IF SCHEMA_ID(@schema) IS NULL EXEC (N'CREATE SCHEMA ${quote(schema).replaceAll("'", "''")}')`,
       { schema },

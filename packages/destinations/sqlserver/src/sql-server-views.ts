@@ -1,7 +1,7 @@
 import type { ReaderRelation } from '@eltjs/elt';
 import type { SqlServerConnection } from '@eltjs/sdk-microsoft-sql-server';
 
-import { lockSchema } from './sql-server-connection.ts';
+import { takeLock } from './sql-server-connection.ts';
 import { refreshDependents } from './sql-server-dependents.ts';
 import { TargetDescriptions } from './sql-server-descriptions.ts';
 import { quote } from './sql-server-identifiers.ts';
@@ -23,7 +23,7 @@ export async function publishViews(
   connection: SqlServerConnection,
   views: readonly SqlServerView[],
 ): Promise<void> {
-  await lockSchema(connection, marts);
+  await takeLock(connection, marts);
   await connection.query(
     `IF SCHEMA_ID(N'${marts}') IS NULL EXEC (N'CREATE SCHEMA ${quote(marts)}')`,
   );
@@ -98,7 +98,7 @@ export async function withdrawView(
   connection: SqlServerConnection,
   name: string,
 ): Promise<void> {
-  await lockSchema(connection, marts);
+  await takeLock(connection, marts);
   const readers = await connection.query(
     `WITH [readers] AS (
        SELECT d.[referencing_id] AS [id], 1 AS [depth] FROM sys.sql_expression_dependencies AS d

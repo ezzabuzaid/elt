@@ -1,7 +1,7 @@
 import { DerivedStatus, type PipelineClock } from '@eltjs/elt';
 import type { SqlServerConnection } from '@eltjs/sdk-microsoft-sql-server';
 
-import { lockSchema, transaction } from './sql-server-connection.ts';
+import { takeLock, transaction } from './sql-server-connection.ts';
 import { inWarehouse, warehouse } from './sql-server-schemas.ts';
 
 const table = inWarehouse('derived_status');
@@ -59,7 +59,7 @@ export class SqlServerDerivedStatus extends DerivedStatus {
   ): Promise<void> {
     const columns = ['kind', ...Object.keys(values)];
     await transaction(this.#connection, async () => {
-      await lockSchema(this.#connection, warehouse);
+      await takeLock(this.#connection, warehouse);
       await this.#connection.query(
         `IF SCHEMA_ID(N'${warehouse}') IS NULL EXEC (N'CREATE SCHEMA [${warehouse}]');`,
       );

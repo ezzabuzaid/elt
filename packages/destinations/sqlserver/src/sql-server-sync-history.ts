@@ -23,7 +23,7 @@ import {
 import {
   type SqlServerLogin,
   connect,
-  lockSchema,
+  takeLock,
   transaction,
 } from './sql-server-connection.ts';
 import { SqlServerDestination } from './sql-server-destination.ts';
@@ -173,7 +173,7 @@ export class SqlServerSyncHistory extends SyncHistory<SqlServerTable> {
     await transaction(session, async () => {
       // The numbering of the destinations makes _warehouse too, under the
       // same lock.
-      await lockSchema(session, warehouse);
+      await takeLock(session, warehouse);
       await session.query(syncHistoryTables);
       await publishViews(session, [...syncHistoryViews, catalog]);
       for (const reader of this.#readers) await grantReading(session, reader);

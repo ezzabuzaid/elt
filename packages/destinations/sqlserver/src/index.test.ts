@@ -296,6 +296,77 @@ test('the first run into a new database makes what its targets share under the l
   ]);
 });
 
+test('connections of one pipeline that open their loads in one database at the same time each load their notes, and none is chosen as a deadlock victim', async () => {
+  await using database = await scratch();
+  const { login } = database;
+  const warehouse = new SqlServerDestination({ login });
+  const history = new SqlServerSyncHistory({ login });
+  const names = Array.from({ length: 4 }, (_, index) => `notes_${index}`);
+  const connections = names.map((name) => {
+    const source = new Notes();
+    source.upstream = [{ n: 1, text: `the note of ${name}` }];
+    return new Connection({
+      name,
+      source,
+      destination: warehouse,
+      checkpoints: new SqlServerCheckpointStore({ login }),
+      steps: [
+        new Copy(source.stream, warehouse.table(name), {
+          id: `${name}:notes`,
+          syncMode: 'incremental',
+          destinationSyncMode: 'append',
+        }),
+      ],
+    });
+  });
+  const [first] = connections;
+  assert.ok(first !== undefined);
+  await new Pipeline({
+    clock: globalThis,
+    history,
+    connections: [first],
+  }).run();
+  // A session that writes the load of the first pass holds its row, so each
+  // open of the next pass waits on that row after it inserts its own, until
+  // all of them run at once (platform setup that no operation of the
+  // destination gives).
+  await using holder = await new SqlServerDatabase(login).connect();
+  await holder.query(
+    'BEGIN TRANSACTION; UPDATE _warehouse._elt_loads SET closed_at = closed_at',
+  );
+  const blocked = async (): Promise<void> => {
+    const [requests] = await database.admin.query(
+      'SELECT COUNT(*) AS waiting FROM sys.dm_exec_requests WHERE blocking_session_id <> 0 AND database_id = DB_ID()',
+    );
+    if (Number(requests?.waiting) < names.length) {
+      await setTimeout(100);
+      return blocked();
+    }
+  };
+
+  const running = new Pipeline({
+    clock: globalThis,
+    history,
+    connections,
+  }).run();
+  try {
+    await Promise.race([blocked(), running]);
+  } finally {
+    await holder.query('COMMIT');
+  }
+  await running;
+
+  const loaded = [];
+  for (const name of names)
+    loaded.push(
+      ...(await database.admin.query(`SELECT text FROM marts.${name}`)),
+    );
+  assert.deepEqual(
+    loaded,
+    names.map((name) => ({ text: `the note of ${name}` })),
+  );
+});
+
 test('a database that keeps no row versions for readers fails the first load with the statements that turn them on, and nothing is made', async () => {
   await using database = await scratch({ rowVersions: false });
   const warehouse = new SqlServerDestination({ login: database.login });

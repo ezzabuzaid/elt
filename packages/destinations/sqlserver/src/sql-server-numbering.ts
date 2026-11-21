@@ -1,7 +1,7 @@
 import { type NumberedStore, type Numbering, numbering } from '@eltjs/elt';
 import type { SqlServerConnection } from '@eltjs/sdk-microsoft-sql-server';
 
-import { lockSchema, transaction } from './sql-server-connection.ts';
+import { takeLock, transaction } from './sql-server-connection.ts';
 import { quote } from './sql-server-identifiers.ts';
 import { inWarehouse, warehouse } from './sql-server-schemas.ts';
 import { SqlServerSetupError } from './sql-server-setup-error.ts';
@@ -118,7 +118,7 @@ export async function installNumbering(
   );
   if (made?.made !== 1)
     await transaction(connection, async () => {
-      await lockSchema(connection, warehouse);
+      await takeLock(connection, warehouse);
       await connection.query(tables, { mark });
     });
   await connection.query(
@@ -140,23 +140,28 @@ export async function grantReading(
 
 // Records a load of owner that opens at openedAt, and gives its id. A load of
 // the same owner that is still open is one whose process ended during it:
-// the new load closes it.
+// the new load closes it. The UPDATE that closes it reads each row of
+// _elt_loads with an update lock, as an nvarchar(max) owner has no index, so
+// two opens that each held the row they inserted would wait for each other
+// until SQL Server killed one (error 1205). The open takes the lock of
+// _elt_loads before it inserts, so two opens run one at a time.
 export async function openLoad(
   connection: SqlServerConnection,
   owner: LoadOwner,
   openedAt: Date,
 ): Promise<string> {
   const [column, name] = owned(owner);
-  const [load] = await connection.query(
-    `BEGIN TRANSACTION;
-     DECLARE @load table ([id] bigint);
-     INSERT INTO ${loads} ([${column}], [opened_at]) OUTPUT inserted.[id] INTO @load VALUES (@name, CAST(@at AS datetimeoffset(3)));
-     UPDATE ${loads} SET [closed_at] = CAST(@at AS datetimeoffset(3))
-       WHERE [${column}] = @name AND [closed_at] IS NULL AND [id] <> (SELECT [id] FROM @load);
-     COMMIT;
-     SELECT CONVERT(nvarchar(20), [id]) AS [id] FROM @load;`,
-    { name, at: openedAt.toISOString() },
-  );
+  const [load] = await transaction(connection, async () => {
+    await takeLock(connection, `${warehouse}._elt_loads`);
+    return connection.query(
+      `DECLARE @load table ([id] bigint);
+       INSERT INTO ${loads} ([${column}], [opened_at]) OUTPUT inserted.[id] INTO @load VALUES (@name, CAST(@at AS datetimeoffset(3)));
+       UPDATE ${loads} SET [closed_at] = CAST(@at AS datetimeoffset(3))
+         WHERE [${column}] = @name AND [closed_at] IS NULL AND [id] <> (SELECT [id] FROM @load);
+       SELECT CONVERT(nvarchar(20), [id]) AS [id] FROM @load;`,
+      { name, at: openedAt.toISOString() },
+    );
+  });
   if (typeof load?.id !== 'string')
     throw new Error('The load was not recorded');
   return load.id;

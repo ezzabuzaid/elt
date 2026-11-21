@@ -26,8 +26,8 @@ import type {
 import type { EncodedValue, SqlServerColumn } from './sql-server-column.ts';
 import {
   connect,
-  lockSchema,
   makeSchema,
+  takeLock,
   transaction,
 } from './sql-server-connection.ts';
 import { numberOf, refreshDependents } from './sql-server-dependents.ts';
@@ -1287,7 +1287,7 @@ async function makeWriterTables(
   );
   if (made?.made === 1) return;
   await transaction(connection, async () => {
-    await lockSchema(connection, warehouse);
+    await takeLock(connection, warehouse);
     await connection.query(
       `IF OBJECT_ID(N'${writersTable}', N'U') IS NULL CREATE TABLE ${writersTable} ([target] nvarchar(128) NOT NULL PRIMARY KEY, [writer] nvarchar(max) NOT NULL);
        IF OBJECT_ID(N'${reloadsTable}', N'U') IS NULL CREATE TABLE ${reloadsTable} ([target] nvarchar(128) NOT NULL PRIMARY KEY, [partitions] nvarchar(max) NOT NULL);`,

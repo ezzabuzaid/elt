@@ -14,7 +14,7 @@ import {
 import {
   type SqlServerLogin,
   connect,
-  lockSchema,
+  takeLock,
   transaction,
 } from './sql-server-connection.ts';
 import { failureType } from './sql-server-failure-type.ts';
@@ -136,7 +136,7 @@ async function create(connection: SqlServerConnection): Promise<void> {
   );
   if (found?.made === 1) return;
   await transaction(connection, async () => {
-    await lockSchema(connection, warehouse);
+    await takeLock(connection, warehouse);
     await connection.query(
       `IF SCHEMA_ID(N'${warehouse}') IS NULL EXEC (N'CREATE SCHEMA ${quote(warehouse)}');
        IF OBJECT_ID(N'${table}', N'U') IS NULL
