@@ -450,6 +450,7 @@ Of 2026-11-19, except where a ruling gives another date.
 4. **The type of a vector column.** `@zukhruf/vectors` gives the type for a kind of vector and a count of dimensions, such as `sqlType(Vector, 1536)`.
 5. **Indexes.** A computed dataset declares its indexes, and the destination reconciles them with `sys.indexes` at each refresh; `afterCreate` is removed (2026-11-21, [ADR 0013](./docs/adr/0013-a-computed-dataset-declares-its-indexes-and-the-destination-reconciles-them.md), which supersedes [ADR 0008](./docs/adr/0008-a-computed-dataset-runs-the-sql-of-the-host-each-time-it-makes-its-raw-table.md)).
 6. **Keys.** A unique index on `_elt_key_hash` ([ADR 0004](./docs/adr/0004-a-key-is-indexed-by-its-hash.md)).
+7. **The release.** The package is public after its tests pass, so the next green push of `main` publishes it, and datahub installs it from npm.
 
 ## Probes
 
