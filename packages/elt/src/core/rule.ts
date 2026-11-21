@@ -5,7 +5,7 @@ export type LoadedRow = Readonly<Record<string, unknown>>;
 
 // What a rule made of one input: a value, nothing to store (a photo with no
 // text), its own failure, which the output row records, or the input was gone
-// before the rule read it (a file a commit removed), so no row is written.
+// before the rule read it (a stop ended the refresh), so no row is written.
 export type RuleResult<Output> =
   | { readonly value: Output }
   | { readonly empty: true }

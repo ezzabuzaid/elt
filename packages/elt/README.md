@@ -1098,6 +1098,8 @@ Two rules exist:
 
 `DocumentText` asks for its parser at each refresh, so a parser that the host changed, for example a new speech model, applies from the next refresh.
 
+A file that rows name and that the folder `files` does not have is a failure of its row. The error names the folder and the ref, and tells you to reload the copy that stored the file. For example, a host that moves to a new disk keeps its rows, but the folder on that disk has no files, so each file that the dataset reads again fails. A file that a commit removed with its rows while the refresh read it also fails its row, and the refresh that the commit asks for then removes that row.
+
 ## Write a table rule
 
 A table rule gives one or more parts for one input, as a table function of SQL gives rows. For example, a rule cuts a long text into chunks that an embedding model can take. A table rule is a class that extends `TableRule<Input, Columns, Place>`. It has the members of a rule, and one more group of columns:

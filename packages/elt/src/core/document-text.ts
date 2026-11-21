@@ -85,9 +85,15 @@ export class DocumentText extends Rule<string, typeof columns> {
             (Error.isError(failure) && failure.name === 'AbortError')
           )
             return { gone: true };
-          // A commit removed the copy after the refresh listed it; its rows
-          // are gone too, so the file is not a failure.
-          if (await removed(file)) return { gone: true };
+          // A missing file fails its row, also when a commit removed its
+          // rows and the file after the refresh listed them: that commit asks
+          // for the next refresh, which removes the row. A files folder that
+          // never had the file, such as the disk of a new host, cannot give
+          // it back, so the error says how to store it again.
+          if (await missing(file))
+            return {
+              error: `The files folder ${this.#files} has no file ${ref}. Reload the copy that stored it to store the file again.`,
+            };
           return { error: errorMessage(failure) };
         }
       }),
@@ -95,7 +101,7 @@ export class DocumentText extends Rule<string, typeof columns> {
   }
 }
 
-async function removed(path: string): Promise<boolean> {
+async function missing(path: string): Promise<boolean> {
   return lstat(path).then(
     () => false,
     (error: NodeJS.ErrnoException) => {

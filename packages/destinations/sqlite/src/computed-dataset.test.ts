@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -336,6 +336,127 @@ test('the next run reads only the files that are new or that another parser woul
     { ref: 'a.txt', rule: 'text-v2' },
     { ref: 'c.txt', rule: 'text-v2' },
   ]);
+});
+
+test('a file that rows name and the files folder does not have fails its row with how to store it again, both on a read by a new parser and on a first read, and the run still succeeds', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  await files.file('b.txt', 'receipt');
+  files.source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+  ];
+  await files.pipeline.run();
+  await rm(join(scratch.path, 'files', 'a.txt'));
+  files.source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+    { id: '3', ref: 'c.txt' },
+  ];
+  files.replaceParser(new TextParser('text-v2'));
+
+  await files.pipeline.run();
+
+  const missing = (ref: string) =>
+    `The files folder ${join(scratch.path, 'files')} has no file ${ref}. Reload the copy that stored it to store the file again.`;
+  assert.deepEqual(
+    files.read(
+      'SELECT ref, rule, status, content, error FROM file_text ORDER BY ref',
+    ),
+    [
+      {
+        ref: 'a.txt',
+        rule: 'text-v2',
+        status: 'failed',
+        content: null,
+        error: missing('a.txt'),
+      },
+      {
+        ref: 'b.txt',
+        rule: 'text-v2',
+        status: 'computed',
+        content: 'receipt',
+        error: null,
+      },
+      {
+        ref: 'c.txt',
+        rule: 'text-v2',
+        status: 'failed',
+        content: null,
+        error: missing('c.txt'),
+      },
+    ],
+  );
+});
+
+test('under a watch, a file that a commit removes with its rows while the file is read leaves no row once the refresh after that commit ends', async (t) => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  await files.file('b.txt', 'receipt');
+  files.source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+  ];
+  const released = new Latch();
+  files.parser().holding.set('b.txt', released);
+  const controller = new AbortController();
+  const watching = files.pipeline.watch({ signal: controller.signal });
+  const status = `SELECT state, inputs, computed, failed, pending FROM derived_status WHERE dataset = 'file_text'`;
+
+  try {
+    await watching.next();
+    await waitFor(
+      () => {
+        assert.ok(
+          files.parser().parsed.includes('b.txt'),
+          'b.txt was never read',
+        );
+      },
+      { signal: t.signal, interval: 10 },
+    );
+    await rm(join(scratch.path, 'files', 'b.txt'));
+    files.source.rows = [{ id: '1', ref: 'a.txt' }];
+    files.source.version.current += 1;
+    await watching.next();
+    released.open();
+    // The refresh that read b.txt counts two inputs; the one after the
+    // commit that removed b.txt counts one.
+    const after = await timebox(
+      () => {
+        const [row] = files.read(status);
+        assert.deepEqual(row, {
+          state: 'current',
+          inputs: 1,
+          computed: 1,
+          failed: 0,
+          pending: 0,
+        });
+        return row;
+      },
+      {
+        minTimeout: 10,
+        maxRetryTime: 5_000,
+        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
+      },
+    );
+
+    assert.deepEqual(after, {
+      state: 'current',
+      inputs: 1,
+      computed: 1,
+      failed: 0,
+      pending: 0,
+    });
+    assert.deepEqual(files.read(text), [
+      { ref: 'a.txt', status: 'computed', content: 'invoice 123', error: null },
+    ]);
+  } finally {
+    released.open();
+    controller.abort();
+    await watching.return(undefined);
+  }
 });
 
 test('a file the parser fails on is stored failed with why, the run still succeeds, and the next run reads it again', async () => {
