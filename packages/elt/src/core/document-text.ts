@@ -3,7 +3,7 @@ import { basename } from 'node:path';
 
 import { errorMessage } from '../state/sync-history.ts';
 import type { DocumentParser } from './document-parser.ts';
-import type { FileStorage } from './file-storage.ts';
+import { type FileStorage, StoredFileMissingError } from './file-storage.ts';
 import {
   type LoadedRow,
   Rule,
@@ -79,23 +79,36 @@ export class DocumentText extends Rule<string, typeof columns> {
     const parser = this.#parser();
     return Promise.all(
       refs.map(async (ref): Promise<RuleResult<RuleValues<typeof columns>>> => {
+        let opened;
         try {
-          await using file = await this.#files.open(ref, signal);
+          opened = await this.#files.open(ref, signal);
+        } catch (failure) {
+          if (stopped(failure, signal)) return { gone: true };
+          // A file that the storage does not hold fails only its row, also
+          // when a commit removed its rows and the file after the refresh
+          // listed them: that commit asks for the next refresh, which removes
+          // the row. Each other failure of the storage, such as a folder that
+          // this process may not read, fails the refresh.
+          if (failure instanceof StoredFileMissingError)
+            return { error: failure.message };
+          throw failure;
+        }
+        await using file = opened;
+        try {
           const content = await parser.parse(file.path, signal);
           return content === null ? { empty: true } : { value: { content } };
         } catch (failure) {
-          if (
-            signal?.aborted ||
-            (Error.isError(failure) && failure.name === 'AbortError')
-          )
-            return { gone: true };
-          // A file that the storage does not hold fails its row with the
-          // storage's error, also when a commit removed its rows and the file
-          // after the refresh listed them: that commit asks for the next
-          // refresh, which removes the row.
+          if (stopped(failure, signal)) return { gone: true };
           return { error: errorMessage(failure) };
         }
       }),
     );
   }
+}
+
+function stopped(failure: unknown, signal: AbortSignal | undefined): boolean {
+  return (
+    signal?.aborted === true ||
+    (Error.isError(failure) && failure.name === 'AbortError')
+  );
 }

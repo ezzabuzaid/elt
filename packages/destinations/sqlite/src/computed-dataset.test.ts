@@ -592,6 +592,8 @@ class CopyingFiles extends FileStorage {
   override readonly identity = 'copying-files';
   override readonly reference = 'A file of the held folder.';
   heads = 0;
+  // A ref whose open fails as a storage that cannot be reached fails.
+  unreachable: string | undefined;
   readonly #held: string;
   readonly #copies: string;
 
@@ -602,6 +604,8 @@ class CopyingFiles extends FileStorage {
   }
 
   override async open(ref: string) {
+    if (ref === this.unreachable)
+      throw new Error('the held folder is unreachable');
     const path = join(this.#copies, `${crypto.randomUUID()}-${basename(ref)}`);
     await copyFile(join(this.#held, ref), path);
     return { path, [Symbol.asyncDispose]: () => rm(path) };
@@ -629,18 +633,17 @@ class CopyingFiles extends FileStorage {
   }
 }
 
-test('the rule reads each file through its storage: the parser gets a path that the storage opened, the storage removes it after the parse, and a parser that identifies by name reads no bytes', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-computed-');
-  const held = join(scratch.path, 'held');
-  const copies = join(scratch.path, 'copies');
+// The rows of Files, loaded into raw_files, and the text of each file that
+// they name, which DocumentText reads through a CopyingFiles over held.
+async function copyingImport(directory: string) {
+  const held = join(directory, 'held');
+  const copies = join(directory, 'copies');
   await mkdir(held);
   await mkdir(copies);
-  await writeFile(join(held, 'a.txt'), 'invoice 123');
-  await writeFile(join(held, 'b.txt'), 'receipt');
   const storage = new CopyingFiles(held, copies);
   const source = new Files();
   const destination = new SQLiteDestination({
-    path: join(scratch.path, 'data.sqlite'),
+    path: join(directory, 'data.sqlite'),
   });
   const target = destination.table('files');
   const parser = new TextParser('text-v1');
@@ -669,24 +672,64 @@ test('the rule reads each file through its storage: the parser gets a path that 
       }),
     ],
   });
-  source.rows = [
+  return {
+    storage,
+    source,
+    pipeline,
+    parser,
+    copies,
+    file: (name: string, content: string) =>
+      writeFile(join(held, name), content),
+    read: (sql: string) => shell(destination.path, sql).rows,
+  };
+}
+
+test('the rule reads each file through its storage: the parser gets a path that the storage opened, the storage removes it after the parse, and a parser that identifies by name reads no bytes', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await copyingImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  await files.file('b.txt', 'receipt');
+  files.source.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
 
-  await pipeline.run();
+  await files.pipeline.run();
 
-  assert.deepEqual(shell(destination.path, text).rows, [
+  assert.deepEqual(files.read(text), [
     { ref: 'a.txt', status: 'computed', content: 'invoice 123', error: null },
     { ref: 'b.txt', status: 'computed', content: 'receipt', error: null },
   ]);
   assert.deepEqual(
     // Each copy is named by a UUID, a hyphen and the file name.
-    parser.parsed.map((name) => name.slice(37)).toSorted(),
+    files.parser.parsed.map((name) => name.slice(37)).toSorted(),
     ['a.txt', 'b.txt'],
   );
-  assert.deepEqual(await readdir(copies), []);
-  assert.equal(storage.heads, 0);
+  assert.deepEqual(await readdir(files.copies), []);
+  assert.equal(files.storage.heads, 0);
+});
+
+test('a storage that fails to open a file for a reason other than not holding it fails the refresh, as a failure of the storage and not of the row of the file', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await copyingImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.storage.unreachable = 'a.txt';
+
+  const error = await files.pipeline.run().then(
+    () => assert.fail('the run reported no failure'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof DerivedDatasetError, String(error));
+  assert.deepEqual(
+    { message: error.message, rows: files.read(text) },
+    {
+      message:
+        'Derived dataset file_text failed: the held folder is unreachable',
+      rows: [],
+    },
+  );
 });
 
 test('a refresh that its watch stops while a file is parsed stores no row for that file and stays refreshing with no error, as a stop is not the file’s failure', async () => {

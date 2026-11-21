@@ -8,7 +8,7 @@ Thus `FileStorage` has a read half:
 
 - `open(ref, signal?)` gives `{ path } & AsyncDisposable`, a path that stays readable until it is disposed. `LocalFiles` gives its own file, and its dispose does nothing. A storage in a database gives a temporary copy, and its dispose removes it.
 - `head(ref, length, signal?)` gives the first bytes of a stored file, with no copy of the whole file.
-- A ref that the storage does not hold throws an error that the storage owns. The error of `LocalFiles` names its folder and the ref, and tells you to reload the copy that stored the file (#5166).
+- A ref that the storage does not hold throws a `StoredFileMissingError`, whose message the storage writes. The error of `LocalFiles` names its folder and the ref, and tells you to reload the copy that stored the file (#5166). A reader routes by this type: only this error is the failure of one file. Each other error is a failure of the storage.
 
 `DocumentText({ parser, files, column })` takes the `FileStorage`. It opens each file with `files.open(ref)`, gives the path to `parse(path, signal?)`, and disposes the file after the parse. `DocumentParser.identityFor` takes `{ name, head(length) }` in place of a path: `name` is the file name of the ref, with its extension, and `head` reads through the storage only when the parser calls it. `parse` keeps its path, because the parsers (PDFKit, `textutil`, officeparser) read paths.
 
@@ -22,7 +22,7 @@ Thus `FileStorage` has a read half:
 
 - Each `FileStorage` implements `open` and `head`. A storage in the database of SQLite, Postgres or SQL Server (#5170 step E3) gives temporary copies from `open`, and reads only the first bytes for `head`.
 - `identityFor` is asked for each input at each refresh. A parser with a constant identity, such as `OfficeDocumentParser`, reads no bytes. `MacOSDocumentParser` reads 4100 bytes through `head`, never a whole copy.
-- `DocumentText` keeps its outcomes: a parse failure and a file that the storage does not hold fail only their row, a stop leaves no row, and a file that the parser does not handle is empty.
+- `DocumentText` keeps its outcomes: a parse failure and a file that the storage does not hold fail only their row, a stop leaves no row, and a file that the parser does not handle is empty. Each other error of `open`, such as a folder that this process may not read, fails the refresh, as the check of the folder after a failed parse did before.
 - `LocalFiles` stays, with its reconcile and `.store()`. The agent of Context Compiler opens its stored files by path.
 
 Sources: backlogs #5166 and #5170; ADR 0015.

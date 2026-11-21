@@ -625,21 +625,21 @@ new Copy(
 
 For a different storage, extend the exported `FileStorage`:
 
-| Member                       | Gives                                                                                                                |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `identity`                   | A stable identity. It is part of the checkpoint binding of the copy.                                                 |
-| `reference`                  | A sentence that tells readers what a ref is. Postgres writes it as the comment of the ref column.                    |
-| `save(scope, content)`       | Saves a `FileContent`, and returns a complete, immutable ref. A save again of the same content returns the same ref. |
-| `flush(scope)`               | Makes the completed saves durable before their rows commit. It is safe to repeat, also for a scope with no saves.    |
-| `retain(scope, references)`  | Removes only the objects of this scope that no committed ref names.                                                  |
-| `open(ref, signal?)`         | A `{ path }` that stays readable until it is disposed. A ref that the storage does not hold throws.                  |
-| `head(ref, length, signal?)` | The first `length` bytes of the stored file, or all of them when the file is shorter, with no copy of the file.      |
-| `failureType(error)`         | The [failure type](#failure-types) of each error that `save`, `flush` or `retain` raised.                            |
+| Member                       | Gives                                                                                                                        |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `identity`                   | A stable identity. It is part of the checkpoint binding of the copy.                                                         |
+| `reference`                  | A sentence that tells readers what a ref is. Postgres writes it as the comment of the ref column.                            |
+| `save(scope, content)`       | Saves a `FileContent`, and returns a complete, immutable ref. A save again of the same content returns the same ref.         |
+| `flush(scope)`               | Makes the completed saves durable before their rows commit. It is safe to repeat, also for a scope with no saves.            |
+| `retain(scope, references)`  | Removes only the objects of this scope that no committed ref names.                                                          |
+| `open(ref, signal?)`         | A `{ path }` that stays readable until it is disposed. A ref that the storage does not hold throws `StoredFileMissingError`. |
+| `head(ref, length, signal?)` | The first `length` bytes of the stored file, or all of them when the file is shorter, with no copy of the file.              |
+| `failureType(error)`         | The [failure type](#failure-types) of each error that `save`, `flush` or `retain` raised.                                    |
 
 - The transfer reads refs as text that it does not interpret. Thus an S3 storage can return its own form of ref, with no change to the destinations.
 - Only `LocalFiles` exists now. Its reconcile scans the kept refs and the folder of the scope at each commit. It keeps no separate index of objects.
 - A rule reads a stored file only through its storage: `DocumentText` disposes each opened file after its parse. `LocalFiles` gives its own path, and its dispose does nothing. A storage that keeps no files on the disk gives a temporary copy, and its dispose removes it. See [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md).
-- A ref that `LocalFiles` does not hold throws an error that names the folder and the ref, and tells you to reload the copy that stored the file.
+- A ref that `LocalFiles` does not hold throws a `StoredFileMissingError` that names the folder and the ref, and tells you to reload the copy that stored the file.
 - `LocalFiles` calls an error of the file system `config` when a person must change the folder: `EACCES` and `EPERM` (this process may not write it) and `EROFS` (a read-only file system). Each other error is `system`.
 
 ### Write a document parser
@@ -1093,7 +1093,7 @@ Two rules exist:
 
 `DocumentText` asks for its parser at each refresh, so a parser that the host changed, for example a new speech model, applies from the next refresh.
 
-`DocumentText` opens each file with `files.open(ref)`, gives the path to the parser, and disposes the file after the parse. A file that rows name and that `files` does not hold is a failure of its row, with the error of the storage. The error of `LocalFiles` names the folder and the ref, and tells you to reload the copy that stored the file. For example, a host that moves to a new disk keeps its rows, but the folder on that disk has no files, so each file that the dataset reads again fails. A file that a commit removed with its rows while the refresh read it also fails its row, and the refresh that the commit asks for then removes that row.
+`DocumentText` opens each file with `files.open(ref)`, gives the path to the parser, and disposes the file after the parse. A file that rows name and that `files` does not hold is a failure of its row, with the message of the `StoredFileMissingError` of the storage. Each other error of `open`, such as a folder that this process may not read, is a failure of the storage, so the refresh fails. The error of `LocalFiles` names the folder and the ref, and tells you to reload the copy that stored the file. For example, a host that moves to a new disk keeps its rows, but the folder on that disk has no files, so each file that the dataset reads again fails. A file that a commit removed with its rows while the refresh read it also fails its row, and the refresh that the commit asks for then removes that row.
 
 ## Write a table rule
 

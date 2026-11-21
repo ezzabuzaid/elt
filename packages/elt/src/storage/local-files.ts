@@ -4,7 +4,7 @@ import { dirname, join, resolve } from 'node:path';
 
 import type { FileContent } from '../core/file-content.ts';
 import { fileExtension } from '../core/file-extension.ts';
-import { FileStorage } from '../core/file-storage.ts';
+import { FileStorage, StoredFileMissingError } from '../core/file-storage.ts';
 import type { FailureType } from '../core/source.ts';
 
 // The codes of a folder that a person must change: one that this process may
@@ -106,7 +106,7 @@ export class LocalFiles extends FileStorage {
     return open(join(this.directory, ref)).catch(
       (error: NodeJS.ErrnoException) => {
         if (error.code !== 'ENOENT') throw error;
-        throw new Error(
+        throw new StoredFileMissingError(
           `The files folder ${this.directory} has no file ${ref}. Reload the copy that stored it to store the file again.`,
         );
       },

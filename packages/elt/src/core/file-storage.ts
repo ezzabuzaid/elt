@@ -1,6 +1,14 @@
 import type { FileContent } from './file-content.ts';
 import type { FailureType } from './source.ts';
 
+// What open and head throw for a ref that the storage does not hold, such as
+// a file of a folder on the disk of a new host. The storage writes its message,
+// which says how to store the file again. A reader fails only the input of
+// that ref; each other error of a storage is the storage's own failure.
+export class StoredFileMissingError extends Error {
+  override readonly name = 'StoredFileMissingError';
+}
+
 // Owns attachment bytes, independently of the destination that holds references.
 // Each scope belongs to one target field. Never remove another scope's objects.
 // A ref is text that only its storage resolves, so a reader of a stored file
@@ -29,8 +37,8 @@ export abstract class FileStorage {
 
   // A path to the stored file of ref that stays readable until it is
   // disposed: the storage's own file, or a temporary copy that the dispose
-  // removes. A ref that this storage does not hold throws an error that says
-  // how to store the file again.
+  // removes. A ref that this storage does not hold throws a
+  // StoredFileMissingError.
   abstract open(
     ref: string,
     signal?: AbortSignal,

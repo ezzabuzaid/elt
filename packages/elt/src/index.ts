@@ -51,7 +51,7 @@ export {
 export { FileContent } from './core/file-content.ts';
 export { fileExtension } from './core/file-extension.ts';
 export { FileRead, FileReference } from './core/file-read.ts';
-export { FileStorage } from './core/file-storage.ts';
+export { FileStorage, StoredFileMissingError } from './core/file-storage.ts';
 export { isCalendarDate } from './core/formats/calendar-date-format.ts';
 export {
   type DeclaredFormat,
