@@ -615,9 +615,9 @@ test('a parser that identifies a file by its first bytes fails only the row of a
 
 // A storage that keeps its files in a folder the rule may not read, as a
 // database keeps them in its tables: open gives a temporary copy of the file
-// that its dispose removes, and head counts its reads. No storage of elt
-// gives temporary copies until the database storage of #5170 step E3. It stores nothing
-// itself, because the rows of the test name files that it already holds.
+// that its dispose removes, as DatabaseFiles does, and head counts its reads.
+// It stores nothing itself, because the rows of the test name files that it
+// already holds.
 class CopyingFiles extends FileStorage {
   override readonly identity = 'copying-files';
   override readonly reference = 'A file of the held folder.';
