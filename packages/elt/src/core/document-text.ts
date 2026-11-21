@@ -65,11 +65,20 @@ export class DocumentText extends Rule<string, typeof columns> {
     return typeof ref === 'string' ? { key: ref, input: ref } : null;
   }
 
-  override identity(ref: string): Promise<string | null> {
-    return this.#parser().identityFor({
-      name: basename(ref),
-      head: (length) => this.#files.head(ref, length),
-    });
+  // A file that the storage does not hold has no first bytes to identify it
+  // by, so the parser itself names its row, and compute fails that row with
+  // the storage's message.
+  override async identity(ref: string): Promise<string | null> {
+    const parser = this.#parser();
+    try {
+      return await parser.identityFor({
+        name: basename(ref),
+        head: (length) => this.#files.head(ref, length),
+      });
+    } catch (failure) {
+      if (failure instanceof StoredFileMissingError) return parser.identity;
+      throw failure;
+    }
   }
 
   override async compute(

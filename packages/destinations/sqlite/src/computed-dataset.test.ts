@@ -583,6 +583,36 @@ test('a parser identifies a stored file by its file name, with its extension, an
   ]);
 });
 
+test('a parser that identifies a file by its first bytes fails only the row of a file that the storage does not hold, with how to store it again, and the run still succeeds', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  await files.file('b.txt', 'receipt');
+  files.source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+  ];
+  files.replaceParser(new HeadParser('text-v1'));
+  await files.pipeline.run();
+  await rm(join(scratch.path, 'files', 'a.txt'));
+  files.source.rows = [
+    { id: '1', ref: 'a.txt' },
+    { id: '2', ref: 'b.txt' },
+    { id: '3', ref: 'c.txt' },
+  ];
+  files.replaceParser(new HeadParser('text-v2'));
+
+  await files.pipeline.run();
+
+  const missing = (ref: string) =>
+    `The files folder ${join(scratch.path, 'files')} has no file ${ref}. Reload the copy that stored it to store the file again.`;
+  assert.deepEqual(files.read(text), [
+    { ref: 'a.txt', status: 'failed', content: null, error: missing('a.txt') },
+    { ref: 'b.txt', status: 'computed', content: 'receipt', error: null },
+    { ref: 'c.txt', status: 'failed', content: null, error: missing('c.txt') },
+  ]);
+});
+
 // A storage that keeps its files in a folder the rule may not read, as a
 // database keeps them in its tables: open gives a temporary copy of the file
 // that its dispose removes, and head counts its reads. No storage of elt
@@ -592,7 +622,8 @@ class CopyingFiles extends FileStorage {
   override readonly identity = 'copying-files';
   override readonly reference = 'A file of the held folder.';
   heads = 0;
-  // A ref whose open fails as a storage that cannot be reached fails.
+  // A ref whose open and head fail as a storage that cannot be reached fails,
+  // each with its own message.
   unreachable: string | undefined;
   readonly #held: string;
   readonly #copies: string;
@@ -612,6 +643,8 @@ class CopyingFiles extends FileStorage {
   }
 
   override async head(ref: string, length: number) {
+    if (ref === this.unreachable)
+      throw new Error('the held folder is unreachable for a read of a head');
     this.heads += 1;
     return (await readFile(join(this.#held, ref))).subarray(0, length);
   }
@@ -634,8 +667,8 @@ class CopyingFiles extends FileStorage {
 }
 
 // The rows of Files, loaded into raw_files, and the text of each file that
-// they name, which DocumentText reads through a CopyingFiles over held.
-async function copyingImport(directory: string) {
+// they name, which parser reads through a CopyingFiles over held.
+async function copyingImport(directory: string, parser: TextParser) {
   const held = join(directory, 'held');
   const copies = join(directory, 'copies');
   await mkdir(held);
@@ -646,7 +679,6 @@ async function copyingImport(directory: string) {
     path: join(directory, 'data.sqlite'),
   });
   const target = destination.table('files');
-  const parser = new TextParser('text-v1');
   const pipeline = new Pipeline({
     clock: globalThis,
     history: new SQLiteSyncHistory(),
@@ -686,7 +718,7 @@ async function copyingImport(directory: string) {
 
 test('the rule reads each file through its storage: the parser gets a path that the storage opened, the storage removes it after the parse, and a parser that identifies by name reads no bytes', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
-  const files = await copyingImport(scratch.path);
+  const files = await copyingImport(scratch.path, new TextParser('text-v1'));
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
   files.source.rows = [
@@ -711,7 +743,7 @@ test('the rule reads each file through its storage: the parser gets a path that 
 
 test('a storage that fails to open a file for a reason other than not holding it fails the refresh, as a failure of the storage and not of the row of the file', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
-  const files = await copyingImport(scratch.path);
+  const files = await copyingImport(scratch.path, new TextParser('text-v1'));
   await files.file('a.txt', 'invoice 123');
   files.source.rows = [{ id: '1', ref: 'a.txt' }];
   files.storage.unreachable = 'a.txt';
@@ -727,6 +759,29 @@ test('a storage that fails to open a file for a reason other than not holding it
     {
       message:
         'Derived dataset file_text failed: the held folder is unreachable',
+      rows: [],
+    },
+  );
+});
+
+test('a storage that fails to read the first bytes of a file for a reason other than not holding it fails the refresh, when a parser identifies the file by those bytes', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await copyingImport(scratch.path, new HeadParser('text-v1'));
+  await files.file('a.txt', 'invoice 123');
+  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.storage.unreachable = 'a.txt';
+
+  const error = await files.pipeline.run().then(
+    () => assert.fail('the run reported no failure'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof DerivedDatasetError, String(error));
+  assert.deepEqual(
+    { message: error.message, rows: files.read(text) },
+    {
+      message:
+        'Derived dataset file_text failed: the held folder is unreachable for a read of a head',
       rows: [],
     },
   );
