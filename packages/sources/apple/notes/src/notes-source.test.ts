@@ -19,6 +19,7 @@ import { waitFor } from '@zukhruf/testing/async';
 import {
   Connection,
   Copy,
+  LocalFiles,
   Pipeline,
   type ReadMessage,
   type Source,
@@ -313,6 +314,7 @@ const notesPipeline = async (source: AppleNotesSource, directory: string) => {
   const destination = new SQLiteDestination({
     path: join(directory, 'notes.sqlite'),
   });
+  const files = new LocalFiles({ directory: join(directory, 'notes-files') });
   const history = new SQLiteSyncHistory();
   return {
     destination,
@@ -340,7 +342,7 @@ const notesPipeline = async (source: AppleNotesSource, directory: string) => {
                 stream.supportsFileTransfer
                   ? destination.table(stream.name, (columns) => [
                       ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                      columns.blob('bytes').from(stream.file),
+                      columns.text('ref').from(stream.file.store(files)),
                     ])
                   : destination.table(stream.name),
                 {
@@ -573,7 +575,7 @@ test('Notes exports every stream from its store, skipping cloud placeholders and
   );
   assert.deepEqual(
     rows(
-      'SELECT id, noteId, parentId, type, title, filename, ocrText, latitude, longitude, availableLocally, CAST(bytes AS TEXT) AS content FROM attachments ORDER BY id',
+      'SELECT id, noteId, parentId, type, title, filename, ocrText, latitude, longitude, availableLocally, ref AS content FROM attachments ORDER BY id',
     ).map(({ content, ...row }) => ({ ...row, hasBytes: content !== null })),
     [
       {

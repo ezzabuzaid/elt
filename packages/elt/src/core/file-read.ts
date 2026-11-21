@@ -42,7 +42,7 @@ export class FileReference {
 }
 
 // A named extraction request. A stored file becomes a scalar reference before
-// its destination receives it; parsing and byte reads remain separate choices.
+// its destination receives it; parsing and storage remain separate choices.
 export class FileRead {
   readonly name: string;
   readonly file: FileReference;
@@ -113,18 +113,12 @@ export class FileRead {
     };
   }
 
-  // A source that must download a file asks first. A field of bytes or
-  // stored files with no accepting parser needs every file.
+  // A source that must download a file asks first. A field of stored files
+  // with no accepting parser needs every file.
   accepts(fileName: string): boolean {
     return (
       (this.file.acceptedBy?.accepts(fileName) ?? true) &&
       (this.parser?.accepts(fileName) ?? true)
     );
-  }
-
-  get outputType(): 'text' | 'bytes' {
-    return this.parser !== undefined || this.file.storage !== undefined
-      ? 'text'
-      : 'bytes';
   }
 }

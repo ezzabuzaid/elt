@@ -16,7 +16,6 @@ import type {
   TargetDescription,
 } from '@eltjs/elt';
 import {
-  FileContent,
   SomePartitions,
   TargetOwnedError,
   Writer,
@@ -31,7 +30,6 @@ import { openDestination } from './open-destination.ts';
 import type { SQLiteColumn } from './sqlite-column.ts';
 import { describe } from './sqlite-descriptions.ts';
 import type { SQLiteDestination } from './sqlite-destination.ts';
-import { SQLiteFileStore } from './sqlite-file-store.ts';
 import { SQLiteHistory, rowHash } from './sqlite-history.ts';
 import { identifiers, quote } from './sqlite-identifiers.ts';
 import { SQLiteLoad, expire } from './sqlite-loads.ts';
@@ -63,12 +61,12 @@ type Side = {
   readonly rows?: string;
 };
 
-// One stream's load. Operations, and the chunks of their files, wait in
-// connection-private TEMP tables, so another stream's commit never publishes
-// them and a crash leaves nothing behind. As in Postgres, no transaction stays
-// open between commits: prepare only refuses and stages, and each commit is
-// one transaction that merges the stage with the result of applying its
-// operations one at a time, the first also creating the target.
+// One stream's load. Operations wait in connection-private TEMP tables, so
+// another stream's commit never publishes them and a crash leaves nothing
+// behind. As in Postgres, no transaction stays open between commits: prepare
+// only refuses and stages, and each commit is one transaction that merges the
+// stage with the result of applying its operations one at a time, the first
+// also creating the target.
 export abstract class SQLiteWriter extends Writer {
   readonly configuration: CopyConfiguration;
   readonly destination: SQLiteDestination;
@@ -89,12 +87,7 @@ export abstract class SQLiteWriter extends Writer {
     this.table = table;
     this.history = new SQLiteHistory(table);
     this.#view = new SQLiteReaderView(table, this.shown);
-    this.#description = describeTarget(
-      configuration,
-      table.columns,
-      (column) =>
-        `Integer reference to the source file's original bytes. Join ${quote(SQLiteFileStore.tableName(table, column))} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
-    );
+    this.#description = describeTarget(configuration, table.columns);
     const { missing } = this.#description;
     if (missing.length > 0)
       throw new TypeError(
@@ -324,8 +317,8 @@ export abstract class SQLiteWriter extends Writer {
 
   // A clear that empties a table is a change readers see, so it is a load of
   // one numbered commit. It forgets the rows it removes: the history keeps
-  // none of them, so neither they nor their stored files stay, and each
-  // position before the clear expires, as no reading can read it exactly.
+  // none of them, and each position before the clear expires, as no reading
+  // can read it exactly.
   override async clear(
     { writer, clock, connection }: Clearing,
     committed?: (values: FieldValues) => Promise<void>,
@@ -339,8 +332,7 @@ export abstract class SQLiteWriter extends Writer {
         .get(this.table.location)?.writer;
       if (owner !== undefined && owner !== writer)
         throw new TargetOwnedError(this.table.name, String(owner), writer);
-      // Emptied, not dropped: views built on the table keep working. With no
-      // rows left, nothing refers to its stored files.
+      // Emptied, not dropped: views built on the table keep working.
       if (this.exists(database, this.table.location)) {
         const cleared = SQLiteLoad.once(database, connection, {
           clock,
@@ -351,14 +343,6 @@ export abstract class SQLiteWriter extends Writer {
         // Clearing a copy also abandons the reload it left open.
         database.exec(`DROP TABLE IF EXISTS ${quote(this.#hiddenName)}`);
         this.#reloaded(database);
-        // A file column declared after the table's last load has no chunks.
-        for (const column of this.table.columns) {
-          const chunks = SQLiteFileStore.tableName(this.table, column);
-          if (column.storesFile && this.exists(database, chunks))
-            database.exec(
-              `DELETE FROM ${quote(chunks)} WHERE "file" NOT IN (${this.#referenced(database, column, [])})`,
-            );
-        }
       }
       database
         .prepare('DELETE FROM "_elt_writers" WHERE "target" = ?')
@@ -543,27 +527,6 @@ export abstract class SQLiteWriter extends Writer {
       : selects.join(' UNION ');
   }
 
-  // Drops the chunks of every stored column that is no longer one of the
-  // target's file columns, before the table is replaced: no row of the table
-  // that takes its place refers to them, and a reading as of a position reads
-  // only the target's columns.
-  #dropRetiredChunks(database: DatabaseSync): void {
-    const files = new Set(
-      this.table.columns
-        .filter(({ storesFile }) => storesFile)
-        .map(({ name }) => identifiers.key(name)),
-    );
-    for (const { name } of database
-      .prepare('SELECT "name" FROM pragma_table_info(?)')
-      .all(this.table.raw))
-      if (!files.has(identifiers.key(String(name)))) {
-        const chunks = SQLiteFileStore.tableName(this.table, {
-          name: String(name),
-        });
-        database.exec(`DROP TABLE IF EXISTS ${quote(chunks)}`);
-      }
-  }
-
   // Keeps in the history, in a commit of its own, each row with a value in a
   // stored column that the new shape drops or stores as another type: the
   // row loses or changes the value, so it is a new version. Its row hash
@@ -615,7 +578,6 @@ export abstract class SQLiteWriter extends Writer {
     this.#view.drop(database);
     this.dropDedupIndexes(database, null);
     const changedIn = this.#keepChanged(database, load);
-    this.#dropRetiredChunks(database);
     try {
       this.#declaration(this.table.raw).apply(database);
     } catch (cause) {
@@ -714,12 +676,6 @@ export abstract class SQLiteWriter extends Writer {
     const hidden = quote(this.#hiddenName);
     const staging = (table: string) =>
       `CREATE TEMP TABLE ${table} (${seq} INTEGER PRIMARY KEY, ${op} TEXT NOT NULL, ${this.table.columns.map((column) => `${column.quotedName} ${column.storageType}`).join(', ')}, ${version} TEXT)`;
-    const stores = this.table.columns
-      .filter((column) => column.storesFile)
-      .map((column) => ({
-        column,
-        store: new SQLiteFileStore(database, this.table, column),
-      }));
     let mode: ReloadMode;
     // What an open reload reloads; the whole stream until a RESET of a
     // partition opens one.
@@ -730,15 +686,6 @@ export abstract class SQLiteWriter extends Writer {
       [this.table.raw, ...(open(mode) ? [this.#hiddenName] : [])].filter(
         (table) => this.exists(database, identifiers.key(table)),
       );
-    // Drops the chunks of files that no row of the tables or of the history
-    // refers to.
-    const prune = () => {
-      for (const { column, store } of stores)
-        if (store.published)
-          database.exec(
-            `DELETE FROM ${quote(store.name)} WHERE "file" NOT IN (${this.#referenced(database, column, tables())})`,
-          );
-    };
     mode = transaction(
       database,
       () => {
@@ -766,7 +713,6 @@ export abstract class SQLiteWriter extends Writer {
         database.exec(staging(name));
         database.exec(`DROP TABLE IF EXISTS ${reloadStage}`);
         database.exec(staging(reloadName));
-        for (const { store } of stores) store.stage();
         return next;
       },
       { mode: 'immediate' },
@@ -781,20 +727,10 @@ export abstract class SQLiteWriter extends Writer {
     const record = database.prepare(
       `INSERT INTO ${stage} (${op}, ${columns.join(', ')}, ${version}) VALUES ('R', ${columns.map(() => '?').join(', ')}, ?)`,
     );
-    const staged = (column: SQLiteColumn) =>
-      `SELECT ${column.quotedName} FROM ${stage} WHERE ${column.quotedName} IS NOT NULL`;
     // Partitions the stage dropped, which the next commit empties in the
     // table it merges into.
     let resets: Partition[] = [];
-    // Files staged but never merged, and files a merge did not keep.
     const drop = () => {
-      for (const { column, store } of stores) {
-        if (store.published)
-          database.exec(
-            `DELETE FROM ${quote(store.name)} WHERE "file" IN (${staged(column)}) AND "file" NOT IN (${this.#referenced(database, column, tables())})`,
-          );
-        store.discard();
-      }
       database.exec(`DELETE FROM ${stage}`);
       resets = [];
     };
@@ -851,24 +787,8 @@ export abstract class SQLiteWriter extends Writer {
             .run(...values);
           return;
         }
-        // Each file is read here, before the source advances past it. The
-        // row keeps its id, and the row hash its content: each load gives a
-        // file a new id, so a row whose file is the same matches.
-        let data = operation.data;
-        const contents = new Map<SQLiteColumn, Uint8Array>();
-        for (const { column, store } of stores) {
-          const content: unknown = Reflect.get(Object(data), column.field);
-          if (content instanceof FileContent) {
-            const { id, sha256 } = await store.save(content);
-            data = { ...Object(data), [column.field]: id };
-            contents.set(column, sha256);
-          }
-        }
-        const values = this.encode(data);
-        const hashed = this.table.columns.map(
-          (column, index) => contents.get(column) ?? values[index] ?? null,
-        );
-        record.run(...values, rowHash(this.table.columns, hashed));
+        const values = this.encode(operation.data);
+        record.run(...values, rowHash(this.table.columns, values));
       },
       // Each commit is one transaction; a failed one leaves the database as
       // the last commit left it.
@@ -897,7 +817,6 @@ export abstract class SQLiteWriter extends Writer {
               );
               database.prepare(`DELETE FROM ${into()}${rows}`).run(...values);
             }
-            for (const { store } of stores) store.publish();
             const stamp = { loadedAt, committedIn };
             if (replacing) this.#replace(database, stage, stamp);
             else if (open(mode) && reloads instanceof SomePartitions) {
@@ -924,8 +843,6 @@ export abstract class SQLiteWriter extends Writer {
               this.merge(database, reloadStage, stamp, hidden, null);
               database.exec(`DELETE FROM ${reloadStage}`);
             } else this.merge(database, stage, stamp, into(), history);
-            // Files of the rows a reset emptied, and of staged rows it dropped.
-            if (resets.length > 0) prune();
             drop();
           },
           { mode: 'immediate' },
@@ -943,7 +860,6 @@ export abstract class SQLiteWriter extends Writer {
             // Readers see the rows from this commit on, and the rows of the
             // target it replaces up to it.
             const committedIn = load.commit();
-            this.#dropRetiredChunks(database);
             this.history.create(database, this.written);
             // A target of another shape cannot take the rows of the hidden
             // target in place. A reload of partitions keeps the target's
@@ -969,7 +885,6 @@ export abstract class SQLiteWriter extends Writer {
             mode = 'load';
             reloads = wholeStream;
             committed = { mode, reloads };
-            prune();
           },
           { mode: 'immediate' },
         );
@@ -984,7 +899,6 @@ export abstract class SQLiteWriter extends Writer {
         drop();
         database.exec(`DROP TABLE ${stage}`);
         database.exec(`DROP TABLE ${reloadStage}`);
-        for (const { store } of stores) store.unstage();
       },
     };
   }

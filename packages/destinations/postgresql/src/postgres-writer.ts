@@ -5,7 +5,6 @@ import {
   type Clearing,
   type CopyConfiguration,
   type FieldValues,
-  FileContent,
   type KeyValue,
   type Partition,
   type ReloadMode,
@@ -25,7 +24,6 @@ import { quote } from './identifier.ts';
 import type { EncodedValue, PostgresColumn } from './postgres-column.ts';
 import { TargetComments } from './postgres-comments.ts';
 import { rebindDependents } from './postgres-dependents.ts';
-import { PostgresFileStore } from './postgres-file-store.ts';
 import { storedColumns, storedFit } from './postgres-fit.ts';
 import { TargetHistory, rowHash, version } from './postgres-history.ts';
 import type { PostgresLoad, Transaction } from './postgres-load.ts';
@@ -89,12 +87,7 @@ export abstract class PostgresWriter extends Writer {
     this.table = table;
     this.#retention = retention;
     this.#history = new TargetHistory(this.#hash);
-    const description = describeTarget(
-      configuration,
-      table.columns,
-      (column) =>
-        `UUID reference to the source file's original bytes. Join ${new PostgresFileStore(table, column).view} on file = this value and concatenate bytes in order of n. NULL when the source file is unavailable.`,
-    );
+    const description = describeTarget(configuration, table.columns);
     const { missing } = description;
     if (missing.length > 0)
       throw new TypeError(
@@ -339,7 +332,7 @@ export abstract class PostgresWriter extends Writer {
         throw new TargetOwnedError(this.table.name, String(row.writer), writer);
       // Emptied, not dropped: the views built on the table keep working.
       // The rows it removes are forgotten: each position before the
-      // clear expires, so the history keeps none of them, nor their files.
+      // clear expires, so the history keeps none of them.
       const [table] = await transaction.unsafe(
         'SELECT to_regclass($1) IS NOT NULL AS "exists"',
         [this.qualifiedName],
@@ -358,19 +351,6 @@ export abstract class PostgresWriter extends Writer {
       // Clearing a copy also abandons the reload it left open.
       await transaction.unsafe(`DROP TABLE IF EXISTS ${this.#hidden}`);
       await this.#reloaded(transaction);
-      for (const column of this.table.columns.filter(
-        (column) => column.storesFile,
-      )) {
-        const store = new PostgresFileStore(this.table, column);
-        const [chunks] = await transaction.unsafe(
-          'SELECT to_regclass($1) IS NOT NULL AS "exists"',
-          [store.qualifiedName],
-        );
-        // No row is left in the table or its history, so no stored file
-        // stays.
-        if (chunks?.exists === true)
-          await store.prune(transaction, [this.#history.qualifiedName]);
-      }
       await transaction.unsafe(
         `DELETE FROM ${writersTable} WHERE "target" = $1`,
         [this.table.raw],
@@ -423,19 +403,6 @@ export abstract class PostgresWriter extends Writer {
     return inWarehouse(this.#hiddenName);
   }
 
-  // Drops the chunks of every stored column that is no longer one of the
-  // target's file columns, before the table is replaced: no row of the table
-  // that takes its place refers to them.
-  async #dropRetiredChunks(sql: Transaction): Promise<void> {
-    const files = new Set(
-      this.table.columns
-        .filter(({ storesFile }) => storesFile)
-        .map(({ name }) => name),
-    );
-    for (const { name } of await storedColumns(sql, this.qualifiedName))
-      if (!files.has(name)) await PostgresFileStore.drop(sql, this.table, name);
-  }
-
   // Swaps a completed reload's hidden target in last, when the target no
   // longer has the stream's shape, so readers of the stored table wait only
   // for the swap, not the reload. A reader that holds it past the timeout
@@ -451,7 +418,6 @@ export abstract class PostgresWriter extends Writer {
     ]);
     await rebindDependents(sql, this.#readable, async () => {
       await this.#view.drop(sql);
-      await this.#dropRetiredChunks(sql);
       const [target] = await sql.unsafe(
         'SELECT to_regclass($1) IS NOT NULL AS "exists"',
         [this.qualifiedName],
@@ -634,7 +600,6 @@ export abstract class PostgresWriter extends Writer {
         );
       }
       try {
-        await this.#dropRetiredChunks(sql);
         const [constraint] = storedKey;
         if (rekeyed && constraint !== undefined)
           await sql.unsafe(
@@ -782,9 +747,6 @@ export abstract class PostgresWriter extends Writer {
     // What an open reload reloads; the whole stream until a RESET of a
     // partition opens one.
     let reloads: Reloads = wholeStream;
-    const stores = this.table.columns
-      .filter((column) => column.storesFile)
-      .map((column) => new PostgresFileStore(this.table, column));
     await makeWriterTables(sql);
     let mode: ReloadMode = await load.transaction(async (sql) => {
       await this.#refuse(sql, writer);
@@ -792,7 +754,6 @@ export abstract class PostgresWriter extends Writer {
       await sql.unsafe(staging(stage));
       await sql.unsafe(`DROP TABLE IF EXISTS pg_temp.${reloadStage}`);
       await sql.unsafe(staging(reloadStage));
-      for (const store of stores) await store.stage(sql);
       const target = await storedFit(
         sql,
         this.table,
@@ -828,10 +789,6 @@ export abstract class PostgresWriter extends Writer {
     };
     const open = () => mode === 'reload' || mode === 'continue';
     const into = () => (open() ? this.#hidden : this.qualifiedName);
-    const tables = () => [
-      ...(open() ? [this.qualifiedName, this.#hidden] : [this.qualifiedName]),
-      this.#history.qualifiedName,
-    ];
     const { columns } = this.table;
     // One JSON parameter per batch, cast back per column: no bind-parameter
     // limit. Declared text so the driver sends it as given.
@@ -855,7 +812,6 @@ export abstract class PostgresWriter extends Writer {
       pendingBytes = 0;
       resets = [];
       await sql.unsafe(`TRUNCATE ${stage}`);
-      for (const store of stores) await store.discard(sql);
     };
     // The first commit claims the target: it owns the hidden target of a
     // reload, or creates or adopts the table, and before its transaction it
@@ -915,35 +871,13 @@ export abstract class PostgresWriter extends Writer {
             reloads = reloads.with(partition);
           return;
         }
-        // Each file is read here, before the source advances past it. The
-        // row keeps its id, and the row hash its content: each load gives a
-        // file a new id, so a row whose file is the same matches.
-        let data = operation.type === 'RECORD' ? operation.data : undefined;
-        const contents = new Map<PostgresColumn, Uint8Array>();
-        for (const store of stores) {
-          const content: unknown = Reflect.get(
-            Object(data),
-            store.column.field,
-          );
-          if (content instanceof FileContent) {
-            const { file, sha256 } = await store.save(sql, content);
-            data = { ...Object(data), [store.column.field]: file };
-            contents.set(store.column, sha256);
-          }
-        }
+        const data = operation.type === 'RECORD' ? operation.data : undefined;
         const row =
           operation.type === 'RECORD'
             ? this.encode(data)
             : this.deletionRow(operation.key);
         const hashed =
-          operation.type === 'RECORD'
-            ? rowHash(
-                columns,
-                columns.map(
-                  (column, index) => contents.get(column) ?? row[index] ?? null,
-                ),
-              )
-            : null;
+          operation.type === 'RECORD' ? rowHash(columns, row) : null;
         const text = this.#serialize(
           [next++, operation.type === 'RECORD' ? 'R' : 'D', ...row, hashed],
           data,
@@ -975,7 +909,6 @@ export abstract class PostgresWriter extends Writer {
               await sql.unsafe(`DELETE FROM ${into()}${rows}`, values);
             else await history.remove(sql, committedIn, into(), rows, values);
           }
-          for (const store of stores) await store.publish(sql);
           const written = { loadedAt: load.loadedAt, committedIn };
           if (replacing) await this.#replace(sql, stage, written);
           else if (open() && reloads instanceof SomePartitions) {
@@ -1004,7 +937,6 @@ export abstract class PostgresWriter extends Writer {
           } else await this.merge(sql, stage, written, into(), history);
           await sql.unsafe(`TRUNCATE ${stage}`);
           await this.#history.expire(sql);
-          for (const store of stores) await store.prune(sql, tables());
         });
         claiming = claimed;
         // Its first commit made the hidden target, so the reload continues.
@@ -1038,11 +970,6 @@ export abstract class PostgresWriter extends Writer {
           else await this.#swap(sql, committedIn);
           await this.#reloaded(sql);
           await this.#history.expire(sql);
-          for (const store of stores)
-            await store.prune(sql, [
-              this.qualifiedName,
-              this.#history.qualifiedName,
-            ]);
         });
         mode = 'load';
         reloads = wholeStream;
@@ -1058,7 +985,6 @@ export abstract class PostgresWriter extends Writer {
         await drop();
         await sql.unsafe(`DROP TABLE pg_temp.${stage}`);
         await sql.unsafe(`DROP TABLE pg_temp.${reloadStage}`);
-        for (const store of stores) await store.unstage(sql);
       },
     };
   }

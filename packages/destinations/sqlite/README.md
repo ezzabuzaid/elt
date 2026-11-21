@@ -42,7 +42,7 @@ Tables:
 
 - SQLite makes strict tables. SQL constraints that exist stay in force.
 - Each copy adds `loaded_at`, the UTC start time of the load that wrote the values of the row. A field with that name gets a different column name.
-- Each copy also adds `committed_in`, the number of the [commit](#commit-numbers-and-positions) that last wrote the row, and `_elt_row_hash`, the SHA-256 of the values of its columns. A [file in the SQLite file](#file-bytes-in-the-database) counts by the SHA-256 of its bytes, not by its id. A field with one of these names also gets a different column name. So does a field with the name `_rowid_`: SQLite reads that name as the id of each row, which an overwrite and a reload use.
+- Each copy also adds `committed_in`, the number of the [commit](#commit-numbers-and-positions) that last wrote the row, and `_elt_row_hash`, the SHA-256 of the values of its columns. A field with one of these names also gets a different column name. So does a field with the name `_rowid_`: SQLite reads that name as the id of each row, which an overwrite and a reload use.
 - The external schema of a stream, which a reader sees, is its columns and `loaded_at`. A reader view, each view of a [reading](#commit-numbers-and-positions), `asOfSelect` and `asOfDefinitions` show exactly these columns. `committed_in`, `_elt_row_hash`, `replaced_in` and `_rowid_` are internal: only the SQL of the destination reads them, for the history, the retention, the readings and the difference. Thus a column that the destination adds for itself changes nothing that a reader sees, as SQL Server hides the period columns of a temporal table that it marks `HIDDEN`. SQLite cannot hide a column of a table, so a raw table itself shows `committed_in` and `_elt_row_hash`. Readers query the reader view.
 - When a deduplicating load, an overwrite or a reload brings a row with the same values as a stored row, it leaves the stored row as it is, with its `loaded_at` and its `committed_in`. A deduplicating load finds the stored row by its key. An overwrite and a reload find it by [difference](#commit-numbers-and-positions), also in a table with no key.
 - Deduplication upserts on a unique index that is named after the table and the key (`_elt_dedup_<hash>`). SQLite makes the index one time, and makes it again only when the key changes. It uses the native [UPSERT with a cursor comparison](https://www.sqlite.org/lang_upsert.html).
@@ -60,32 +60,6 @@ Counts:
 - `deleted` is the number of accepted deletions, also keys that were not there.
 - Neither count is the final number of rows.
 
-## File bytes in the database
-
-`c.blob('bytes').from(notes.attachments.file)` keeps the original bytes of a file in the SQLite file, not in a [file storage](../../elt/README.md#local-files). It does not depend on `.store(files)`. The file and its row then commit together. See [stored files](../../elt/README.md#stored-files-and-document-parsing) in elt for the declarations.
-
-SQLite stores an original file in chunks, because one BLOB has a limit of 1,000,000,000 bytes (`SQLITE_MAX_LENGTH` in the build of Node), and a value of the full file would stay in memory.
-
-- The `bytes` column holds an `INTEGER` file id. Each load gives each file a new id.
-- A table `_elt_files_<hash>` for each column holds `(file, n, bytes)` rows of up to 4 MiB. `n` counts from 0.
-- The ids of a chunk table only go up. The reserved table `_elt_file_ids` keeps the highest id that each chunk table gave, as `sqlite_sequence` keeps the highest rowid of a table with `AUTOINCREMENT`. Thus a new file never takes the id of a file that a row of the [history](#commit-numbers-and-positions) refers to, also when the chunk table was dropped and made again.
-- The hash is the first 40 hex characters of the SHA-256 of `JSON.stringify([table, column])`, with the two names in ASCII lower case. Thus table `a_b` with column `c` and table `a` with column `b_c` keep their chunks apart.
-- The description of the column names its chunk table.
-- An empty file has one empty chunk. A file that is not available gives a null value.
-- The chunks of a file stay while a row of the table or of its history refers to the file. Thus a [reading](#commit-numbers-and-positions) as of a position reads the bytes of each file that the position shows. When the [retention](#retention) deletes the last history row that refers to a file, the same commit deletes its chunks.
-- A commit deletes the chunks of each file that it staged and that no row of the table or of its history refers to. Thus a record that a deduplication guard refuses stores no chunks. The commit that resets a partition, the commit at the end of a reload, and a clear delete the chunks of each file that no row of the table or of its history refers to. A clear leaves no history row of the table, so it deletes all of its chunks.
-- When a row with a file has the same values as a stored row, also the same file bytes, the stored row stays with its file id. The commit deletes the chunks of the new copy of the file.
-
-Read a file back in order, with the chunk table that the description names:
-
-```sql
-SELECT c.bytes FROM "_elt_files_<hash>" AS c
-WHERE c.file = (SELECT bytes FROM attachments WHERE id = ?)
-ORDER BY c.n;
-```
-
-Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as 358 chunks in 3.3 s, with a peak RSS of 137 MiB. The chunks put together again had the SHA-256 of the file.
-
 ## Locks and commits
 
 - The SQLite file has a [persistent WAL](./CONTEXT.md). Each connection that writes the file opens it with `openDestination(path)`, which gives the journal `PersistentWriteAheadLog` of `@zukhruf/sqlite-open`. The last connection that writes the file and closes decides if the `-wal` and `-shm` files stay, so all of these connections use it. Use `openDestination` also in a host that opens the file to write.
@@ -100,8 +74,6 @@ Checked on 2026-09-24 (macOS 26.6.2, Node.js 26.8.1): a file of 1.5 GB loaded as
 - Other writers of the file wait only for a commit. A stream that fails before its first commit leaves nothing.
 - Each stream stages its operations in a `TEMP` table that only its connection sees. The commit of a different stream never publishes them, and a crash leaves nothing.
 - A commit merges the staged operations of one stream into its table. The result is the same as when the operations apply one at a time: a staged `DELETE` removes its key, only the records after the last `DELETE` of a key count, `replace` keeps the last record, and `cursor_newer` keeps the first record with the greatest cursor.
-- Original files stream into a `TEMP` chunk table that only the connection sees, and they get to the store in the commit of their rows.
-- A file column that the target drops takes its chunk table with it when the table evolves or a reload replaces it. A reading as of a position reads only the columns of the table, so it does not read that column.
 - `:memory:` is possible only for a full refresh. The database of the run is gone when its handle closes, so it cannot keep incremental progress.
 
 ## Commit numbers and positions
@@ -117,7 +89,6 @@ Each commit in the SQLite file has a number. A reader that compares the file at 
   - A row of the table with no match goes into the history and leaves the table.
   - A new row with no match enters the table with the number of the commit.
 - An overwrite applies the difference in its one commit, to the records that it staged. A reload applies it, to the rows of its hidden table, in the commit at the end of the stream. The table keeps its indexes, its triggers and its reader view. When the table has a different shape than the hidden table, the reload puts the hidden table in its place, and every row of the table goes into the history.
-- A file in the SQLite file counts in `_elt_row_hash` by the SHA-256 of its bytes, which the load calculates while it stages the chunks. Each load gives the file a new id, but a row whose file has the same bytes matches. The row keeps its file id, and the commit deletes the chunks of the new copy.
 - The table `_elt_epoch` keeps the epoch, an id that names the numbering. A file that is made again, or tables that a different version declared in a different way, start a new epoch.
 - `destination.positions(after?)` gives the positions after the position `after`, in ascending order, or all positions. A position is `<epoch>:<number>`. It names the last commit of a closed load, when no other load has commits before and after it. With no `after`, it gives each position from [min valid](#retention) on. When `after` is of a different epoch, is after the newest commit, or is older than min valid, `positions` gives `{ expired }` with the reason. It opens the file read-only.
 - A clear that empties a table is a load of one commit. It does not close the open loads of its connection.
@@ -148,13 +119,13 @@ new SQLiteDestination({
 });
 ```
 
-- In each commit, let W be the newest position whose commit is older than now minus the retention. The commit deletes each history row with `replaced_in ≤ W`, and the chunks of each file that only those rows refer to. It sets min valid, the column `min_valid` of `_elt_epoch`, to W. This is the `MIN_VALID_VERSION` of SQL Server change tracking.
+- In each commit, let W be the newest position whose commit is older than now minus the retention. The commit deletes each history row with `replaced_in ≤ W`. It sets min valid, the column `min_valid` of `_elt_epoch`, to W. This is the `MIN_VALID_VERSION` of SQL Server change tracking.
 - Min valid is a position, and it never passes the newest position. Thus a pass that stays open longer than the retention does not expire the position before it.
 - A position older than min valid is expired: `reading`, `positions` and `asOfSelect` give `{ expired }` with a reason that names the retention.
 - A file in a [file storage](../../elt/README.md#local-files) that only the deleted history rows refer to goes when the stream of its table next commits.
 - The same commit deletes each row of `_elt_commits` with a number less than W, and each closed load of `_elt_loads` that has no commit left. W is a position, so each load with a commit before W ends at or before W. The row of W stays, because a reading as of W gives its `committed_at`. A `committed_in` of a row is only compared with numbers, so it needs no row in `_elt_commits`. An open load stays, also when it has no commit yet.
 - A retention that is less than zero throws a `RangeError`. A retention in months or years throws a `RangeError` of `Temporal`, because their length depends on the date.
-- A clear forgets the rows that it removes. Its commit C sets min valid to C, and `expired_by` to `clear`: each history row with `replaced_in ≤ C` goes, so the history of the cleared table keeps none of its rows, and its chunks go too. A position before C gives `{ expired }` with a reason that names the clear. The same commit deletes the rows of `_elt_commits` and `_elt_loads` that the retention deletes.
+- A clear forgets the rows that it removes. Its commit C sets min valid to C, and `expired_by` to `clear`: each history row with `replaced_in ≤ C` goes, so the history of the cleared table keeps none of its rows. A position before C gives `{ expired }` with a reason that names the clear. The same commit deletes the rows of `_elt_commits` and `_elt_loads` that the retention deletes.
 
 ## Checkpoints
 
@@ -180,7 +151,7 @@ new SQLiteDestination({
 
 ## Reserved names
 
-The destination and its sync history own each table, index and view whose name starts with `_elt_`, in any case. Examples are `_elt_writers`, `_elt_descriptions`, `_elt_commits`, the chunk tables `_elt_files_<hash>` and the sync history's `_elt_sync_attempts`. A stream, a view or a computed dataset never has such a name, and `publishSQLiteViews` refuses one. A reader that follows the data of a file, such as a changefeed, skips these tables with `isReserved(name)`:
+The destination and its sync history own each table, index and view whose name starts with `_elt_`, in any case. Examples are `_elt_writers`, `_elt_descriptions`, `_elt_commits` and the sync history's `_elt_sync_attempts`. A stream, a view or a computed dataset never has such a name, and `publishSQLiteViews` refuses one. A reader that follows the data of a file, such as a changefeed, skips these tables with `isReserved(name)`:
 
 ```ts
 import { isReserved } from '@eltjs/elt-sqlite';

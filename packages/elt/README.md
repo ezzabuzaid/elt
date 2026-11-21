@@ -518,7 +518,7 @@ class ChatSource extends Source<ChatDatabase> {
 
 ## Stored files and document parsing
 
-A stream that supports file transfer, such as `attachments` of Notes, gives a file with each record. A copy declares in its columns what it takes from the file: the parsed text, a stored file, or the bytes in the database.
+A stream that supports file transfer, such as `attachments` of Notes, gives a file with each record. A copy declares in its columns what it takes from the file: the parsed text, or a stored file.
 
 ```ts
 import { Connection, Copy, LocalFiles, Pipeline } from '@eltjs/elt';
@@ -562,15 +562,15 @@ This copy stores the selected metadata of the source, the parsed `content`, and 
 ### Declarations
 
 - `notes.attachments.file` is an immutable reference to the file of the source, not a path. The other streams of Notes refuse file access.
-- `.from(file)` selects the original file. `.parse(parser)` asks for its text.
+- `.from(file)` selects the file of the source. `.parse(parser)` asks for its text.
 - `.store(files)` on the file reference selects a file storage, apart from the connection and the destination. Two fields can use different storages, and copies can share one storage and still own their files apart.
 - A stored file and parsed text must be separate fields. `.parse()` on a stored file field is refused.
-- `c.blob('bytes').from(file)` keeps the original bytes in the database. See [elt-sqlite](../destinations/sqlite/README.md#file-bytes-in-the-database) and [elt-postgresql](../destinations/postgresql/README.md#file-bytes-in-the-database). A plain `c.blob('bytes')` reads the existing `bytes` field of a record into an inline value.
-- Original bytes need a `BLOB` column. Parsed text and stored file references need `TEXT`. `.notNull()` and `.primaryKey()` apply to these fields.
+- A file field is a `TEXT` column of parsed text, `.from(file).parse(parser)`, or of stored file references, `.from(file.store(files))`. A file field with neither fails before the copy extracts. `.notNull()` and `.primaryKey()` apply to these fields.
+- A plain `c.blob('bytes')` reads the existing `bytes` field of a record into an inline value.
 - Types that do not agree, the file reference of a different stream, and fields with the name of a field of the source metadata or of `loaded_at` fail before the copy extracts.
 - A bare table still infers the metadata schema of the source. To keep all metadata beside the file columns, spread `SQLiteColumns.fromSchema(notes.attachments.jsonSchema)` into the columns.
 - All declarations are immutable and do no I/O. A storage that you make and a field that you declare do no I/O either. The copy never writes the source schema again to describe the fields of the destination.
-- One copy can take several named forms of one file. The copy reads each record one time. Fields with the same parser instance share one parse, and fields of the original bytes share one read. Separate copies keep separate extraction and checkpoint progress.
+- One copy can take several named forms of one file. The copy reads each record one time. Fields with the same parser instance share one parse, and fields of stored files share one read. Separate copies keep separate extraction and checkpoint progress.
 - To keep no original file, leave out the stored reference. To export no file, leave out all file columns.
 
 ```ts
@@ -585,15 +585,6 @@ new Copy(
       .parse(new MacOSDocumentParser()),
   ]),
 );
-
-// Original bytes only; no parser runs.
-new Copy(
-  notes.attachments,
-  sqlite.table('originals', (c) => [
-    c.text('id'),
-    c.blob('bytes').from(notes.attachments.file),
-  ]),
-);
 ```
 
 ### How a source gives files
@@ -603,7 +594,7 @@ new Copy(
 - A path must stay readable until the consumer moves past its record. It can be a staged copy that the source removes after, or the original file when a copy would cost too much. Notes and Messages give their original attachment files.
 - The replication refuses a record that still holds a source file path (`Destinations cannot receive source file paths`).
 - A source names a staged copy with `fileExtension` from `elt`: the extension of the file when it is 1 to 16 letters or digits, else none. The original file name stays in the source metadata.
-- A source that must download a file, such as one that reads a cloud API, downloads it only when a field accepts its name: `configuration.fileReads.some((read) => read.accepts(name))`. A field with a parser accepts what its parser accepts. A field of bytes or of stored files accepts every file, unless its reference is narrowed: `stream.file.accepting(parser).store(files)` stores only the files that `parser` accepts, so a [computed dataset](#attachment-text) that parses the stored copies with the same parser gets no file it cannot read. A record whose file no field accepts yields `file: null`, and a field that does not accept a yielded file loads null. Airbyte's file-based sources likewise choose files by name, with [globs](https://github.com/airbytehq/airbyte-python-cdk/blob/f77450f74def59598cda8e1e9a4e975031710c18/airbyte_cdk/sources/file_based/file_based_stream_reader.py), before they read one.
+- A source that must download a file, such as one that reads a cloud API, downloads it only when a field accepts its name: `configuration.fileReads.some((read) => read.accepts(name))`. A field with a parser accepts what its parser accepts. A field of stored files accepts every file, unless its reference is narrowed: `stream.file.accepting(parser).store(files)` stores only the files that `parser` accepts, so a [computed dataset](#attachment-text) that parses the stored copies with the same parser gets no file it cannot read. A record whose file no field accepts yields `file: null`, and a field that does not accept a yielded file loads null. Airbyte's file-based sources likewise choose files by name, with [globs](https://github.com/airbytehq/airbyte-python-cdk/blob/f77450f74def59598cda8e1e9a4e975031710c18/airbyte_cdk/sources/file_based/file_based_stream_reader.py), before they read one.
 
 ### Local files
 
@@ -1249,7 +1240,6 @@ src/core/
   file-read.ts          FileRead and FileReference: the file declarations of a copy
   file-transfer.ts      the save, flush and retain of stored files around each commit
   file-storage.ts       FileStorage: the port of each file storage
-  stored-file.ts        storedChunkSize and writeChunks: the chunks of a file that a destination keeps in its database
   document-parser.ts    DocumentParser: the port of each parser
   position.ts           Position, Numbering and the rules of positions that each destination applies
   formats/              the string formats

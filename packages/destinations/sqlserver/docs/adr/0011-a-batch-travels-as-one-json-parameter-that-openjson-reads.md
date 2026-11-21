@@ -2,6 +2,8 @@
 
 Status: accepted by Ezz (2026-11-19).
 
+Superseded in part on 2026-11-22 (#5170): `blob().from(file)` and its file chunks are gone. The probe of one file chunk of 4 MiB below still shows that `BASE64_DECODE` takes the `varchar` that `OPENJSON` reads, which a plain `blob()` column uses.
+
 Each stream stages its operations before each commit. elt-postgresql sends a batch of at most 1,000 rows or 16 MiB as one JSON parameter, and casts it for each column. The driver of SQL Server for Node, `mssql` on tedious, sends no `VECTOR` and no `JSON` value on the wire: Microsoft's driver matrix gives "No" for tedious and `VECTOR`, and tedious pull request [#1841](https://github.com/tediousjs/tedious/pull/1841) is open. For such a client, "SQL Server continues to expose vector data as varchar(max)", and it converts a JSON array to a vector ([vector data type](https://learn.microsoft.com/sql/t-sql/data-types/vector-data-type)).
 
 The leaders:

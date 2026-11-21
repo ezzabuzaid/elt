@@ -5,7 +5,7 @@ A host wants the data that elt copies in a Postgres database, with typed columns
 ## Language
 
 **Schema**:
-One of the two Postgres schemas of a database, which the destination fixes. `marts` holds each relation that readers query, and each one is a view. `_warehouse` holds each table of elt: the raw tables, their histories and file chunks, the writers, the checkpoints, the numbering and the sync history. A host names no schema.
+One of the two Postgres schemas of a database, which the destination fixes. `marts` holds each relation that readers query, and each one is a view. `_warehouse` holds each table of elt: the raw tables, their histories, the writers, the checkpoints, the numbering and the sync history. A host names no schema.
 _Avoid_: Database (a database holds the two schemas), namespace
 
 **Reader name**:
@@ -65,7 +65,7 @@ The highest commit number below the first number that a commit still holds. Each
 _Avoid_: Newest commit (a commit with a higher number can have ended first), watermark
 
 **Row hash**:
-`_elt_row_hash`: the SHA-256 of the values of a row, computed when the row is staged. A stored file counts as the SHA-256 of its bytes. A commit that finds the stored row with the same hash leaves it as it is.
+`_elt_row_hash`: the SHA-256 of the values of a row, computed when the row is staged. A commit that finds the stored row with the same hash leaves it as it is.
 _Avoid_: Checksum, version number
 
 **History**:

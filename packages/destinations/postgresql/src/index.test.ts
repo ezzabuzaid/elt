@@ -31,7 +31,6 @@ import {
   Stream,
   type StreamSchema,
   diffSnapshot,
-  storedChunkSize,
 } from '@eltjs/elt';
 
 import {
@@ -40,7 +39,6 @@ import {
   PostgresDestination,
   PostgresSyncHistory,
 } from './index.ts';
-import { PostgresFileStore } from './postgres-file-store.ts';
 
 // The upstream of a test source, which the test fills before a watch and
 // writes again at each of the next checks, as many times as writes says: a
@@ -266,14 +264,6 @@ test('Postgres stores per-field attachment references and reconciles only the fi
     assert.equal((await storedFiles(directories[i])).length, 1);
   }
   assert.notEqual(first.ref0, first.ref1);
-  assert.equal(
-    (
-      await sql.unsafe(
-        "SELECT count(*)::int AS n FROM information_schema.tables WHERE table_schema = '_warehouse' AND table_name LIKE '_elt_files_%'",
-      )
-    )[0]?.n,
-    0,
-  );
 
   await pipeline.run();
   assert.deepEqual(await loaded(), [first, unavailable]);
@@ -331,7 +321,7 @@ test('Postgres stores per-field attachment references and reconciles only the fi
     assert.equal((await storedFiles(directory)).length, 0);
 });
 
-test('renamed file columns keep their original bytes and stored files through later commits', async () => {
+test('a renamed stored-file column keeps its stored files through later commits', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-renamed-pg-');
 
   await using database = await databases.database();
@@ -381,7 +371,6 @@ test('renamed file columns keep their original bytes and stored files through la
               c.text('id'),
               c.integer('version'),
               c.text('Stored Ref').from(stream.file.store(store)),
-              c.blob('Original Bytes').from(stream.file),
             ]),
             {
               id: 'docs',
@@ -394,20 +383,6 @@ test('renamed file columns keep their original bytes and stored files through la
       }),
     ],
   });
-  // Original bytes are read as the column's comment tells a reader to.
-  const original = async (id: string) => {
-    const [comment] =
-      await sql`SELECT col_description('marts.docs'::regclass, attnum) AS text
-          FROM pg_attribute WHERE attrelid = 'marts.docs'::regclass AND attname = 'Original_Bytes'`;
-    const chunks = /Join (\S+) on file/.exec(String(comment?.text))?.[1];
-    assert.ok(chunks, String(comment?.text));
-    const [row] = await sql.unsafe(
-      `SELECT convert_from(string_agg(c.bytes, ''::bytea ORDER BY c.n), 'UTF8') AS text
-          FROM marts.docs d JOIN ${chunks} c ON c.file = d."Original_Bytes" WHERE d.id = $1`,
-      [id],
-    );
-    return row?.text;
-  };
   const stored = async (id: string) =>
     (await sql`SELECT "Stored_Ref" AS ref FROM marts.docs WHERE id = ${id}`)[0]
       ?.ref;
@@ -421,7 +396,6 @@ test('renamed file columns keep their original bytes and stored files through la
   ];
   await pipeline.run();
 
-  assert.equal(await original('a'), 'original');
   assert.equal(
     await readFile(join(store.directory, String(await stored('a'))), 'utf8'),
     'original',
@@ -642,7 +616,7 @@ test('invalid schema annotations fail before extraction or storage access', asyn
   }
 });
 
-test('file text and bounded original bytes survive replay, replacement and deletion with checkpoints', async () => {
+test('file text survives replay, replacement and deletion with checkpoints', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = clients.adopt(
@@ -654,8 +628,8 @@ test('file text and bounded original bytes survive replay, replacement and delet
   );
   const file = join(scratch.path, 'note.txt');
   const empty = join(scratch.path, 'empty.txt');
-  const bytes = Buffer.alloc(storedChunkSize + 3, 'a');
-  await writeFile(file, bytes);
+  const text = 'note text';
+  await writeFile(file, text);
   await writeFile(empty, '');
   class TextParser extends DocumentParser {
     constructor() {
@@ -689,11 +663,7 @@ test('file text and bounded original bytes survive replay, replacement and delet
     c.text('id'),
     c.integer('version'),
     c.text('content').from(stream.file).parse(new TextParser()),
-    c.blob('bytes').from(stream.file),
   ]);
-  const fileColumn = table.columns.find((column) => column.name === 'bytes');
-  assert.ok(fileColumn);
-  const store = new PostgresFileStore(table, fileColumn);
   const pipeline = new Pipeline({
     clock: globalThis,
     history: new PostgresSyncHistory({ url: database.connectionString }),
@@ -730,49 +700,23 @@ test('file text and bounded original bytes survive replay, replacement and delet
   );
   assert.match(descriptions.content, /test-text/);
   assert.match(descriptions.content, /NULL.*no text/);
-  assert.ok(descriptions.bytes.includes(store.view));
-  assert.match(descriptions.bytes, /UUID/);
-  assert.match(descriptions.bytes, /order.*n/i);
   const initial =
-    await sql`SELECT id, bytes, loaded_at FROM marts.attachments ORDER BY id`;
+    await sql`SELECT id, content, loaded_at FROM marts.attachments ORDER BY id`;
   assert.deepEqual(
-    (
-      await sql`SELECT id, length(content) AS length, bytes IS NULL AS missing FROM marts.attachments ORDER BY id`
-    ).map((row) => ({ ...row })),
+    initial.map(({ id, content }) => ({ id, content })),
     [
-      { id: 'empty', length: 0, missing: false },
-      { id: 'missing', length: null, missing: true },
-      { id: 'note', length: bytes.length, missing: false },
+      { id: 'empty', content: '' },
+      { id: 'missing', content: null },
+      { id: 'note', content: text },
     ],
   );
-  const chunks = await sql.unsafe<{ bytes: Buffer }[]>(
-    `SELECT chunks.bytes FROM ${store.view} chunks JOIN marts.attachments a ON a.bytes = chunks.file WHERE a.id = 'note' ORDER BY chunks.n`,
-  );
-  assert.deepEqual(
-    chunks.map((chunk) => chunk.bytes.length),
-    [storedChunkSize, 3],
-  );
-  assert.deepEqual(Buffer.concat(chunks.map((chunk) => chunk.bytes)), bytes);
-  // Chunks that no row of the table or of its history refers to.
-  const [history] = await sql<{ name: string }[]>`
-    SELECT relname AS name FROM pg_class
-    WHERE relnamespace = '_warehouse'::regnamespace AND relkind = 'r' AND relname LIKE '\\_elt\\_history\\_%'`;
-  assert.ok(history);
-  const orphanCount = async () =>
-    (
-      await sql.unsafe(
-        `SELECT count(*)::int AS n FROM ${store.qualifiedName} chunks WHERE NOT EXISTS (SELECT 1 FROM _warehouse.raw_attachments a WHERE a.bytes = chunks.file) AND NOT EXISTS (SELECT 1 FROM _warehouse."${history.name}" h WHERE h.bytes = chunks.file)`,
-      )
-    )[0]?.n;
-  assert.equal(await orphanCount(), 0);
 
-  // The cursor guard rejects these replays, including their newly staged files.
+  // The cursor guard rejects these replays.
   await pipeline.run();
   assert.deepEqual(
-    await sql`SELECT id, bytes, loaded_at FROM marts.attachments ORDER BY id`,
+    await sql`SELECT id, content, loaded_at FROM marts.attachments ORDER BY id`,
     initial,
   );
-  assert.equal(await orphanCount(), 0);
   assert.equal(
     (await sql`SELECT count(*)::int AS n FROM _warehouse._elt_checkpoints`)[0]
       ?.n,
@@ -790,17 +734,15 @@ test('file text and bounded original bytes survive replay, replacement and delet
       ?.content,
     'updated',
   );
-  assert.equal(await orphanCount(), 0);
-  // The history keeps the first version of note and the deleted empty, and
-  // so their chunks beside the one of the updated note.
-  assert.equal(
-    (
-      await sql.unsafe(`SELECT count(*)::int AS n FROM ${store.qualifiedName}`)
-    )[0]?.n,
-    4,
+  assert.deepEqual(
+    (await sql`SELECT id FROM marts.attachments ORDER BY id`).map(
+      ({ id }) => id,
+    ),
+    ['missing', 'note'],
   );
 
-  // A failed record discards files already staged by this uncommitted batch.
+  // A failed record discards the rows already staged by this uncommitted
+  // batch.
   source.messages = [
     { stream: stream.name, data: { id: 'note', version: 3 }, file: empty },
     { stream: stream.name, data: { id: 'bad', version: 'invalid' }, file },
@@ -811,20 +753,10 @@ test('file text and bounded original bytes survive replay, replacement and delet
       ?.content,
     'updated',
   );
-  assert.equal(await orphanCount(), 0);
 
   await pipeline.clear();
-  // The clear empties the table and forgets each row it cleared, so no row
-  // of its history keeps a chunk.
   assert.equal(
     (await sql`SELECT count(*)::int AS n FROM marts.attachments`)[0]?.n,
-    0,
-  );
-  assert.equal(await orphanCount(), 0);
-  assert.equal(
-    (
-      await sql.unsafe(`SELECT count(*)::int AS n FROM ${store.qualifiedName}`)
-    )[0]?.n,
     0,
   );
   assert.equal(
@@ -1658,100 +1590,6 @@ test('an explicit primary key a target gains or drops after a reset is added to 
       { id: 'b', title: 'B again' },
     ],
   );
-});
-
-test('a file column the target drops takes its stored chunks with it, whether its table evolves or an overwrite reloads it', async () => {
-  for (const modes of [
-    { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
-    { syncMode: 'full_refresh', destinationSyncMode: 'overwrite' },
-  ] as const) {
-    await using scratch = await new TemporaryFiles().directory('elt-files-pg-');
-    await using database = await databases.database();
-    await using clients = new AsyncDisposableStack();
-    const sql = clients.adopt(
-      postgres(database.connectionString, { max: 2, onnotice: () => {} }),
-      (sql) => sql.end(),
-    );
-    const file = join(scratch.path, 'a.bin');
-    await writeFile(file, 'aye');
-    const stream = new Stream({
-      name: 'files',
-      jsonSchema: {
-        type: 'object',
-        description: 'A test record.',
-        properties: {
-          id: { type: 'string', description: 'Record id.' },
-          version: { type: 'integer', description: 'Record version.' },
-        },
-        required: ['id', 'version'],
-      },
-      supportedSyncModes: ['full_refresh', 'incremental'],
-      primaryKey: ['id'],
-      supportsFileTransfer: true,
-      sourceDefinedCursor: true,
-    });
-    const source = new Messages(stream);
-    const destination = new PostgresDestination({
-      url: database.connectionString,
-    });
-    const checkpoints = new PostgresCheckpointStore({
-      url: database.connectionString,
-    });
-    const history = new PostgresSyncHistory({ url: database.connectionString });
-    const run = (withBytes: boolean) => {
-      // A target that stores no file is sent none.
-      source.messages = [
-        {
-          stream: stream.name,
-          data: { id: 'a', version: 1 },
-          ...(withBytes ? { file } : {}),
-        },
-      ];
-      return new Pipeline({
-        clock: globalThis,
-        history,
-        connections: [
-          new Connection({
-            name: 'test',
-            source,
-            destination,
-            checkpoints,
-            steps: [
-              new Copy(
-                stream,
-                destination.table('files', (c) => [
-                  c.text('id'),
-                  c.integer('version'),
-                  ...(withBytes ? [c.blob('bytes').from(stream.file)] : []),
-                ]),
-                { id: 'files', ...modes },
-              ),
-            ],
-          }),
-        ],
-      }).run();
-    };
-    const chunkTables = async () =>
-      (
-        await sql`SELECT table_name FROM information_schema.tables WHERE table_schema = '_warehouse' AND table_name LIKE '\_elt\_files\_%'`
-      ).map(({ table_name }) => table_name);
-    await run(true);
-    const before = await chunkTables();
-    // Dropping a column changes the copy, which an incremental copy's reset
-    // accepts, keeping its rows.
-    await checkpoints.reset('files');
-
-    await run(false);
-
-    assert.equal(before.length, 1, modes.destinationSyncMode);
-    assert.deepEqual(await chunkTables(), [], modes.destinationSyncMode);
-    assert.deepEqual(
-      (await sql`SELECT id, version FROM marts.files`).map((row) => ({
-        ...row,
-      })),
-      [{ id: 'a', version: '1' }],
-    );
-  }
 });
 
 test('declarations are checked before any connection', () => {

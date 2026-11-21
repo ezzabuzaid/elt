@@ -175,9 +175,9 @@ export class PostgresColumn {
   }
 
   from(file: FileReference): PostgresColumn {
-    if (this.array || (this.kind !== 'blob' && this.kind !== 'text'))
+    if (this.array || this.kind !== 'text')
       throw new TypeError(
-        'Files require a BLOB column, parsed TEXT or a stored TEXT reference',
+        'Files require a TEXT column of parsed text or stored references',
       );
     return new PostgresColumn(this.field, this.kind, {
       nullable: this.nullable,
@@ -214,10 +214,6 @@ export class PostgresColumn {
     });
   }
 
-  get storesFile(): boolean {
-    return this.kind === 'blob' && this.fileRead !== undefined;
-  }
-
   get quotedName(): string {
     return quote(this.name);
   }
@@ -249,12 +245,10 @@ export class PostgresColumn {
   }
 
   get storageType(): string {
-    if (this.storesFile) return 'UUID';
     return `${this.#scalarType}${this.array ? '[]' : ''}`;
   }
 
   get dataType(): string {
-    if (this.storesFile) return 'uuid';
     if (this.array) return 'ARRAY';
     return this.#exactText ? 'text' : dataTypes[this.kind];
   }
@@ -366,13 +360,7 @@ export class PostgresColumn {
         if (isTimestamp(value)) return postgresYear(value);
         break;
       case 'blob':
-        if (this.storesFile) {
-          if (
-            typeof value === 'string' &&
-            /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)
-          )
-            return value;
-        } else if (value instanceof Uint8Array) return `\\x${value.toHex()}`;
+        if (value instanceof Uint8Array) return `\\x${value.toHex()}`;
         break;
       // An object is only an array's item, which #element encodes.
       case 'object':

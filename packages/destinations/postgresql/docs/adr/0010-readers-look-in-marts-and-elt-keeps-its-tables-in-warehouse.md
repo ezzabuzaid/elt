@@ -2,6 +2,8 @@
 
 Status: accepted by Ezz (2026-11-19). Backlog #4886.
 
+Superseded in part on 2026-11-22 (#5170): `blob().from(file)` and its file tables are gone, so `_warehouse` and `marts` have no `_elt_files_<hash>`. A file storage in the database, the next step of #5170, keeps the bytes of files in Postgres.
+
 Before this decision, a warehouse had three kinds of schema:
 
 - `marts` held `catalog` and the views of the sync history, which `PostgresSyncHistory.install()` publishes there. It also held the reader views, which each host put there with `withReaderView('marts', name)`. The catalog listed only the views of `marts`, so it did not show a reader view in another schema.

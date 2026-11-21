@@ -10,7 +10,7 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 
 | Now (first release)                                                                                                                                                                                                                                                              | Later                                                                                                                               | Never                                                                                                                                                |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SqlServerDestination`: the four destination sync modes, evolve, reload, reader views, extended properties, file chunks                                                                                                                                                          | Native `VECTOR` over TDS, when tedious has it ([tedious #1841](https://github.com/tediousjs/tedious/pull/1841))                     | A search API beyond the `_nearest` function of a vector index: any other search is the host's SQL (`@zukhruf/vectors/sqlserver`)                     |
+| `SqlServerDestination`: the four destination sync modes, evolve, reload, reader views, extended properties                                                                                                                                                                       | Native `VECTOR` over TDS, when tedious has it ([tedious #1841](https://github.com/tediousjs/tedious/pull/1841))                     | A search API beyond the `_nearest` function of a vector index: any other search is the host's SQL (`@zukhruf/vectors/sqlserver`)                     |
 | Numbered commits, positions, history, readings, retention, a clear that forgets                                                                                                                                                                                                  | `float16` vector columns (`HalfVector`), for a model of more than 1,998 dimensions, such as `text-embedding-3-large` (3,072)        | System-versioned temporal tables as the history ([ADR 0001](./docs/adr/0001-the-sql-server-destination-takes-the-declarations-of-elt-postgresql.md)) |
 | `View` and `ComputedDataset`, with `vector(n)` rule columns as `VECTOR(n)` and declared indexes: nonclustered, and DiskANN with its search `marts.<name>_nearest`                                                                                                                | A bulk load through Azure Blob Storage and `BULK INSERT`, as the bulk mode of Airbyte, when a load is too slow through JSON batches | An ORM, or a query builder over the reader's SQL                                                                                                     |
 | `SqlServerCheckpointStore`, `SqlServerSyncHistory` (with `derived_status`, `catalog` and named readers), `readPassStatus`                                                                                                                                                        | Microsoft Entra ID logins (managed identity), which `mssql` supports through `authentication`                                       | An `mssql://` URL                                                                                                                                    |
@@ -23,7 +23,7 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 - The reset and the reload: a `RESET` of the stream or of a partition, and an overwrite whose stored table no longer has the shape of its stream, load into a hidden table, which the end of the stream gives to the table by difference or swaps in (see "Shape changes" below).
 - `SqlServerCheckpointStore` and `SqlServerSyncHistory`, with the application locks of ADR 0009.
 - The evolve: a load that is not an overwrite, whose stored table no longer has the shape of its stream, changes the table in place with `ALTER TABLE`, in one commit of its own, and the history follows each widening (see "Shape changes" below).
-- The file columns: parsed text, references to the files of a storage, and the original bytes of a file in a file store (see "File bytes in the database" below).
+- The file columns: parsed text and references to the files of a storage (see "Files" below).
 - `reading(position?)`: a session of its own that reads the database as of a position (see "Commit numbers and positions" below), and `readPassStatus(login)`.
 - `View`, and its rows of `derived_status` (see "Declare a view" and "Derived status" below).
 - `ComputedDataset` of a `Rule` or a `TableRule`, with `text`, `blob`, `integer` and `vector(n)` rule columns, the parts table of a `TableRule`, declared indexes, and its rows of `derived_status` (see "Declare a computed dataset" below).
@@ -256,22 +256,12 @@ ORDER BY n.distance;
 - SQL Server 2025 in Docker parses no `TOP … WITH APPROXIMATE` (error 102), and refuses the vector index before the function, so the function exists only on Azure SQL; the tests check its refusals and its drop there.
 - See the recipe [Chunk documents, embed each chunk and search them with a vector index](./docs/recipes/search-chunks-with-a-vector-index.md).
 
-## File bytes in the database
+## Files
 
-SQL Server takes the same `text().from(file).parse(parser)`, `text().from(file.store(storage))` and `blob().from(file)` declarations as SQLite and Postgres. See [stored files](../../elt/README.md#stored-files-and-document-parsing) in elt.
+SQL Server takes the same `text().from(file).parse(parser)` and `text().from(file.store(storage))` declarations as SQLite and Postgres. See [stored files](../../elt/README.md#stored-files-and-document-parsing) in elt.
 
 - Parsed content is `NVARCHAR(MAX)`. A reference to a file of a storage is `NVARCHAR(MAX)` too.
-- The column of an original file holds a `UNIQUEIDENTIFIER`. Its bytes are in a table `_warehouse._elt_files_<hash>` for each column, as `(file UNIQUEIDENTIFIER, n BIGINT, bytes VARBINARY(MAX))` chunks of at most 4 MiB (`storedChunkSize` of elt). Readers read them through the view `marts._elt_files_<hash>`. The `MS_Description` of the column names that view, and the view has its own.
-- The hash is the first 40 hex characters of the SHA-256 of `JSON.stringify([rawTableName, columnName])`.
-- To read the original, join the view on `file` and concatenate `bytes` in the order of `n`.
-- An empty file has one empty chunk. A file that is not available gives a null value.
-- Each chunk goes to the server as base64 text in one JSON parameter, which `OPENJSON` reads as `varchar(max)`: `BASE64_DECODE` does not take `nvarchar` (error 8116, [ADR 0011](./docs/adr/0011-a-batch-travels-as-one-json-parameter-that-openjson-reads.md)).
-- The chunks of a load wait in a `#` table of the connection until the commit of their rows moves them. A discard empties that table.
-- The row hash counts the SHA-256 of the bytes in place of the id. Each load gives a file a new id, so a row whose file is the same stays as it is, and the commit removes the new chunks.
-- After each merge, the commit removes the chunks that no row of the table, of its history, or of its hidden table while a reload is open, names. A row of the history keeps its file.
-- A file column that the stream no longer has loses its file store and its view when its table evolves or a reload swaps it.
-- A clear of a copy also removes its files.
-- A plain `blob()` column with no `.from(file)` stores an inline `VARBINARY(MAX)` value.
+- A plain `blob()` column stores an inline `VARBINARY(MAX)` value. Its bytes go to the server as base64 text in the JSON batch, which `OPENJSON` reads as `varchar(max)`: `BASE64_DECODE` does not take `nvarchar` (error 8116, [ADR 0011](./docs/adr/0011-a-batch-travels-as-one-json-parameter-that-openjson-reads.md)).
 
 ## Descriptions
 
@@ -331,7 +321,6 @@ A reading as of a position:
 - `await destination.reading(position?)` gives `{ sql, position, at }` or `{ expired }`, as in Postgres. With no position, it reads the newest position. `sql` is a `SqlServerConnection` of its own session, in a `SNAPSHOT` transaction, so a commit after the reading begins shows in no read. Dispose the reading to end the session.
 - The position is a read-only key of the session context, so the reader cannot change it: a change fails with error 15664. Below the newest commit that the snapshot sees, the key holds the number of the position. At the newest commit, it holds the largest `bigint`, which reads each table as it is now, because a key with no value cannot be read-only ([ADR 0010](./docs/adr/0010-a-reading-sets-its-position-in-the-session-context-and-reads-row-versions.md)).
 - A position of another epoch, past the newest commit, or before `min_valid` gives `{ expired }` with the reason, such as a clear that forgot the rows. A commit inside a pass, or a text that is not a position, is a `TypeError`.
-- A file of a row that the history kept reads through `marts._elt_files_<hash>` as of the position, because the chunks of a file stay while a row of the table or of its history names it.
 
 ## Checkpoints
 

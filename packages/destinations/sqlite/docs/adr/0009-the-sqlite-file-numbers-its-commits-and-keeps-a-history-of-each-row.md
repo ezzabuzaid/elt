@@ -1,5 +1,7 @@
 # The SQLite file numbers its commits and keeps a history of each row
 
+Superseded in part on 2026-11-22 (#5170): `blob().from(file)` and its chunk tables are gone, so a commit that deletes history rows deletes no chunks. A file in a file storage still goes when the stream of its table next commits. A file storage in the database, the next step of #5170, keeps the bytes of files in the SQLite file.
+
 A reader such as eca compares the SQLite file at two times, for example to find each key that matches a condition now and did not match it before. Before this decision the file kept only its current rows. A reader that wanted the file as it was had to keep its own copy, with keys, and a restart lost the changes between two of its reads.
 
 Now the file gives the reader three things, as SQL Server change tracking does with `CHANGE_TRACKING_CURRENT_VERSION`, `CHANGETABLE(… @since)` and `MIN_VALID_VERSION`:

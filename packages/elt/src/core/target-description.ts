@@ -9,7 +9,6 @@ export type DescribedColumn = {
   // What the destination calls the column.
   readonly name: string;
   readonly fileRead?: FileRead;
-  readonly storesFile: boolean;
 };
 
 export type TargetDescription = {
@@ -47,12 +46,10 @@ const loading = {
 } as const;
 
 // What every destination tells readers about a copy's target: the stream's
-// meaning, how it is loaded, and each column from the stream's schema. Only
-// where original file bytes are kept differs by destination.
-export function describeTarget<Column extends DescribedColumn>(
+// meaning, how it is loaded, and each column from the stream's schema.
+export function describeTarget(
   configuration: CopyConfiguration,
-  columns: readonly Column[],
-  storedFile: (column: Column) => string,
+  columns: readonly DescribedColumn[],
 ): TargetDescription {
   const { stream } = configuration;
   const meaning = annotation(stream.jsonSchema.description);
@@ -75,8 +72,7 @@ export function describeTarget<Column extends DescribedColumn>(
   }
   const { properties } = stream.jsonSchema;
   const missing = meaning === null ? ['the stream'] : [];
-  const describe = (column: Column): string | null => {
-    if (column.storesFile) return storedFile(column);
+  const describe = (column: DescribedColumn): string | null => {
     if (column.fileRead?.parser !== undefined)
       return `Text extracted from the source file by parser ${column.fileRead.parser.identity}. NULL when the source file is unavailable or the parser returns no text.`;
     if (column.fileRead?.file.storage !== undefined)

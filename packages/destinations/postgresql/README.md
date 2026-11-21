@@ -71,22 +71,15 @@ Inferred columns follow the stream schema. The [string formats](../../elt/README
 - Arrays keep the order of their elements, and load a JSON `null` as SQL `NULL`. Readers use `= ANY(...)`, `unnest()` and `cardinality()`. `marts.catalog` shows the type of the element.
 - ISO dates count years astronomically, and Postgres does not. Thus the year `0000` loads as `0001 BC`, which is the same day. Each other year is written as it is given.
 - Explicit columns are `columns.text`, `integer`, `real`, `boolean`, `date`, `timestamp` and `blob(field)`, with `.notNull()` and `.primaryKey()`. `columns.int64(field)` is a `BIGINT` that loads decimal text exactly, and `columns.localTimestamp(field, precision)` is a `TIMESTAMP` for SQL Server's `datetime2`, by the rows of the table above: a precision past 6 loads as text.
-- A plain `blob()` stores `BYTEA`. `blob().from(file)` keeps the original file in chunk tables, and `text().from(file).parse(parser)` stores the parsed text as `TEXT`. See [file bytes in the database](#file-bytes-in-the-database).
+- A plain `blob()` stores `BYTEA`, and `text().from(file).parse(parser)` stores the parsed text as `TEXT`. See [files](#files).
 - Table, view and column names follow the [naming rule](../../elt/README.md#names). Postgres compares names with their case, keeps 63 bytes of a name, and reserves `loaded_at`, `committed_in`, `replaced_in` and the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`. The naming rule turns a field `_elt_row_hash` into `elt_row_hash`, so no field takes that name.
 
-## File bytes in the database
+## Files
 
-Postgres takes the same `text().from(file).parse(parser)` and `blob().from(file)` declarations as SQLite. See [stored files](../../elt/README.md#stored-files-and-document-parsing) in elt.
+Postgres takes the same `text().from(file).parse(parser)` and `text().from(file.store(storage))` declarations as SQLite. See [stored files](../../elt/README.md#stored-files-and-document-parsing) in elt.
 
-- Parsed content is `TEXT`.
-- The column of an original file holds a UUID. Its bytes are in a table `_warehouse._elt_files_<hash>` for each column, as `(file UUID, n BIGINT, bytes BYTEA)` chunks of up to 4 MiB. Readers read them through the view `marts._elt_files_<hash>`, which has a comment that describes it. The comment of the column names that view.
-- The hash is the first 40 hex characters of the SHA-256 of `JSON.stringify([rawTableName, columnName])`.
-- To read the original, join the view on the file UUID and order by `n`.
-- An empty file has one empty chunk. A file that is not available gives a null value.
-- The chunks of a load wait in a `TEMP` table that only the session sees, until the commit of their rows moves them. A discard empties that table.
-- After each merge, the commit removes the chunks that no row of the table, or of its hidden table while a reload is open, refers to, for example the chunks of a record that deduplication refused.
-- A clear of a copy also removes its files.
-- A plain `blob()` column with no `.from(file)` stores an inline `BYTEA` value.
+- Parsed content is `TEXT`, and so is the ref of a stored file.
+- A plain `blob()` column stores an inline `BYTEA` value.
 
 ## Descriptions
 
@@ -95,7 +88,7 @@ Sources describe their data with the `description` of JSON Schema: at the root f
 - Each Postgres copy publishes those descriptions as native table and column comments.
 - Inferred columns and explicit columns keep the descriptions of their fields. A column that the copy leaves out gets no comment.
 - The table comment tells the meaning of the source record apart from the modes of the copy: the extraction and load modes, an append history where source identities can repeat, and the keys and conflict rules of deduplication.
-- Text from a file names its parser. A column of an original file tells of its UUID and of the view in `marts` that holds the bytes.
+- Text from a file names its parser.
 - `loaded_at` tells of the load that last wrote the row. It does not tell of a change in the source or of the health of a sync.
 - The first commit of a stream writes the comments, and each later load replaces them. A property description that you remove clears its old column comment.
 - Descriptions must be strings with no NUL and no malformed Unicode. The destination checks them before it opens storage. The native `format` of Postgres quotes the names and the text.
@@ -120,11 +113,10 @@ Each commit:
 
 - Operations get to the stage in batches of at most 1000 rows or 16 MiB. Each batch goes as one JSON parameter and is cast for each column, so large text and binary values travel a few at a time.
 - A record that is too large to send alone, past the longest string of V8 or the largest message of Postgres (1 GB), fails its stream. The error names the table, its largest column and its key.
-- Original files wait in a chunk table that only the session sees, until the commit moves them.
 - The first commit of a stream makes its table, comments, index and reader view, and records its writer.
 - A commit merges the stage of one stream into its table. The result is the same as when the operations apply one at a time: staged `DELETE`s remove their keys, only the records after the last `DELETE` of a key count, `replace` keeps the last record, and `cursor_newer` keeps the first record with the greatest cursor. Text cursors compare by bytes (`COLLATE "C"`).
 - Each row has `loaded_at` (`TIMESTAMPTZ`), the time on the clock of the pipeline when the load that wrote its values opened. A deduplicating load or an overwrite that brings the same values again leaves the row, its `loaded_at` and its `committed_in` as they are.
-- Each row has `_elt_row_hash` (`TEXT`), the SHA-256 of its values, which the load computes as it stages the row. A null value does not count, so a column that the stream adds makes no new version. A stored file counts as the SHA-256 of its bytes, not as its UUID.
+- Each row has `_elt_row_hash` (`TEXT`), the SHA-256 of its values, which the load computes as it stages the row. A null value does not count, so a column that the stream adds makes no new version.
 - Each row has `committed_in` (`INTEGER`), the number of the commit that last wrote it. See [commit numbers and positions](#commit-numbers-and-positions).
 - An overwrite replaces the rows of the table by difference, with `DELETE`, not `TRUNCATE`, at the commit of its stream: each stored row that no staged record matches by `_elt_row_hash` goes, each record that no row matches enters, and each row that matches stays as it is. Two identical rows match as a multiset, so a keyless overwrite that sends one of them again removes only the other. The exclusive lock of `TRUNCATE` would block readers until the commit ends. Until then, readers see the earlier load. A [reset](../../elt/README.md#resets) deletes its scope in the same way. See [ADR 0004](./docs/adr/0004-an-overwrite-deletes-rows-and-does-not-truncate.md).
 - Deduplication upserts on a unique index that is named after the table and the key (`_elt_dedup_<hash>`). Postgres makes the index one time, and makes it again only when the key changes. A load that replaces the rows makes the index after it removes the rows that leave.
@@ -132,13 +124,13 @@ Each commit:
 
 Shape changes:
 
-- When the columns, types or `NOT NULL`s of a stored table do not fit the stream, the load [evolves it](../../elt/README.md#shape-changes) in place before it reads, as the Postgres destination of Airbyte does. `ALTER TABLE` adds a nullable column, drops a column that the stream dropped (with its chunk table, for a file column), and converts a column with a new type `USING column::type`. Before the conversion, each stored value that is not null must cast back to itself (`column::type::old IS DISTINCT FROM column` finds none), so `1.5` in `double precision` fails the load to `bigint`, naming the column, and `2` converts. A conversion from `text` is the parse that the load applies to each new value, so the conversion itself refuses a value it cannot parse. It keeps `NOT NULL` and the primary key on the explicit key columns of the target, and moves the key when they change. The reader view is made again over the result.
+- When the columns, types or `NOT NULL`s of a stored table do not fit the stream, the load [evolves it](../../elt/README.md#shape-changes) in place before it reads, as the Postgres destination of Airbyte does. `ALTER TABLE` adds a nullable column, drops a column that the stream dropped, and converts a column with a new type `USING column::type`. Before the conversion, each stored value that is not null must cast back to itself (`column::type::old IS DISTINCT FROM column` finds none), so `1.5` in `double precision` fails the load to `bigint`, naming the column, and `2` converts. A conversion from `text` is the parse that the load applies to each new value, so the conversion itself refuses a value it cannot parse. It keeps `NOT NULL` and the primary key on the explicit key columns of the target, and moves the key when they change. The reader view is made again over the result.
 - The change waits at most 3 seconds for readers to let go. Otherwise it fails the copy until the next run.
 - A value that does not convert, or rows that repeat a new key, fail the change. The table stays as it was.
 - The views that read the table, its history or its reader view, also views that elt did not make, read the table again after the change, with their owners, options, comments and privileges. A view that does not fit the change, such as one that reads a column that the change drops, fails the change, and the error names the view. See [ADR 0006](./docs/adr/0006-a-change-of-a-table-makes-the-views-over-it-again.md).
 - A [reset](../../elt/README.md#resets) of the full stream, or an overwrite whose stored table does not fit, reloads into a hidden table `_elt_next_<hash>`. The first commit of the reload makes it. When the stream ends with no failure:
   - If the stored table still has the stream's shape, the load changes it in place, by difference: each row that the hidden table has again stays, with its commit and its `loaded_at`; each other row goes into the history; and each new row enters. The table keeps its indexes, its triggers and the views that depend on it.
-  - If not, the load swaps the hidden table in, also with a wait of at most 3 seconds, and drops the chunk table of a file column that it does not have now. The history keeps every row of the old table. The swapped-in table and its reader view keep the privileges of the old ones, and the views over them read the new table, as for a change of shape.
+  - If not, the load swaps the hidden table in, also with a wait of at most 3 seconds. The history keeps every row of the old table. The swapped-in table and its reader view keep the privileges of the old ones, and the views over them read the new table, as for a change of shape.
 
 ## Commit numbers and positions
 
@@ -166,15 +158,15 @@ The history of a table:
 - Each column of the history has the type of the table's column of the same name. It takes each new column of the table. A column that the table drops stays in the history with its last type.
 - When a change of shape, or the swap of a reload, gives a column of the table another type, the history changes the type of its column in the same commit. This includes a column that the table dropped and a later change adds back with another type. Delta Lake, Iceberg, BigQuery and Snowflake change a type in place only when the change is a widening, and they read the past with its own schema, which one Postgres view cannot do. The destination follows the same rule:
   - A widening maps each old value to one new value exactly, with no loss: any type to `text`, `bigint` to `numeric`, `date` to `timestamp without time zone`, and an array whose item widens. The history casts its column with the same cast (`USING column::type`), and each position stays readable.
-  - Any other change, such as `text` to `bigint`, or `double precision` to `bigint`, acts as a rewrite. `bigint` to `double precision` is not a widening, because above 2^53 it loses digits. The commit E of the change sets `min_valid` to E, if it is higher. The history of the table deletes each row with `replaced_in <= E`, which only positions before E read, together with the stored chunks that only those rows refer to, and then casts its column. A reading or `positions(after)` before E gives `{ expired }`, with the reason that a commit changed the type of a column. Each position from E on reads exactly. The history of other tables keeps its rows with `replaced_in <= E` until a retention deletes them.
-- A file that a row of the history refers to stays while the row stays: its chunks, or its file in a file storage (`.store(files)`).
+  - Any other change, such as `text` to `bigint`, or `double precision` to `bigint`, acts as a rewrite. `bigint` to `double precision` is not a widening, because above 2^53 it loses digits. The commit E of the change sets `min_valid` to E, if it is higher. The history of the table deletes each row with `replaced_in <= E`, which only positions before E read, and then casts its column. A reading or `positions(after)` before E gives `{ expired }`, with the reason that a commit changed the type of a column. Each position from E on reads exactly. The history of other tables keeps its rows with `replaced_in <= E` until a retention deletes them.
+- A file in a file storage (`.store(files)`) that a row of the history refers to stays while the row stays.
 
 Retention:
 
 - `new PostgresDestination({ url, retention })` sets how long the history keeps a position readable, as a `Temporal.Duration`: 30 days unless set, as Delta Lake keeps its log. A negative one throws a `RangeError`.
 - When a commit takes its number, let W be the newest position at or below the newest commit older than the window. The commit sets `min_valid` to W, if it is higher. W is a position, not a commit, so a pass that stays open longer than the window keeps the position before it readable.
 - When the commit moves `min_valid`, it also deletes each row of `_warehouse._elt_commits` with a number less than W, and each closed load of `_warehouse._elt_loads` that has no commit left. W is a position, so each load with a commit before W ends at or before W. The row of W stays, because a reading as of W gives its `committed_at`. A `committed_in` of a row is only compared with numbers, so it needs no row in `_elt_commits`. An open load stays, also when it has no commit yet. The row of `_elt_epoch` stays locked until the commit ends, so a commit at the same time that read an older `min_valid` does not move it back.
-- In the same commit, the writer deletes each row of its table's history with `replaced_in <= min_valid`, and then the chunks that no row of the table or of its history refers to. The history of another table deletes its rows at that table's next commit; until then a reading skips them, because no position at or after `min_valid` reads them.
+- In the same commit, the writer deletes each row of its table's history with `replaced_in <= min_valid`. The history of another table deletes its rows at that table's next commit; until then a reading skips them, because no position at or after `min_valid` reads them.
 - A reading or `positions(after)` before `min_valid` gives `{ expired }`, with the reason that names the retention, or the change of type, that set it last.
 - One numbering serves every destination of the database, so the shortest retention among them decides for all readers.
 

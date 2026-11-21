@@ -184,9 +184,8 @@ function typeOf(type: string) {
 // The SHA-256 of the values of a staged row, which names its version, as in
 // elt-postgresql: each value that is not null counts with its column's name,
 // so a column the stream adds, null in each stored row, makes no new
-// version. A stored file counts as the SHA-256 of its bytes, not as its id,
-// a string as its text, and every other value as the JSON that the stage
-// carries.
+// version. Bytes count as themselves, a string as its text, and every other
+// value as the JSON that the stage carries.
 export function rowHash(
   columns: readonly { readonly name: string }[],
   values: readonly (EncodedValue | Uint8Array)[],

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { hash } from 'node:crypto';
 import { EventEmitter, on, once } from 'node:events';
-import { rmSync, statSync } from 'node:fs';
+import { readFileSync, rmSync, statSync } from 'node:fs';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
@@ -3645,144 +3645,11 @@ test('partition declarations are validated before extraction', async () => {
   );
 });
 
-class FileSource extends LiveSource {
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  readonly identity = 'file-test';
-  readonly staging: string;
-  contents: Record<string, { version: number; bytes: Uint8Array }>;
-  // Whether records carry their file, which a target that stores none refuses.
-  withFiles = true;
-  readonly snapshot: boolean;
-  readonly files: Stream;
-  protected readonly catalog: Catalog;
-
-  constructor(
-    staging: string,
-    contents: Record<string, { version: number; bytes: Uint8Array }>,
-    snapshot = true,
-  ) {
-    super();
-    this.staging = staging;
-    this.contents = contents;
-    this.snapshot = snapshot;
-    this.files = new Stream({
-      name: 'files',
-      jsonSchema: {
-        description: 'One files record.',
-        type: 'object',
-        properties: {
-          id: { description: 'Id of the record.', type: 'string' },
-          version: { description: 'Version of the record.', type: 'integer' },
-        },
-      },
-      supportedSyncModes: ['full_refresh', 'incremental'],
-      primaryKey: ['id'],
-      supportsFileTransfer: true,
-      ...(snapshot ? { sourceDefinedCursor: true, emitsDeletes: true } : {}),
-    });
-    this.catalog = new Catalog([this.files]);
-  }
-
-  override changeSignals(streams: readonly Stream[]) {
-    return filled(streams);
-  }
-
-  protected override async *extract(
-    configuration: CopyConfiguration,
-    state: unknown,
-  ) {
-    const scan = Object.entries(this.contents).map(([id, { version }]) => ({
-      id,
-      version,
-    }));
-    const messages = this.snapshot
-      ? diffSnapshot(configuration, scan, state, {
-          policy: new ClosedWorld(),
-          signal: undefined,
-        })
-      : scan.map((data) => ({ stream: 'files', data }));
-    for await (const message of messages) {
-      if ('type' in message || !this.withFiles) {
-        yield message;
-        continue;
-      }
-      const path = join(this.staging, `${message.data.id}.bin`);
-      await writeFile(path, this.contents[message.data.id]?.bytes ?? '');
-      yield { stream: 'files', data: message.data, file: path };
-    }
-  }
-}
-
-const sha256 = (bytes: Uint8Array) => hash('sha256', bytes);
-
-// The chunk table of a file column of the target named view, by the
-// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
-// JSON of [raw table, column], both in ASCII lower case.
-const chunkTable = (view: string, column: string) =>
-  `"_elt_files_${hash(
-    'sha256',
-    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
-  ).slice(0, 40)}"`;
-
-// The ids of the stored files of a column that a row of the table or of its
-// history refers to, as a SELECT.
-const referenced = (path: string, table: string, column: string) => {
-  const [recorded] = storedRows(
-    path,
-    `SELECT history FROM _elt_histories WHERE target = 'raw_${table}'`,
-  );
-  if (recorded === undefined) assert.fail(`${table} has no history`);
-  return `SELECT ${column} FROM ${table} WHERE ${column} IS NOT NULL UNION ALL SELECT ${column} FROM "${String(recorded.history)}" WHERE ${column} IS NOT NULL`;
-};
-
-// Each loaded file's chunk sizes and reassembled hash, plus chunks that no
-// row of the table or of its history refers to.
-const storedFiles = (path: string) => {
-  using database = open(path, { readOnly: true });
-  const chunks = database
-    .prepare(
-      `SELECT f.id, c.bytes FROM files f JOIN ${chunkTable('files', 'bytes')} c ON c.file = f.bytes ORDER BY f.id, c.n`,
-    )
-    .all()
-    .map(({ id, bytes }) => {
-      assert.ok(bytes instanceof Uint8Array);
-      return { id: String(id), bytes };
-    });
-  const files = Object.fromEntries(
-    [...Map.groupBy(chunks, (row) => row.id)].map(([id, rows]) => [
-      id,
-      {
-        chunks: rows.map((row) => row.bytes.length),
-        sha256: sha256(Buffer.concat(rows.map((row) => row.bytes))),
-      },
-    ]),
-  );
-  const orphans = database
-    .prepare(
-      `SELECT count(*) AS n FROM ${chunkTable('files', 'bytes')} WHERE file NOT IN (${referenced(path, 'files', 'bytes')})`,
-    )
-    .get()?.n;
-  return { files, orphans };
-};
-
-const fileTable = (destination: SQLiteDestination, source: FileSource) =>
-  destination.table('files', (c) => [
-    c.text('id'),
-    c.integer('version'),
-    c.blob('bytes').from(source.files.file),
-  ]);
-
-test('every table of a loaded file that no copy names is reserved: the sync history, the descriptions, the writers and the chunks of a file column', async () => {
+test('every table of a loaded file that no copy names is reserved: the sync history, the descriptions and the writers', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-reserved-');
-  const source = new FileSource(scratch.path, {
-    one: { version: 1, bytes: Buffer.from('one') },
+  const files = scripted('files');
+  const source = new ScriptedSource([files], {
+    files: [record('files', 'one', 1), checkpoint('files', {})],
   });
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
@@ -3799,7 +3666,7 @@ test('every table of a loaded file that no copy names is reserved: the sync hist
           path: join(scratch.path, 'state.sqlite'),
         }),
         steps: [
-          new Copy(source.files, fileTable(destination, source), {
+          new Copy(files, destination.table('files'), {
             id: 'files',
             syncMode: 'incremental',
             destinationSyncMode: 'append_dedup',
@@ -3822,146 +3689,9 @@ test('every table of a loaded file that no copy names is reserved: the sync hist
     tables.filter((name) => !isReserved(name)),
     ['raw_files'],
   );
-  assert.ok(tables.includes(chunkTable('files', 'bytes').slice(1, -1)));
   assert.ok(tables.includes('_elt_sync_attempts'));
   assert.equal(isReserved('_ELT_writers'), true, 'SQLite names ignore case');
   assert.equal(isReserved('elt_files'), false);
-});
-
-test('file bytes load as bounded chunks, and no chunk stays that no row of the table or of its history refers to', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-files-');
-  const large = new Uint8Array(9 * 1024 * 1024 + 3).map((_, i) => i % 251);
-  const small = Buffer.from('small');
-  const source = new FileSource(scratch.path, {
-    empty: { version: 1, bytes: new Uint8Array() },
-    small: { version: 1, bytes: small },
-    large: { version: 1, bytes: large },
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'files.sqlite'),
-  });
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
-        }),
-        steps: [
-          new Copy(source.files, fileTable(destination, source), {
-            id: 'files',
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-          }),
-        ],
-      }),
-    ],
-  });
-
-  await pipeline.run();
-  const first = storedFiles(destination.path);
-  source.contents = {
-    small: { version: 2, bytes: Buffer.from('changed') },
-    large: { version: 1, bytes: large },
-  };
-  await pipeline.run();
-  const second = storedFiles(destination.path);
-
-  const mib = 4 * 1024 * 1024;
-  assert.deepEqual(first, {
-    files: {
-      empty: { chunks: [0], sha256: sha256(new Uint8Array()) },
-      large: { chunks: [mib, mib, 1024 * 1024 + 3], sha256: sha256(large) },
-      small: { chunks: [5], sha256: sha256(small) },
-    },
-    orphans: 0,
-  });
-  assert.deepEqual(second, {
-    files: {
-      large: first.files.large,
-      small: { chunks: [7], sha256: sha256(Buffer.from('changed')) },
-    },
-    orphans: 0,
-  });
-});
-
-test('an overwrite leaves no file of the previous load that no row of the table or of its history refers to', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-files-');
-  const source = new FileSource(scratch.path, {
-    a: { version: 1, bytes: Buffer.from('aye') },
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'files.sqlite'),
-  });
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        steps: [new Copy(source.files, fileTable(destination, source))],
-      }),
-    ],
-  });
-
-  await pipeline.run();
-  source.contents = { b: { version: 1, bytes: Buffer.from('bee') } };
-  await pipeline.run();
-
-  assert.deepEqual(storedFiles(destination.path), {
-    files: { b: { chunks: [3], sha256: sha256(Buffer.from('bee')) } },
-    orphans: 0,
-  });
-});
-
-test('a record the cursor guard rejects leaves no stored file behind', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-files-');
-  const source = new FileSource(
-    scratch.path,
-    { a: { version: 2, bytes: Buffer.from('two') } },
-    false,
-  );
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'files.sqlite'),
-  });
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
-        }),
-        steps: [
-          new Copy(source.files, fileTable(destination, source), {
-            id: 'files',
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-            cursorField: 'version',
-            dedupPolicy: 'cursor_newer',
-          }),
-        ],
-      }),
-    ],
-  });
-
-  await pipeline.run();
-  source.contents = { a: { version: 1, bytes: Buffer.from('one') } };
-  await pipeline.run();
-
-  assert.deepEqual(storedFiles(destination.path), {
-    files: { a: { chunks: [3], sha256: sha256(Buffer.from('two')) } },
-    orphans: 0,
-  });
 });
 
 // Each copy's checkpoint binding, its stream shape left out.
@@ -4488,7 +4218,12 @@ test('stored file references follow committed SQLite rows and the rows of their 
       destination.table('invalid', (c) => [
         c.blob('ref').from(stream.file.store(files)),
       ]),
-    /stored references require a TEXT column/,
+    /Files require a TEXT column/,
+  );
+  assert.throws(
+    () =>
+      destination.table('invalid', (c) => [c.text('ref').from(stream.file)]),
+    /File field ref requires a parser or a file storage/,
   );
   const copy = new Copy(
     stream,
@@ -5191,7 +4926,7 @@ test('a key and cursor that sanitizing renames merge under their renamed columns
   assert.deepEqual(rows('guarded'), ['a:2', 'c:5']);
 });
 
-test('renamed file columns keep their original bytes and stored files through later commits, in a table and view whose names the rule changes', async () => {
+test('a renamed stored-file column keeps its stored files through later commits, in a table and view whose names the rule changes', async () => {
   await using scratch = await new TemporaryFiles().directory(
     'elt-renamed-files-',
   );
@@ -5253,7 +4988,6 @@ test('renamed file columns keep their original bytes and stored files through la
             destination.table('Docs View', (c) => [
               c.text('id'),
               c.integer('version'),
-              c.blob('Original Bytes').from(docs.file),
               c.text('Stored Ref').from(docs.file.store(store)),
             ]),
             {
@@ -5277,19 +5011,6 @@ test('renamed file columns keep their original bytes and stored files through la
   using database = open(destination.path, { readOnly: true });
   // A view name the rule changes keeps a hash of the name asked for.
   const view = `Docs_View_${hash('sha256', 'Docs View').slice(0, 8)}`;
-  // Original bytes are read as the column's catalog entry tells a reader to.
-  const entry = database
-    .prepare('SELECT description FROM catalog WHERE name = ?')
-    .get(`${view}.Original_Bytes`);
-  const chunks = /Join ("[^"]+") on file/.exec(String(entry?.description))?.[1];
-  assert.ok(chunks, String(entry?.description));
-  const original = database
-    .prepare(
-      `SELECT c.bytes FROM ${view} d JOIN ${chunks} c ON c.file = d.Original_Bytes WHERE d.id = 'a' ORDER BY c.n`,
-    )
-    .all()
-    .map(({ bytes }) => Buffer.from(Object(bytes)).toString());
-  assert.equal(original.join(''), 'original');
   const stored = database
     .prepare(`SELECT Stored_Ref AS ref FROM ${view} WHERE id = 'a'`)
     .get();
@@ -5453,120 +5174,6 @@ test('deduplicating a table whose history repeats a key is refused before the so
     String(error.results[0]?.failures[0]?.error),
     /Existing rows repeat a deduplication key/,
   );
-});
-
-test('two file columns whose table and column names join alike keep their own chunks', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-chunks-');
-  const path = join(scratch.path, 'source.txt');
-  await writeFile(path, 'original');
-  const described = (name: string) =>
-    new Stream({
-      name,
-      jsonSchema: {
-        type: 'object',
-        description: `One row per ${name} file.`,
-        properties: { id: { type: 'string', description: 'Id.' } },
-      },
-      primaryKey: ['id'],
-      supportedSyncModes: ['full_refresh', 'incremental'],
-      sourceDefinedCursor: true,
-      emitsDeletes: true,
-      supportsFileTransfer: true,
-    });
-  const left = described('left');
-  const right = described('right');
-  let messages: Record<string, SourceMessage[]> = {};
-  class Files extends LiveSource {
-    override coverage() {
-      return { description: 'test', selection: {} };
-    }
-
-    protected override async open() {
-      return new AsyncDisposableStack();
-    }
-
-    readonly identity = 'files';
-    protected readonly catalog = new Catalog([left, right]);
-    override changeSignals(streams: readonly Stream[]) {
-      return filled(streams);
-    }
-    protected override async *extract(configuration: CopyConfiguration) {
-      const { name } = configuration.stream;
-      yield* messages[name] ?? [];
-      yield checkpoint(name, {});
-    }
-  }
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'out.sqlite'),
-  });
-  const history = new SQLiteSyncHistory();
-  const selection = {
-    syncMode: 'incremental',
-    destinationSyncMode: 'append_dedup',
-  } as const;
-  // Raw table raw_a_b with column c, and raw table raw_a with column b_c.
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    connections: [
-      new Connection({
-        name: 'test',
-        source: new Files(),
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
-        }),
-        steps: [
-          new Copy(
-            left,
-            destination.table('a_b', (c) => [
-              c.text('id'),
-              c.blob('c').from(left.file),
-            ]),
-            { id: 'left', ...selection },
-          ),
-          new Copy(
-            right,
-            destination.table('a', (c) => [
-              c.text('id'),
-              c.blob('b_c').from(right.file),
-            ]),
-            { id: 'right', ...selection },
-          ),
-        ],
-      }),
-    ],
-    history,
-  });
-
-  messages = {
-    left: [{ stream: 'left', data: { id: 'l' }, file: path }],
-    right: [{ stream: 'right', data: { id: 'r' }, file: path }],
-  };
-  await pipeline.run();
-  // A later commit of the left target alone.
-  messages = { left: [{ stream: 'left', data: { id: 'l2' }, file: null }] };
-  await pipeline.run();
-
-  using database = open(destination.path, { readOnly: true });
-  // Each file is read as its column's catalog entry tells a reader to.
-  const original = (view: string, column: string, id: string) => {
-    const entry = database
-      .prepare('SELECT description FROM catalog WHERE name = ?')
-      .get(`${view}.${column}`);
-    const chunks = /Join ("[^"]+") on file/.exec(
-      String(entry?.description),
-    )?.[1];
-    assert.ok(chunks, String(entry?.description));
-    return database
-      .prepare(
-        `SELECT c.bytes FROM ${view} v JOIN ${chunks} c ON c.file = v.${column} WHERE v.id = ? ORDER BY c.n`,
-      )
-      .all(id)
-      .map(({ bytes }) => Buffer.from(Object(bytes)).toString())
-      .join('');
-  };
-  assert.equal(original('a_b', 'c', 'l'), 'original');
-  assert.equal(original('a', 'b_c', 'r'), 'original');
 });
 
 test('a reset of a partition named by a renamed field replaces only that partition', async () => {
@@ -5777,6 +5384,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
   await using scratch = await new TemporaryFiles().directory('elt-weave-');
   const staging = join(scratch.path, 'staging');
   await mkdir(staging);
+  const stored = new LocalFiles({ directory: join(scratch.path, 'files') });
   const files = (name: string) =>
     new Stream({ ...scripted(name), supportsFileTransfer: true });
   const emitted: string[] = [];
@@ -5856,7 +5464,7 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
               destination.table(stream.name, (c) => [
                 c.text('id'),
                 c.integer('version'),
-                c.blob('bytes').from(stream.file),
+                c.text('ref').from(stream.file.store(stored)),
               ]),
               {
                 id: stream.name,
@@ -5871,19 +5479,12 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
   const loaded = (table: string) => {
     using database = open(destination.path, { readOnly: true });
     return database
-      .prepare(
-        `SELECT t.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM ${chunkTable(table, 'bytes')} c WHERE c.file = t.bytes) AS bytes FROM ${table} t ORDER BY t.id`,
-      )
+      .prepare(`SELECT id, ref FROM ${table} ORDER BY id`)
       .all()
-      .map(({ id, bytes }) => `${id}=${bytes}`);
-  };
-  const orphans = (table: string) => {
-    using database = open(destination.path, { readOnly: true });
-    return database
-      .prepare(
-        `SELECT count(*) AS n FROM ${chunkTable(table, 'bytes')} WHERE file NOT IN (SELECT bytes FROM ${table} WHERE bytes IS NOT NULL)`,
-      )
-      .get()?.n;
+      .map(
+        ({ id, ref }) =>
+          `${id}=${readFileSync(join(stored.directory, String(ref)), 'utf8')}`,
+      );
   };
   const saved = () => {
     using database = open(statePath, { readOnly: true });
@@ -5931,223 +5532,6 @@ test('interleaved streams commit on their own: a checkpoint of one never publish
     saved: ['b'],
   });
   assert.deepEqual(loaded('a'), ['a1=a1 bytes', 'a2=a2 bytes']);
-  assert.equal(orphans('a'), 0);
-});
-
-const leftBehind: {
-  outcome: string;
-  next: 'rerun' | 'clear';
-  expected: { loaded: string[]; orphans: number };
-}[] = [
-  {
-    outcome: 'its next run loads every file whole',
-    next: 'rerun',
-    expected: { loaded: ['d1=d1 bytes', 'd2=d2 bytes'], orphans: 0 },
-  },
-  {
-    outcome: 'a clear empties its target',
-    next: 'clear',
-    expected: { loaded: [], orphans: 0 },
-  },
-];
-for (const { outcome, next, expected } of leftBehind)
-  test(`a failed stream's staged files never reach the database while its sibling commits, and ${outcome}`, async () => {
-    await using scratch = await new TemporaryFiles().directory('elt-sweep-');
-    const staging = join(scratch.path, 'staging');
-    await mkdir(staging);
-    // docs stores its files, notes commits them along with its own rows, and
-    // only then does docs fail: its discard never commits, as after a crash.
-    // Each gate opens when the consumer asks for a stream's next message, so
-    // the order holds without timers.
-    class Crossing extends LiveSource {
-      override coverage() {
-        return { description: 'test', selection: {} };
-      }
-
-      readonly identity = 'crossing';
-      readonly docs = new Stream({
-        ...scripted('docs'),
-        supportsFileTransfer: true,
-      });
-      readonly notes = scripted('notes');
-      protected readonly catalog = new Catalog([this.docs, this.notes]);
-      protected override readonly concurrency = 2;
-      files: string[] = [];
-      failing = false;
-      // What a reader sees once notes committed, while docs still runs.
-      atSiblingCommit: () => unknown = () => undefined;
-      seen: unknown;
-      #stored = new Latch();
-      #committed = new Latch();
-
-      protected override async open() {
-        this.#stored = new Latch();
-        this.#committed = new Latch();
-        return new AsyncDisposableStack();
-      }
-
-      override changeSignals(streams: readonly Stream[]) {
-        return filled(streams);
-      }
-
-      protected override async *extract(configuration: CopyConfiguration) {
-        if (configuration.stream.name === 'notes') {
-          await this.#stored.wait();
-          yield record('notes', `after-${this.files.join('-')}`, 1);
-          yield checkpoint('notes', { files: this.files });
-          this.#committed.open();
-          return;
-        }
-        for (const id of this.files) {
-          const path = join(staging, `${id}.bin`);
-          await writeFile(path, `${id} bytes`);
-          yield { stream: 'docs', data: { id, version: 1 }, file: path };
-        }
-        this.#stored.open();
-        if (this.failing) {
-          await this.#committed.wait();
-          this.seen = this.atSiblingCommit();
-          throw new Error('docs upstream');
-        }
-        yield checkpoint('docs', { files: this.files });
-      }
-    }
-    const source = new Crossing();
-    const destination = new SQLiteDestination({
-      path: join(scratch.path, 'out.sqlite'),
-    });
-    const pipeline = new Pipeline({
-      clock: globalThis,
-      history: new SQLiteSyncHistory(),
-      connections: [
-        new Connection({
-          name: 'test',
-          source,
-          destination,
-          checkpoints: new SQLiteCheckpointStore({
-            path: join(scratch.path, 'state.sqlite'),
-          }),
-          steps: [
-            new Copy(
-              source.docs,
-              destination.table('docs', (c) => [
-                c.text('id'),
-                c.integer('version'),
-                c.blob('bytes').from(source.docs.file),
-              ]),
-              {
-                id: 'docs',
-                syncMode: 'incremental',
-                destinationSyncMode: 'append_dedup',
-              },
-            ),
-            new Copy(source.notes, destination.table('notes'), {
-              id: 'notes',
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-            }),
-          ],
-        }),
-      ],
-    });
-    const stored = () => {
-      using database = open(destination.path, { readOnly: true });
-      const loaded = database
-        .prepare(
-          `SELECT d.id, (SELECT group_concat(CAST(c.bytes AS TEXT), '') FROM ${chunkTable('docs', 'bytes')} c WHERE c.file = d.bytes) AS bytes FROM docs d ORDER BY d.id`,
-        )
-        .all()
-        .map(({ id, bytes }) => `${id}=${bytes}`);
-      const orphans = database
-        .prepare(
-          `SELECT count(*) AS n FROM ${chunkTable('docs', 'bytes')} WHERE file NOT IN (${referenced(destination.path, 'docs', 'bytes')})`,
-        )
-        .get()?.n;
-      return { loaded, orphans };
-    };
-    source.atSiblingCommit = stored;
-    source.files = ['d1'];
-    await pipeline.run();
-    source.files = ['d2'];
-    source.failing = true;
-    const error = await pipeline.run().then(
-      () => assert.fail('docs should fail the run'),
-      (error: unknown) => error,
-    );
-    const afterFailure = stored();
-
-    source.failing = false;
-    if (next === 'rerun') await pipeline.run();
-    else await pipeline.clear();
-
-    assert.ok(error instanceof PipelineError, String(error));
-    assert.deepEqual(
-      error.results.map(({ copy, count, failures }) => [
-        copy.from.name,
-        count,
-        failures.length,
-      ]),
-      [
-        ['docs', 0, 1],
-        ['notes', 1, 0],
-      ],
-    );
-    // docs's chunks of d2 stayed in its own TEMP stage when notes committed,
-    // and left with it.
-    assert.deepEqual(source.seen, { loaded: ['d1=d1 bytes'], orphans: 0 });
-    assert.deepEqual(afterFailure, { loaded: ['d1=d1 bytes'], orphans: 0 });
-    assert.deepEqual(stored(), expected);
-  });
-
-test('clearing a table whose file column was declared after its first load empties it, though no file was ever stored', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-clear-');
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'out.sqlite'),
-  });
-  const plain = scripted('docs');
-  const loaded = new ScriptedSource([plain], {
-    docs: [record('docs', 'd1', 1)],
-  });
-  await new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source: loaded,
-        destination,
-        steps: [new Copy(plain, destination.table('docs'))],
-      }),
-    ],
-  }).run();
-  const docs = new Stream({ ...scripted('docs'), supportsFileTransfer: true });
-  const source = new ScriptedSource([docs], {});
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        steps: [
-          new Copy(
-            docs,
-            destination.table('docs', (c) => [
-              c.text('id'),
-              c.integer('version'),
-              c.blob('bytes').from(docs.file),
-            ]),
-          ),
-        ],
-      }),
-    ],
-  });
-
-  await pipeline.clear();
-
-  using database = open(destination.path, { readOnly: true });
-  assert.equal(database.prepare('SELECT count(*) AS n FROM docs').get()?.n, 0);
 });
 
 test('text with a lone surrogate fails its stream instead of loading as a replacement character, while the sibling loads', async () => {
@@ -7450,141 +6834,6 @@ test('a reset reloads into a hidden table: readers keep the old rows until the s
     { at: 'c' },
     { at: 'd1' },
   ]);
-});
-
-test('a stored table that no longer fits evolves without a reload, keeping every file its rows refer to, and leaves no file that no row of the table or of its history refers to', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-files-');
-  const source = new FileSource(scratch.path, {
-    a: { version: 1, bytes: Buffer.from('aye') },
-    b: { version: 1, bytes: Buffer.from('bee') },
-  });
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'files.sqlite'),
-  });
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'test',
-        source,
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
-        }),
-        steps: [
-          new Copy(source.files, fileTable(destination, source), {
-            id: 'files',
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-          }),
-        ],
-      }),
-    ],
-  });
-  await pipeline.run();
-  const loaded = storedFiles(destination.path);
-  // A column added by hand makes the stored table stale; the next run brings
-  // it back to the stream's shape with its rows and their files.
-  {
-    using database = open(destination.path);
-    database.exec('ALTER TABLE raw_files ADD COLUMN extra TEXT');
-  }
-
-  const evolved = (await pipeline.run()).map(({ count }) => count);
-  const reloaded = storedFiles(destination.path);
-  {
-    using database = open(destination.path, { readOnly: true });
-    assert.equal(
-      database
-        .prepare(
-          `SELECT 1 FROM pragma_table_info('raw_files') WHERE "name" = 'extra'`,
-        )
-        .get(),
-      undefined,
-    );
-  }
-  assert.deepEqual(evolved, [0]);
-  source.contents = { a: { version: 1, bytes: Buffer.from('aye') } };
-  await pipeline.run();
-
-  assert.deepEqual(reloaded, loaded);
-  assert.deepEqual(storedFiles(destination.path), {
-    files: { a: loaded.files.a },
-    orphans: 0,
-  });
-});
-
-test('a file column the target drops takes its stored chunks with it, whether its table evolves or an overwrite reloads it', async () => {
-  for (const modes of [
-    { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
-    { syncMode: 'full_refresh', destinationSyncMode: 'overwrite' },
-  ] as const) {
-    await using scratch = await new TemporaryFiles().directory('elt-files-');
-    const source = new FileSource(scratch.path, {
-      a: { version: 1, bytes: Buffer.from('aye') },
-    });
-    const destination = new SQLiteDestination({
-      path: join(scratch.path, 'files.sqlite'),
-    });
-    const checkpoints = new SQLiteCheckpointStore({
-      path: join(scratch.path, 'state.sqlite'),
-    });
-    const history = new SQLiteSyncHistory();
-    const run = (withBytes: boolean) =>
-      new Pipeline({
-        clock: globalThis,
-        history,
-        connections: [
-          new Connection({
-            name: 'test',
-            source,
-            destination,
-            checkpoints,
-            steps: [
-              new Copy(
-                source.files,
-                withBytes
-                  ? fileTable(destination, source)
-                  : destination.table('files', (c) => [
-                      c.text('id'),
-                      c.integer('version'),
-                    ]),
-                { id: 'files', ...modes },
-              ),
-            ],
-          }),
-        ],
-      }).run();
-    const chunkTables = () => {
-      using database = open(destination.path, { readOnly: true });
-      return database
-        .prepare(
-          `SELECT "name" FROM sqlite_schema WHERE "type" = 'table' AND "name" LIKE '\\_elt\\_files\\_%' ESCAPE '\\'`,
-        )
-        .all()
-        .map(({ name }) => String(name));
-    };
-    await run(true);
-    const before = chunkTables();
-    // Dropping a column changes the copy, which an incremental copy's reset
-    // accepts, keeping its rows; the source stops sending the files.
-    await checkpoints.reset('files');
-    source.withFiles = false;
-
-    await run(false);
-
-    assert.equal(before.length, 1, modes.destinationSyncMode);
-    assert.deepEqual(chunkTables(), [], modes.destinationSyncMode);
-    using database = open(destination.path, { readOnly: true });
-    assert.deepEqual(
-      database
-        .prepare('SELECT id, version FROM files')
-        .all()
-        .map((row) => ({ ...row })),
-      [{ id: 'a', version: 1 }],
-    );
-  }
 });
 
 test('a copy that declares its columns from the stream and stores its files keeps its rows, checkpoint and files when a field is added and then removed', async () => {

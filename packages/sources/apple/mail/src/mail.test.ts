@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { hash } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import {
   chmod,
   mkdir,
@@ -12,7 +12,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { type TestContext, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -61,15 +61,6 @@ import { VisionWorker } from '@eltjs/source-apple-macos/vision';
 import { visionKind } from '@eltjs/source-apple-macos/vision-kind';
 
 import { AppleMailSource } from './apple-mail-source.ts';
-
-// The chunk table of a file column of the target named view, by the
-// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
-// JSON of [raw table, column], both in ASCII lower case.
-const chunkTable = (view: string, column: string) =>
-  `"_elt_files_${hash(
-    'sha256',
-    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
-  ).slice(0, 40)}"`;
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -722,21 +713,16 @@ function rows(path: string, sql: string) {
     .all()
     .map((row) => ({ ...row }));
 }
-function bytes(path: string, table: string, file: unknown) {
-  return Buffer.concat(
-    rows(
-      path,
-      `SELECT bytes FROM ${chunkTable(table, 'bytes')} WHERE file = ${Number(file)} ORDER BY n`,
-    ).map((row) => {
-      assert.ok(row.bytes instanceof Uint8Array);
-      return row.bytes;
-    }),
-  );
+// The bytes of a stored file that pipeline keeps beside the SQLite file at
+// path.
+function bytes(path: string, ref: unknown) {
+  return readFileSync(join(dirname(path), 'files', String(ref)));
 }
 async function pipeline(source: AppleMailSource, directory: string) {
   const destination = new SQLiteDestination({
     path: join(directory, 'out.sqlite'),
   });
+  const files = new LocalFiles({ directory: join(directory, 'files') });
   const { streams } = await source.discover();
   return new Pipeline({
     clock: globalThis,
@@ -756,7 +742,7 @@ async function pipeline(source: AppleMailSource, directory: string) {
               stream.supportsFileTransfer
                 ? destination.table(stream.name, (columns) => [
                     ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                    columns.blob('bytes').from(stream.file),
+                    columns.text('ref').from(stream.file.store(files)),
                   ])
                 : destination.table(stream.name),
               {
@@ -2007,23 +1993,17 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
   );
   assert.equal(attachments.length, 5);
   assert.equal(attachments[0]?.sha256, digest(Buffer.from('%PDF-fixture')));
-  assert.equal(
-    bytes(out, 'attachments', attachments[0]?.bytes).toString(),
-    '%PDF-fixture',
-  );
+  assert.equal(bytes(out, attachments[0]?.ref).toString(), '%PDF-fixture');
   assert.equal(attachments[1]?.availableLocally, 0);
-  assert.equal(attachments[1]?.bytes, null);
-  assert.equal(
-    bytes(out, 'attachments', attachments[2]?.bytes).toString(),
-    embedded,
-  );
+  assert.equal(attachments[1]?.ref, null);
+  assert.equal(bytes(out, attachments[2]?.ref).toString(), embedded);
   assert.deepEqual(
-    bytes(out, 'attachments', attachments[3]?.bytes),
+    bytes(out, attachments[3]?.ref),
     Buffer.from([0, 1, 2, 255]),
   );
   assert.equal(attachments[4]?.availableLocally, 0);
   const original = rows(out, 'SELECT * FROM messageFiles WHERE messageId=1')[0];
-  assert.deepEqual(bytes(out, 'messageFiles', original?.bytes), emlx);
+  assert.deepEqual(bytes(out, original?.ref), emlx);
   assert.equal(
     rows(out, 'SELECT availableLocally FROM messageFiles WHERE messageId=2')[0]
       ?.availableLocally,
@@ -2072,8 +2052,7 @@ test('Mail exports the native store, MIME, detached files and unavailable metada
   assert.equal(
     bytes(
       out,
-      'attachments',
-      rows(out, "SELECT bytes FROM attachments WHERE partId='2'")[0]?.bytes,
+      rows(out, "SELECT ref FROM attachments WHERE partId='2'")[0]?.ref,
     ).toString(),
     '%PDF-updated',
   );
@@ -2690,7 +2669,7 @@ const textRecognition = {
 };
 
 test(
-  'Mail tracking pixels keep exact local files and database bytes with null OCR text',
+  'Mail tracking pixels keep exact local files with null OCR text',
   textRecognition,
   async () => {
     // The Vision pool on a store of the test's own: a Pool sends the reads and
@@ -2799,7 +2778,6 @@ test(
                   .text('content')
                   .from(source.attachments.file)
                   .parse(new MacOSDocumentParser([new ImageFormat(ocr)])),
-                columns.blob('bytes').from(source.attachments.file),
                 columns
                   .text('attachmentRef')
                   .from(source.attachments.file.store(files)),
@@ -2811,12 +2789,11 @@ test(
     }).run();
     const output = rows(
       destination.path,
-      'SELECT content,bytes,attachmentRef FROM images ORDER BY partId',
+      'SELECT content,attachmentRef FROM images ORDER BY partId',
     );
     assert.equal(output.length, 3);
     for (const [i, row] of output.entries()) {
       assert.equal(row.content, null);
-      assert.deepEqual(bytes(destination.path, 'images', row.bytes), images[i]);
       assert.deepEqual(
         await readFile(join(files.directory, String(row.attachmentRef))),
         images[i],

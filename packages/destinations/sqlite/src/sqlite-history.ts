@@ -3,7 +3,6 @@ import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
 import { Declaration } from '@zukhruf/sqlite-drift';
 
-import { SQLiteFileStore } from './sqlite-file-store.ts';
 import { identifiers, quote } from './sqlite-identifiers.ts';
 import type { SQLiteTable } from './sqlite-table.ts';
 
@@ -78,11 +77,7 @@ export class SQLiteHistory {
 }
 
 // Deletes, in each history, the rows that only a reading before commit
-// through reads: each row that a commit up to it replaced. The stored files
-// that only those rows refer to go in the same transaction, so the chunks of
-// the file stay the files that a row refers to. The rows of a reload's hidden
-// target refer to no such file: each file id is given once, and a hidden row
-// reaches a history only after its reload ends and drops the hidden target.
+// through reads: each row that a commit up to it replaced.
 export function expireHistory(database: DatabaseSync, through: number): void {
   const exists = (name: string) =>
     database
@@ -91,39 +86,12 @@ export function expireHistory(database: DatabaseSync, through: number): void {
       )
       .get(name) !== undefined;
   if (!exists(histories)) return;
-  const pairs = database
-    .prepare(`SELECT "target", "history" FROM ${quote(histories)}`)
+  const kept = database
+    .prepare(`SELECT "history" FROM ${quote(histories)}`)
     .all()
-    .map((row) => ({
-      target: String(row.target),
-      history: String(row.history),
-    }));
-  for (const { target, history } of pairs) {
+    .map((row) => String(row.history));
+  for (const history of kept) {
     if (!exists(history)) continue;
-    const current = new Set(
-      exists(target)
-        ? names(database, target).map((name) => identifiers.key(name))
-        : [],
-    );
-    for (const column of names(database, history)) {
-      const chunks = SQLiteFileStore.tableName(
-        { location: target },
-        { name: column },
-      );
-      if (!exists(chunks)) continue;
-      const value = quote(column);
-      const kept = [
-        ...(current.has(identifiers.key(column))
-          ? [`SELECT ${value} FROM ${quote(target)} WHERE ${value} IS NOT NULL`]
-          : []),
-        `SELECT ${value} FROM ${quote(history)} WHERE "replaced_in" > ? AND ${value} IS NOT NULL`,
-      ];
-      database
-        .prepare(
-          `DELETE FROM ${quote(chunks)} WHERE "file" IN (SELECT ${value} FROM ${quote(history)} WHERE "replaced_in" <= ?) AND "file" NOT IN (${kept.join(' UNION ')})`,
-        )
-        .run(through, through);
-    }
     database
       .prepare(`DELETE FROM ${quote(history)} WHERE "replaced_in" <= ?`)
       .run(through);
@@ -140,8 +108,7 @@ function names(database: DatabaseSync, table: string): string[] {
 // The SHA-256 of the values of a staged row, which names its version: a
 // commit that finds the stored row with the same hash leaves it as it is.
 // Each value that is not null counts with its column's name and its type, so
-// a column the stream adds, null in each stored row, makes no new version. A
-// stored file counts as the SHA-256 of its bytes, not as its id.
+// a column the stream adds, null in each stored row, makes no new version.
 export function rowHash(
   columns: readonly { readonly name: string }[],
   values: readonly SQLInputValue[],

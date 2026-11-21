@@ -33,7 +33,7 @@ _Avoid_: Hidden column (SQL Server's `HIDDEN` is a property of a period column),
 _Avoid_: Row id (SQLite's `rowid`), physical locator (`%%physloc%%`), ctid
 
 **Row hash**:
-`_elt_row_hash`: the SHA-256 of the values of a row, computed when the row is staged. A vector counts by the JSON text that the stage carries. A stored file counts as the SHA-256 of its bytes, not as its id. A commit that finds the stored row with the same hash leaves it as it is.
+`_elt_row_hash`: the SHA-256 of the values of a row, computed when the row is staged. A vector counts by the JSON text that the stage carries. A commit that finds the stored row with the same hash leaves it as it is.
 _Avoid_: Checksum, `CHECKSUM()` (a 32-bit hash of SQL Server), version
 
 **Key hash**:
@@ -47,10 +47,6 @@ _Avoid_: Buffer, staging table, table variable
 **Reduced stage**:
 The stage of a deduplicating commit as one operation for each key hash: the result of its operations applied one at a time. It is the source of the `MERGE` of the commit.
 _Avoid_: Deduplicated stage, batch
-
-**File store**:
-The table `_elt_files_<hash>` in `_warehouse` that keeps the original bytes of the files of one file column, as `(file UNIQUEIDENTIFIER, n BIGINT, bytes VARBINARY(MAX))` chunks of at most 4 MiB, and the view of the same name in `marts` that readers join on `file`. The column of the raw table holds the `file` of its row.
-_Avoid_: Blob store, FILESTREAM (a feature of SQL Server that the destination does not use), attachment table
 
 **Hidden table**:
 The table `_elt_next_<hash>` that a reload commits into. When the stream ends with no failure, the load gives its rows to the raw table by difference if the shapes agree, and swaps it in with `sp_rename` if not.

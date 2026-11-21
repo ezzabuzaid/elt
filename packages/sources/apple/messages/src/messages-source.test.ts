@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { hash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { chmod, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { test } from 'node:test';
@@ -45,15 +44,6 @@ import { VisionWorker } from '@eltjs/source-apple-macos/vision';
 import { visionKind } from '@eltjs/source-apple-macos/vision-kind';
 
 import { AppleMessagesSource } from './apple-messages-source.ts';
-
-// The chunk table of a file column of the target named view, by the
-// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
-// JSON of [raw table, column], both in ASCII lower case.
-const chunkTable = (view: string, column: string) =>
-  `"_elt_files_${hash(
-    'sha256',
-    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
-  ).slice(0, 40)}"`;
 
 // Test support shared by the Apple source packages' tests.
 
@@ -700,6 +690,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'out.sqlite'),
   });
+  const files = new LocalFiles({ directory: join(scratch.path, 'files') });
   const plain = (await source.discover()).streams
     .filter((stream) => stream !== source.attachments)
     .map((stream) => new Copy(stream, destination.table(stream.name)));
@@ -711,7 +702,7 @@ test('Messages exports every stream by guid, decodes archived text and streams l
         .text('content')
         .from(source.attachments.file)
         .parse(new MacOSDocumentParser([new ImageFormat(ocr)])),
-      c.blob('bytes').from(source.attachments.file),
+      c.text('ref').from(source.attachments.file.store(files)),
     ]),
   );
 
@@ -885,14 +876,20 @@ test('Messages exports every stream by guid, decodes archived text and streams l
   assert.deepEqual(
     messagesRows(
       out,
-      `SELECT a.guid, a.availableLocally, a.content, (SELECT c.bytes FROM ${chunkTable('attachments', 'bytes')} c WHERE c.file = a.bytes) AS bytes FROM attachments a ORDER BY a.guid`,
-    ),
+      'SELECT guid, availableLocally, content, ref FROM attachments ORDER BY guid',
+    ).map(({ ref, ...row }) => ({
+      ...row,
+      bytes:
+        ref === null
+          ? null
+          : readFileSync(join(files.directory, String(ref)), 'utf8'),
+    })),
     [
       {
         guid: 'att-local',
         availableLocally: 1,
         content: 'attached words',
-        bytes: new Uint8Array(Buffer.from('attached words')),
+        bytes: 'attached words',
       },
       {
         guid: 'att-offloaded',

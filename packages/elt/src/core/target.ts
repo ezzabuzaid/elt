@@ -21,14 +21,13 @@ export abstract class Target {
 // class holds it.
 export type TargetColumn = {
   readonly field: string;
-  readonly kind: string;
   readonly isPrimaryKey: boolean;
   readonly fileRead?: FileRead;
 };
 
 // The file reads of the columns that a host declares for a target, which each
 // hold one field: at most one of them is the key, and a column that holds a
-// file has the kind of what its read gives.
+// file holds its parsed text or its stored reference.
 export function targetFileReads(
   columns: readonly TargetColumn[],
 ): readonly FileRead[] {
@@ -38,11 +37,11 @@ export function targetFileReads(
   if (columns.filter((column) => column.isPrimaryKey).length > 1)
     throw new TypeError('Only one primary-key column is supported');
   const fileReads: FileRead[] = [];
-  for (const { fileRead, kind } of columns) {
+  for (const { fileRead } of columns) {
     if (fileRead === undefined) continue;
-    if (fileRead.outputType === 'bytes' ? kind !== 'blob' : kind !== 'text')
+    if (fileRead.parser === undefined && fileRead.file.storage === undefined)
       throw new TypeError(
-        'Original files require a BLOB column; parsed text and stored references require a TEXT column',
+        `File field ${fileRead.name} requires a parser or a file storage: .from(file).parse(parser) or .from(file.store(storage))`,
       );
     fileReads.push(fileRead);
   }

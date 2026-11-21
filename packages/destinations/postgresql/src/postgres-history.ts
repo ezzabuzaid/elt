@@ -180,8 +180,7 @@ const widenings: ReadonlyMap<string, string> = new Map([
 // The SHA-256 of the values of a staged row, which names its version: a
 // commit that finds the stored row with the same hash leaves it as it is.
 // Each value that is not null counts with its column's name, so a column the
-// stream adds, null in each stored row, makes no new version. A stored file
-// counts as the SHA-256 of its bytes, not as its id.
+// stream adds, null in each stored row, makes no new version.
 export function rowHash(
   columns: readonly { readonly name: string }[],
   values: readonly (EncodedValue | Uint8Array)[],

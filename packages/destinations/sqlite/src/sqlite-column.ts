@@ -175,9 +175,9 @@ export class SQLiteColumn {
   }
 
   from(file: FileReference): SQLiteColumn {
-    if (this.array || (this.kind !== 'blob' && this.kind !== 'text'))
+    if (this.array || this.kind !== 'text')
       throw new TypeError(
-        'Files require a BLOB column, parsed TEXT or a stored TEXT reference',
+        'Files require a TEXT column of parsed text or stored references',
       );
     return new SQLiteColumn(this.field, this.kind, {
       nullable: this.nullable,
@@ -218,19 +218,13 @@ export class SQLiteColumn {
     return quote(this.name);
   }
 
-  // Original file bytes live in a chunk table; the column keeps the file's id.
-  get storesFile(): boolean {
-    return this.kind === 'blob' && this.fileRead !== undefined;
-  }
-
   get storageType(): string {
     if (this.array) return 'TEXT';
-    return this.storesFile ? 'INTEGER' : storageTypes[this.kind];
+    return storageTypes[this.kind];
   }
 
   // The column's type as readers see it in the catalog.
   get dataType(): string {
-    if (this.storesFile) return 'integer';
     return this.array ? `${this.#typeName}[]` : this.#typeName;
   }
 
@@ -330,10 +324,7 @@ export class SQLiteColumn {
         if (typeof value === 'number' && Number.isFinite(value)) return value;
         break;
       case 'blob':
-        if (this.storesFile) {
-          if (typeof value === 'number' && Number.isSafeInteger(value))
-            return value;
-        } else if (value instanceof Uint8Array) return value;
+        if (value instanceof Uint8Array) return value;
         break;
       // An object is only an array's item, which the array branch encodes.
       case 'object':

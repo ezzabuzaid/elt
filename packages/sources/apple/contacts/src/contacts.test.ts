@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { hash } from 'node:crypto';
-import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { chmod, readFile } from 'node:fs/promises';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { SQLInputValue } from 'node:sqlite';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -31,15 +31,6 @@ import {
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleContactsSource } from './apple-contacts-source.ts';
-
-// The chunk table of a file column of the target named view, by the
-// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
-// JSON of [raw table, column], both in ASCII lower case.
-const chunkTable = (view: string, column: string) =>
-  `"_elt_files_${hash(
-    'sha256',
-    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
-  ).slice(0, 40)}"`;
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -542,17 +533,10 @@ function rows(path: string, sql: string): Record<string, unknown>[] {
     .map((row) => ({ ...row }));
 }
 
-// A file column's bytes, reassembled from the chunks elt-sqlite stores.
-function fileBytes(path: string, table: string, file: unknown): Buffer {
-  return Buffer.concat(
-    rows(
-      path,
-      `SELECT bytes FROM ${chunkTable(table, 'bytes')} WHERE file = ${Number(file)} ORDER BY n`,
-    ).map(({ bytes }) => {
-      assert.ok(bytes instanceof Uint8Array);
-      return bytes;
-    }),
-  );
+// The bytes of a stored file that copies keeps beside the SQLite file at
+// path.
+function fileBytes(path: string, ref: unknown): Buffer {
+  return readFileSync(join(dirname(path), 'files', String(ref)));
 }
 
 const sha256 = (bytes: Uint8Array) => hash('sha256', bytes);
@@ -566,7 +550,13 @@ function copies(source: AppleContactsSource, destination: SQLiteDestination) {
           stream.supportsFileTransfer
             ? destination.table(stream.name, (columns) => [
                 ...SQLiteColumns.fromSchema(stream.jsonSchema),
-                columns.blob('bytes').from(stream.file),
+                columns.text('ref').from(
+                  stream.file.store(
+                    new LocalFiles({
+                      directory: join(dirname(destination.path), 'files'),
+                    }),
+                  ),
+                ),
               ])
             : destination.table(stream.name),
           {
@@ -1469,13 +1459,13 @@ test('Contacts exports every stream of every account store by identifier', async
   );
   const images = rows(
     out,
-    'SELECT store, contactId, kind, storage, externalId, byteLength, sha256, bytes FROM images ORDER BY store, contactId, kind',
+    'SELECT store, contactId, kind, storage, externalId, byteLength, sha256, ref FROM images ORDER BY store, contactId, kind',
   );
   const jpeg = Buffer.from('not really a jpeg');
   assert.deepEqual(
-    images.map(({ bytes, ...image }) => ({
+    images.map(({ ref, ...image }) => ({
       ...image,
-      bytes: fileBytes(out, 'images', bytes),
+      bytes: fileBytes(out, ref),
     })),
     [
       {
@@ -1606,10 +1596,10 @@ test('Contacts loads edits incrementally, deletes removed rows and writes nothin
   );
   const [grace] = rows(
     destination.path,
-    "SELECT byteLength, bytes FROM images WHERE store = 'STORE-ACCOUNT-A' AND contactId = 4",
+    "SELECT byteLength, ref FROM images WHERE store = 'STORE-ACCOUNT-A' AND contactId = 4",
   );
   assert.deepEqual(
-    fileBytes(destination.path, 'images', grace?.bytes),
+    fileBytes(destination.path, grace?.ref),
     Buffer.from('a new photo'),
   );
 });

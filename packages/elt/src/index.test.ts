@@ -100,8 +100,6 @@ test('file storage declarations validate identities and keep parsing separate wi
   const stored = stream.file.store(storage);
   const read = new FileRead('reference', stored);
   read.validate(stream);
-  assert.equal(read.outputType, 'text');
-  assert.equal(new FileRead('bytes', stream.file).outputType, 'bytes');
   assert.equal(stream.file.storage, undefined);
   assert.equal(JSON.parse(JSON.stringify(read)).storage, storage.identity);
   assert.throws(
@@ -116,7 +114,7 @@ test('file storage declarations validate identities and keep parsing separate wi
     assert.throws(() => new LocalFiles({ directory }), /requires a directory/);
 });
 
-test('a file field accepts a file name only when its parser does, and a field of bytes or stored files accepts every name unless its reference accepts only what a parser accepts', () => {
+test('a file field accepts a file name only when its parser does, and a field of stored files accepts every name unless its reference accepts only what a parser accepts', () => {
   const stream = new Stream({
     name: 'files',
     jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
@@ -158,10 +156,6 @@ test('a file field accepts a file name only when its parser does, and a field of
   assert.equal(parsed.accepts('team photo.jpg'), false);
   assert.equal(
     new FileRead('content', stream.file, anyFormat).accepts('GroupPhotoImage'),
-    true,
-  );
-  assert.equal(
-    new FileRead('bytes', stream.file).accepts('team photo.jpg'),
     true,
   );
   assert.equal(

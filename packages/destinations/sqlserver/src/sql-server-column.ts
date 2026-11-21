@@ -155,9 +155,9 @@ export class SqlServerColumn {
   }
 
   from(file: FileReference): SqlServerColumn {
-    if (this.array || (this.kind !== 'blob' && this.kind !== 'text'))
+    if (this.array || this.kind !== 'text')
       throw new TypeError(
-        'Files require a BLOB column, parsed TEXT or a stored TEXT reference',
+        'Files require a TEXT column of parsed text or stored references',
       );
     return new SqlServerColumn(this.field, this.kind, {
       nullable: this.nullable,
@@ -194,10 +194,6 @@ export class SqlServerColumn {
     });
   }
 
-  get storesFile(): boolean {
-    return this.kind === 'blob' && this.fileRead !== undefined;
-  }
-
   get quotedName(): string {
     return quote(this.name);
   }
@@ -218,7 +214,6 @@ export class SqlServerColumn {
   // The type of the column, with the precision and scale that its format
   // declares, as sys.columns spells it.
   get storageType(): string {
-    if (this.storesFile) return 'uniqueidentifier';
     if (this.array) return 'json';
     if (this.#exactText) return 'nvarchar(max)';
     const { type } = this;
@@ -244,7 +239,7 @@ export class SqlServerColumn {
   // varchar (ADR 0011), and an array as the JSON of its items.
   get batchType(): string {
     if (this.array) return 'nvarchar(max)';
-    if (this.kind === 'blob' && !this.storesFile) return 'varchar(max)';
+    if (this.kind === 'blob') return 'varchar(max)';
     return this.storageType;
   }
 
@@ -252,8 +247,7 @@ export class SqlServerColumn {
   // stores it.
   stored(alias: string): string {
     if (this.array) return `CAST(${alias} AS json)`;
-    if (this.kind === 'blob' && !this.storesFile)
-      return `BASE64_DECODE(${alias})`;
+    if (this.kind === 'blob') return `BASE64_DECODE(${alias})`;
     return alias;
   }
 
@@ -352,13 +346,7 @@ export class SqlServerColumn {
         if (isTimestamp(value)) return value;
         break;
       case 'blob':
-        if (this.storesFile) {
-          if (
-            typeof value === 'string' &&
-            /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value)
-          )
-            return value;
-        } else if (value instanceof Uint8Array) return value.toBase64();
+        if (value instanceof Uint8Array) return value.toBase64();
         break;
       // An object is only an array's item, which #element encodes.
       case 'object':

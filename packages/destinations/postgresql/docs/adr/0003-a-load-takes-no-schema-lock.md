@@ -2,6 +2,8 @@
 
 Superseded in part on 2026-11-20 (#4886) by [ADR 0010](./0010-readers-look-in-marts-and-elt-keeps-its-tables-in-warehouse.md): the tables of the writers are made in a transaction of their own, under the lock of `_warehouse`, before the commits of a load, so the first commit of a table takes no schema lock.
 
+Superseded in part on 2026-11-22 (#5170): `blob().from(file)` and its staged file chunks are gone. A file storage in the database, the next step of #5170, keeps the bytes of files in Postgres.
+
 `PostgresLoad.open` held a session advisory lock on the schema for the full load, and `PostgresWriter.clear` held it across its commit. The lock protected no case that a host can make:
 
 - Two runs of one copy: `PostgresCheckpointStore` holds the key of each copy for the run and for a clear, and the replication takes it before `destination.load()`.

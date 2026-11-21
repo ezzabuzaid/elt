@@ -1,5 +1,7 @@
 # A stream that starts over reloads into a hidden target
 
+Superseded in part on 2026-11-22 (#5170): `blob().from(file)` and the chunk tables of the destinations are gone, so no file chunk stays while a reload is open. A file storage in the database, the next step of #5170, keeps the bytes of files in the destination.
+
 A SQL Server table can be too large to reload in one commit, and its change history can expire. Before, a `RESET` of the full stream, a restart for a new schema, or a stale table replaced the rows at the first commit. Thus readers saw a part of the table while the reload ran, and a source could send no `STATE` until the reload was complete.
 
 Thus a reload goes into a hidden target. A reload opens when the load prepares the stream (a stored target that does not fit, or a reload that the last run left open), or when a `RESET` of the full stream comes. Its commits, also its checkpoints, go to the hidden target. `complete()` puts that target in the place of the target after the stream ends with no failure. `reloadMode()` is the one decision table of each destination.

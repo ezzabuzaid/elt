@@ -120,7 +120,7 @@ A message whose fingerprint did not change keeps its saved rows, and the run doe
 
 - No date, message-count or file-size window applies.
 - A change to flags, membership, bytes or availability updates the rows. A key that is gone gives a delete. A snapshot with no changes writes zero rows.
-- The scan time and the checkpoint size increase with the archive. The temporary MIME disk space increases with the largest message. The destination staging and the stored original bytes need more disk space.
+- The scan time and the checkpoint size increase with the archive. The temporary MIME disk space increases with the largest message. The destination staging and the stored files need more disk space.
 - The index is consistent in its transaction, but the files and settings of Mail are separate from it. A change during a run can fail a stream. Then run again.
 
 ## Watching
@@ -183,7 +183,7 @@ The checks used Node.js 26.8.1 and macOS 26.6.2. At that time, the Mail source w
 
 - `npx nx run apple:typecheck` and `npx nx run elt-sqlite:typecheck` passed. `apple:test` passed all 60 tests, and `elt-sqlite:test` passed all 31. Before the change, `apple` had 56 tests.
 - Four Mail integration tests import `AppleMailSource` directly, and they load through a real pipeline and a real SQLite destination. They cover all 42 streams, exact file bytes, nested MIME, repeated, empty and encoded headers, 64-bit IDs, missing and later downloaded content, changed flags and memberships, deletion, unchanged runs, schema and read failures, kept checkpoints, file and index watch notifications, and cancellation. The fixtures hold only synthetic data and Apple's schema, never personal records.
-- Native ImageIO and Vision checks sent 1-, 2- and 3-pixel images through the attachment pipeline. The smaller tracking pixels give null text and keep their original bytes. The PDF, text, image and HEIC checks (also a HEIC without an extension) pass. Backlog defect #2038 is closed.
+- Native ImageIO and Vision checks sent 1-, 2- and 3-pixel images through the attachment pipeline. The smaller tracking pixels give null text and keep their stored files. The PDF, text, image and HEIC checks (also a HEIC without an extension) pass. Backlog defect #2038 is closed.
 - A full live copy of the attachments without a text parser loaded 1,152 records: 576 local files (122,303,823 bytes in 583 SQLite chunks) and 576 records not available. The second run, with no changes, wrote zero records and zero deletions.
 - A Mail run through the Apple exporter completed 40 of 42 streams. It loaded 25,689 messages, 819,179 headers and 69,324 MIME parts, of which 46,251 were text parts (1,133,028,667 UTF-8 bytes). On 2026-09-27, all 25,689 stored original message files (1,379,197,940 bytes) were put together again and checked against the SHA-256 and the size of their source. Forty checkpoints committed. The full body snapshot passed after SQLite was changed to sort only row IDs. Before, sorting the full payloads used all temporary disk space on this Mac, whose disk was almost full.
 - The next run through the entry point completed 39 streams. 38 wrote nothing (also messages, message files and headers), and two mailbox property rows updated. Mail changed message files during the later body and attachment scans, so those streams failed and kept their saved checkpoints. Native reads of all 33 mailbox property lists, done again and again, gave stable values and key order and matched the saved export. Thus the two updates were not differences of serialization.

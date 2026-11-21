@@ -159,12 +159,13 @@ const calendar = new AppleCalendarSource({
   endAt,
   attachments: googleCalendarAttachments(requester),
 });
+const files = new LocalFiles({ directory: 'files' });
 new Copy(
   calendar.icsAttachments,
   sqlite.table('attachments', (c) => [
     c.text('uri'),
     c.text('filename'),
-    c.blob('bytes').from(calendar.icsAttachments.file),
+    c.text('ref').from(calendar.icsAttachments.file.store(files)),
   ]),
 );
 ```

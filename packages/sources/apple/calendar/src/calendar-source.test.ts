@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFile as execFileCallback, spawnSync } from 'node:child_process';
 import { hash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -60,15 +60,6 @@ import {
 } from './apple-calendar-source.ts';
 import { googleCalendarAttachments } from './google-calendar-attachments.ts';
 import { storedRows } from './testing/stored-rows.ts';
-
-// The chunk table of a file column of the target named view, by the
-// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
-// JSON of [raw table, column], both in ASCII lower case.
-const chunkTable = (view: string, column: string) =>
-  `"_elt_files_${hash(
-    'sha256',
-    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
-  ).slice(0, 40)}"`;
 
 const execFile = promisify(execFileCallback);
 
@@ -2388,13 +2379,14 @@ test(
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
     });
+    const files = new LocalFiles({ directory: join(scratch.path, 'files') });
     const copy = new Copy(
       source.icsAttachments,
       sqlite.table('attachments', (c) => [
         c.text('filename'),
         c.text('formatType'),
         c.boolean('inline'),
-        c.blob('bytes').from(source.icsAttachments.file),
+        c.text('ref').from(source.icsAttachments.file.store(files)),
       ]),
     );
 
@@ -2419,16 +2411,16 @@ test(
     assert.deepEqual(
       database
         .prepare(
-          `SELECT filename, formatType, inline, (SELECT c.bytes FROM ${chunkTable('attachments', 'bytes')} c WHERE c.file = a.bytes AND c.n = 0) AS bytes FROM raw_attachments a ORDER BY a.rowid`,
+          'SELECT filename, formatType, inline, ref FROM raw_attachments ORDER BY rowid',
         )
         .all()
-        .map(({ bytes, ...row }) => {
-          assert.ok(bytes === null || bytes instanceof Uint8Array);
-          return {
-            ...row,
-            bytes: bytes === null ? null : Buffer.from(bytes).toString(),
-          };
-        }),
+        .map(({ ref, ...row }) => ({
+          ...row,
+          bytes:
+            ref === null
+              ? null
+              : readFileSync(join(files.directory, String(ref)), 'utf8'),
+        })),
       [
         {
           filename: 'diagram.png',
@@ -2564,6 +2556,7 @@ test(
         ],
       }).run();
 
+    const files = new LocalFiles({ directory: join(scratch.path, 'files') });
     const metadata = new Copy(source.icsAttachments, sqlite.table('metadata'));
     assert.deepEqual(await run(metadata), [
       { copy: metadata, count: 3, deleted: 0 },
@@ -2574,7 +2567,7 @@ test(
           source.icsAttachments,
           sqlite.table('files', (c) => [
             c.text('uri'),
-            c.blob('bytes').from(source.icsAttachments.file),
+            c.text('ref').from(source.icsAttachments.file.store(files)),
           ]),
         ),
       ),
@@ -2607,11 +2600,12 @@ test(
     const sqlite = new SQLiteDestination({
       path: join(scratch.path, 'a.sqlite'),
     });
+    const files = new LocalFiles({ directory: join(scratch.path, 'files') });
     const copy = new Copy(
       source.icsAttachments,
       sqlite.table('attachments', (c) => [
         c.text('id').notNull(),
-        c.blob('bytes').from(source.icsAttachments.file),
+        c.text('ref').from(source.icsAttachments.file.store(files)),
       ]),
       {
         id: 'attachments',

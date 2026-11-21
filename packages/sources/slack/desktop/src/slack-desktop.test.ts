@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { hash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import {
   chmod,
   mkdir,
@@ -27,6 +27,7 @@ import {
   Connection,
   Copy,
   type CopyResult,
+  LocalFiles,
   Pipeline,
   type PipelineClock,
   PipelineError,
@@ -756,15 +757,6 @@ const unchanged = Object.fromEntries(
     'downloads',
   ].map((name) => [name, nothing]),
 );
-
-// The chunk table of a file column of the target named view, by the
-// documented rule: _elt_files_ and the first 40 hex digits of SHA-256 over the
-// JSON of [raw table, column], both in ASCII lower case.
-const chunkTable = (view: string, column: string) =>
-  `"_elt_files_${hash(
-    'sha256',
-    JSON.stringify([`raw_${view}`.toLowerCase(), column.toLowerCase()]),
-  ).slice(0, 40)}"`;
 
 async function scratch() {
   const dir = await new TemporaryFiles().directory('slack-desktop-');
@@ -1732,6 +1724,7 @@ test('downloads stay after Slack clears its list, with the file’s bytes while 
   });
   const source = new SlackDesktopSource({ directory: store.directory });
   const destination = new SQLiteDestination({ path: out });
+  const files = new LocalFiles({ directory: join(dir.path, 'files') });
   const run = new Pipeline({
     clock: globalThis,
     history: new SQLiteSyncHistory(),
@@ -1748,7 +1741,7 @@ test('downloads stay after Slack clears its list, with the file’s bytes while 
             source.downloads,
             destination.table('downloads', (c) => [
               ...SQLiteColumns.fromSchema(source.downloads.jsonSchema),
-              c.blob('bytes').from(source.downloads.file),
+              c.text('ref').from(source.downloads.file.store(files)),
             ]),
             {
               id: 'downloads',
@@ -1767,12 +1760,17 @@ test('downloads stay after Slack clears its list, with the file’s bytes while 
 
   assert.deepEqual(cleared.downloads, nothing);
   assert.deepEqual(
-    rows(
-      out,
-      `SELECT d.fileId, (SELECT c.bytes FROM ${chunkTable('downloads', 'bytes')} c WHERE c.file = d.bytes) AS bytes FROM downloads d ORDER BY d.fileId`,
+    rows(out, 'SELECT fileId, ref FROM downloads ORDER BY fileId').map(
+      ({ fileId, ref }) => ({
+        fileId,
+        bytes:
+          ref === null
+            ? null
+            : readFileSync(join(files.directory, String(ref)), 'utf8'),
+      }),
     ),
     [
-      { fileId: 'F1', bytes: new Uint8Array(Buffer.from('report bytes')) },
+      { fileId: 'F1', bytes: 'report bytes' },
       { fileId: 'F2', bytes: null },
     ],
   );
