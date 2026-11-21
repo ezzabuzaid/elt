@@ -21,11 +21,15 @@ import {
   Source,
   Stream,
 } from '@eltjs/elt';
-import { SqlServerDatabase } from '@eltjs/sdk-microsoft-sql-server';
+import {
+  type SqlServerConnection,
+  SqlServerDatabase,
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import {
   ComputedDataset,
   SqlServerDestination,
+  type SqlServerIndex,
   type SqlServerLogin,
   SqlServerSyncHistory,
   View,
@@ -166,7 +170,7 @@ function measuresPipeline(
   source: Records,
   measure: Measure,
   views: (marts: SqlServerDestination) => View[] = () => [],
-  afterCreate?: (table: string) => readonly string[],
+  indexes: readonly SqlServerIndex[] = [],
 ) {
   const destination = new SqlServerDestination({ login });
   const target = destination.table('records');
@@ -188,7 +192,7 @@ function measuresPipeline(
         description: 'The size, label and vector of each record.',
         from: [target],
         compute: measure,
-        afterCreate,
+        indexes,
       }),
       ...views(destination),
     ],
@@ -424,28 +428,143 @@ test('a vector column of other dimensions makes the raw table again with the new
   );
 });
 
-test('afterCreate gets the raw table, and its statements run when the dataset makes the table and again when a changed declaration makes it again', async () => {
+// The nonclustered and vector indexes of a table, each with its key columns
+// in order, sorted by those columns and then by name.
+const indexesOf = async (admin: SqlServerConnection, table: string) =>
+  plain(
+    await admin.query(
+      `SELECT i.[name], i.[type_desc] AS [type], STRING_AGG(c.[name], N',') WITHIN GROUP (ORDER BY ic.[key_ordinal]) AS [columns]
+       FROM sys.indexes AS i
+       JOIN sys.index_columns AS ic ON ic.[object_id] = i.[object_id] AND ic.[index_id] = i.[index_id]
+       JOIN sys.columns AS c ON c.[object_id] = ic.[object_id] AND c.[column_id] = ic.[column_id]
+       WHERE i.[object_id] = OBJECT_ID(@table) AND i.[type_desc] IN (N'NONCLUSTERED', N'VECTOR')
+       GROUP BY i.[name], i.[type_desc]`,
+      { table },
+    ),
+  ).toSorted((a, b) => {
+    const order = ({ columns, name }: Record<string, unknown>) =>
+      `${String(columns)} ${String(name)}`;
+    return order(a) === order(b) ? 0 : order(a) < order(b) ? -1 : 1;
+  });
+
+const rowsOf = async (admin: SqlServerConnection) =>
+  plain(
+    await admin.query(
+      'SELECT [id], [_elt_row], [committed_in] FROM _warehouse.raw_measures ORDER BY [id]',
+    ),
+  );
+
+const managedName = /^ix_elt_[0-9a-f]{16}$/;
+
+test('a declared index is made on the raw table under a name the destination derives from it, and one declared later is made in place: each row keeps its _elt_row and its commit, and the index a person made stays', async () => {
+  await using database = await scratch();
+  const source = new Records(['r1', 'r2']);
+  const measure = new Measure();
+  measure.answers.set('r1', { size: 1 });
+  await measuresPipeline(database.login, source, measure, () => [], [
+    { type: 'nonclustered', columns: ['committed_in'] },
+  ]).pipeline.run();
+  await database.admin.query(
+    'CREATE INDEX [by_hand] ON _warehouse.raw_measures ([committed_in])',
+  );
+  const first = await indexesOf(database.admin, '_warehouse.raw_measures');
+  const rows = await rowsOf(database.admin);
+
+  await measuresPipeline(database.login, source, measure, () => [], [
+    { type: 'nonclustered', columns: ['committed_in'] },
+    { type: 'nonclustered', columns: ['size', 'committed_in'] },
+  ]).pipeline.run();
+
+  const second = await indexesOf(database.admin, '_warehouse.raw_measures');
+  const committedIn = first.find(({ name }) => managedName.test(String(name)));
+  const bySize = second.find(({ columns }) => columns === 'size,committed_in');
+  assert.ok(
+    committedIn !== undefined && bySize !== undefined,
+    JSON.stringify(second),
+  );
+  assert.match(String(bySize.name), managedName);
+  assert.deepEqual(
+    { first, second, rows: await rowsOf(database.admin) },
+    {
+      first: [
+        { name: 'key_hash', type: 'NONCLUSTERED', columns: '_elt_key_hash' },
+        { name: 'by_hand', type: 'NONCLUSTERED', columns: 'committed_in' },
+        {
+          name: committedIn.name,
+          type: 'NONCLUSTERED',
+          columns: 'committed_in',
+        },
+      ],
+      second: [
+        { name: 'key_hash', type: 'NONCLUSTERED', columns: '_elt_key_hash' },
+        { name: 'by_hand', type: 'NONCLUSTERED', columns: 'committed_in' },
+        {
+          name: committedIn.name,
+          type: 'NONCLUSTERED',
+          columns: 'committed_in',
+        },
+        {
+          name: bySize.name,
+          type: 'NONCLUSTERED',
+          columns: 'size,committed_in',
+        },
+      ],
+      rows,
+    },
+  );
+});
+
+test('an index that the declaration no longer names is dropped in place, each row keeps its _elt_row and its commit, and the index a person made stays', async () => {
+  await using database = await scratch();
+  const source = new Records(['r1', 'r2']);
+  const measure = new Measure();
+  await measuresPipeline(database.login, source, measure, () => [], [
+    { type: 'nonclustered', columns: ['size'] },
+    { type: 'nonclustered', columns: ['committed_in'] },
+  ]).pipeline.run();
+  await database.admin.query(
+    'CREATE INDEX [ix_by_hand] ON _warehouse.raw_measures ([size])',
+  );
+  const rows = await rowsOf(database.admin);
+  const declared = (
+    await indexesOf(database.admin, '_warehouse.raw_measures')
+  ).find(
+    ({ columns, name }) =>
+      columns === 'committed_in' && managedName.test(String(name)),
+  );
+
+  await measuresPipeline(database.login, source, measure, () => [], [
+    { type: 'nonclustered', columns: ['committed_in'] },
+  ]).pipeline.run();
+
+  assert.deepEqual(
+    {
+      indexes: await indexesOf(database.admin, '_warehouse.raw_measures'),
+      rows: await rowsOf(database.admin),
+    },
+    {
+      indexes: [
+        { name: 'key_hash', type: 'NONCLUSTERED', columns: '_elt_key_hash' },
+        { name: declared?.name, type: 'NONCLUSTERED', columns: 'committed_in' },
+        { name: 'ix_by_hand', type: 'NONCLUSTERED', columns: 'size' },
+      ],
+      rows,
+    },
+  );
+});
+
+test('a changed declaration that makes the raw table again makes the declared indexes on the new table', async () => {
   await using database = await scratch();
   const source = new Records(['r1']);
-  const tables: string[] = [];
-  const afterCreate = (table: string) => {
-    tables.push(table);
-    return [`CREATE INDEX [by_commit] ON ${table} ([committed_in])`];
-  };
-  const indexes = async () =>
-    plain(
-      await database.admin.query(
-        "SELECT i.[name] FROM sys.indexes AS i WHERE i.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND i.[name] = N'by_commit'",
-      ),
-    );
+  const indexes = [{ type: 'nonclustered', columns: ['size'] }] as const;
   await measuresPipeline(
     database.login,
     source,
     new Measure(3),
     () => [],
-    afterCreate,
+    indexes,
   ).pipeline.run();
-  const made = await indexes();
+  const before = await indexesOf(database.admin, '_warehouse.raw_measures');
   const four = new Measure(4);
   four.model = 'measure-4';
 
@@ -454,37 +573,40 @@ test('afterCreate gets the raw table, and its statements run when the dataset ma
     source,
     four,
     () => [],
-    afterCreate,
+    indexes,
   ).pipeline.run();
 
   assert.deepEqual(
     {
-      tables,
-      made,
-      remade: await indexes(),
+      indexes: await indexesOf(database.admin, '_warehouse.raw_measures'),
       dimensions: plain(
         await database.admin.query(
           "SELECT c.[vector_dimensions] AS [dimensions] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND c.[name] = N'vector'",
         ),
       ),
     },
-    {
-      tables: ['[_warehouse].[raw_measures]', '[_warehouse].[raw_measures]'],
-      made: [{ name: 'by_commit' }],
-      remade: [{ name: 'by_commit' }],
-      dimensions: [{ dimensions: 4 }],
-    },
+    { indexes: before, dimensions: [{ dimensions: 4 }] },
   );
+  assert.equal(before.length, 2);
 });
 
-test('an afterCreate statement that fails fails the dataset, and the transaction leaves no raw table', async () => {
+// SQL Server 2025 in Docker makes a DiskANN index only with PREVIEW_FEATURES
+// on, and only on a table whose clustered key is a single int: it refuses the
+// bigint _elt_row with error 42217, which Azure SQL's index accepts
+// (@zukhruf/vectors README). The error comes after SQL Server parsed the
+// statement and checked that the column is a vector, so the refusal shows that
+// the statement the destination sends is valid T-SQL.
+test('a declared vector index reaches SQL Server as CREATE VECTOR INDEX with its metric, and an index that SQL Server refuses fails the dataset with its error', async () => {
   await using database = await scratch();
+  await database.admin.query(
+    'ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON',
+  );
   const { pipeline } = measuresPipeline(
     database.login,
     new Records(['r1']),
     new Measure(),
     () => [],
-    (table) => [`CREATE INDEX [by_nothing] ON ${table} ([nothing])`],
+    [{ type: 'vector', column: 'vector', metric: 'cosine' }],
   );
 
   const failed = await rejection(pipeline.run());
@@ -493,11 +615,6 @@ test('an afterCreate statement that fails fails the dataset, and the transaction
   assert.deepEqual(
     {
       error: failed.message,
-      tables: plain(
-        await database.admin.query(
-          "SELECT OBJECT_ID(N'_warehouse.raw_measures') AS [raw], OBJECT_ID(N'marts.measures') AS [view]",
-        ),
-      ),
       status: plain(
         await database.admin.query(
           "SELECT [state] FROM marts.derived_status WHERE [dataset] = N'marts.measures'",
@@ -506,11 +623,59 @@ test('an afterCreate statement that fails fails the dataset, and the transaction
     },
     {
       error:
-        "Derived dataset measures failed: Column name 'nothing' does not exist in the target table, index or view.",
-      tables: [{ raw: null, view: null }],
+        "Derived dataset measures failed: Table '_warehouse.raw_measures' must have a clustered primary key on a single 4 byte INT column to create a vector index.",
       status: [{ state: 'failed' }],
     },
   );
+});
+
+for (const [index, error] of [
+  [
+    { type: 'nonclustered', columns: ['size', 'missing'] },
+    'Computed dataset measures declares an index on missing, which [_warehouse].[raw_measures] does not have',
+  ],
+  [
+    { type: 'vector', column: 'label', metric: 'cosine' },
+    'Computed dataset measures declares a vector index on label, which is nvarchar(max), not a vector',
+  ],
+  [
+    { type: 'nonclustered', columns: ['label'] },
+    'Computed dataset measures cannot make label an index key: SQL Server refuses a column of type nvarchar(max) as one',
+  ],
+  [
+    { type: 'nonclustered', columns: ['vector'] },
+    'Computed dataset measures cannot make vector an index key: SQL Server refuses a column of type vector(3) as one',
+  ],
+] as const)
+  test(`an index ${JSON.stringify(index)} is refused when the dataset is constructed`, () => {
+    assert.throws(
+      () =>
+        new ComputedDataset({
+          into: new SqlServerDestination({
+            login: 'Server=none;Database=none',
+          }),
+          name: 'measures',
+          description: 'The measures of each record.',
+          from: [],
+          compute: new Measure(),
+          indexes: [index],
+        }),
+      new TypeError(error),
+    );
+  });
+
+// A claim of the type checker: the function is never called.
+test('a computed dataset of a rule takes no indexes of a parts table, which only a table rule has', () => {
+  void (() =>
+    // @ts-expect-error: only a table rule has a parts table.
+    new ComputedDataset({
+      into: new SqlServerDestination({ login: 'Server=none;Database=none' }),
+      name: 'measures',
+      description: 'The measures of each record.',
+      from: [],
+      compute: new Measure(),
+      partIndexes: [{ type: 'nonclustered', columns: ['seq'] }],
+    }));
 });
 
 test('a view over the dataset waits while the dataset waits for its input, and appears with the run that loads it', async () => {

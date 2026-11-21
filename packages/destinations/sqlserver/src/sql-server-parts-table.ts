@@ -12,6 +12,7 @@ import type { SqlServerConnection } from '@eltjs/sdk-microsoft-sql-server';
 import { TargetDescriptions } from './sql-server-descriptions.ts';
 import { TargetHistory, rowHash } from './sql-server-history.ts';
 import { quote, rawTable } from './sql-server-identifiers.ts';
+import { type SqlServerIndex, TableIndexes } from './sql-server-indexes.ts';
 import { TargetReaderView } from './sql-server-reader-view.ts';
 import {
   type Declared,
@@ -38,6 +39,7 @@ export class SqlServerPartsTable {
   readonly statement: string;
   readonly history: TargetHistory;
   readonly view: TargetReaderView;
+  readonly indexes: TableIndexes;
   // The relations that a copy of the pipeline must not make.
   readonly names: readonly string[];
   readonly #key: string;
@@ -53,6 +55,7 @@ export class SqlServerPartsTable {
     dataset,
     description,
     rule,
+    indexes,
   }: {
     dataset: string;
     description: string;
@@ -60,6 +63,7 @@ export class SqlServerPartsTable {
       TableRule<unknown, RuleColumns, RuleColumns>,
       'key' | 'output' | 'place'
     >;
+    indexes: readonly SqlServerIndex[];
   }) {
     const view = partsView({ dataset, description, rule });
     const name = rawTable(view.name);
@@ -95,6 +99,12 @@ export class SqlServerPartsTable {
       );
     this.statement = `CREATE TABLE ${this.table} ([_elt_row] bigint IDENTITY(1, 1) NOT NULL PRIMARY KEY CLUSTERED, ${columns.join(', ')});
       CREATE UNIQUE INDEX [key_hash_seq] ON ${this.table} ([_elt_key_hash], [seq]);`;
+    this.indexes = new TableIndexes({
+      dataset,
+      table: this.table,
+      columns: this.declared,
+      indexes,
+    });
     this.history = new TargetHistory(hash('sha256', this.table).slice(0, 40));
     this.view = new TargetReaderView(
       view.name,

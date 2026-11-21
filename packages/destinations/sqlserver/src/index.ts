@@ -5,6 +5,7 @@ export { SqlServerColumn } from './sql-server-column.ts';
 export { SqlServerColumns } from './sql-server-columns.ts';
 export type { SqlServerLogin } from './sql-server-connection.ts';
 export { SqlServerDestination } from './sql-server-destination.ts';
+export type { SqlServerIndex } from './sql-server-indexes.ts';
 export { readPassStatus } from './sql-server-passes.ts';
 export { SqlServerSetupError } from './sql-server-setup-error.ts';
 export { SqlServerSyncHistory } from './sql-server-sync-history.ts';

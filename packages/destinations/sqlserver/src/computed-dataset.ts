@@ -29,6 +29,7 @@ import { SqlServerDestination, database } from './sql-server-destination.ts';
 import { storedColumns } from './sql-server-fit.ts';
 import { TargetHistory, rowHash } from './sql-server-history.ts';
 import { identifiers, quote, rawTable } from './sql-server-identifiers.ts';
+import { type SqlServerIndex, TableIndexes } from './sql-server-indexes.ts';
 import { SqlServerLoad } from './sql-server-load.ts';
 import { expireBefore } from './sql-server-numbering.ts';
 import { SqlServerPartsTable } from './sql-server-parts-table.ts';
@@ -60,7 +61,7 @@ const ownColumns = ['_elt_row', '_elt_key_hash'];
 // the view readers query.
 type DeclaredTable = Pick<
   SqlServerPartsTable,
-  'table' | 'declared' | 'statement' | 'history' | 'view'
+  'table' | 'declared' | 'statement' | 'history' | 'view' | 'indexes'
 >;
 
 // Data computed on write from what the pipeline's copies load into one SQL
@@ -78,8 +79,9 @@ type DeclaredTable = Pick<
 // raw_<name>_parts, which readers query through marts.<name>_parts. The
 // commit that writes an output row writes its parts, and the two tables are
 // one declaration, so a change to either makes both again.
-// afterCreate gives the T-SQL of the host, such as a vector index, that runs
-// each time the dataset makes its raw table (ADR 0008).
+// Each table has the indexes that its declaration names: indexes for the raw
+// table, and partIndexes for the parts table of a table rule. Each refresh
+// makes or drops the difference in place, before it writes a row (ADR 0013).
 export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
   readonly name: string;
   // The database the dataset lives in.
@@ -95,7 +97,6 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
   // are the parts'.
   readonly #ruleColumns: RuleColumns;
   readonly #output: DeclaredTable;
-  readonly #afterCreate: readonly string[];
 
   constructor({
     into,
@@ -103,16 +104,21 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
     description,
     from,
     compute,
-    afterCreate,
+    indexes = [],
+    partIndexes = [],
   }: {
     into: SqlServerDestination;
     name: string;
     description: string;
     from: readonly (SqlServerTable | View)[];
-    compute:
-      Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
-    afterCreate?: (table: string) => readonly string[];
-  }) {
+    indexes?: readonly SqlServerIndex[];
+  } & (
+    | { compute: Rule<Input, RuleColumns>; partIndexes?: never }
+    | {
+        compute: TableRule<Input, RuleColumns, RuleColumns>;
+        partIndexes?: readonly SqlServerIndex[];
+      }
+  )) {
     super();
     this.name = name;
     this.into = into;
@@ -131,12 +137,12 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
               dataset: name,
               description,
               rule: compute,
+              indexes: partIndexes,
             }),
           }
         : { rule: compute };
     this.#ruleColumns = compute instanceof TableRule ? {} : compute.output;
     const table = inWarehouse(rawTable(name));
-    this.#afterCreate = Object.freeze([...(afterCreate?.(table) ?? [])]);
     const declared: readonly Declared[] = Object.freeze([
       { name: '_elt_row', type: 'bigint', required: true },
       { name: compute.key.name, type: 'nvarchar(max)', required: true },
@@ -167,6 +173,12 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
       statement: `CREATE TABLE ${table} ([_elt_row] bigint IDENTITY(1, 1) NOT NULL PRIMARY KEY CLUSTERED, ${columns.join(', ')}, CHECK ([status] IN (N'computed', N'empty', N'failed')));
       CREATE UNIQUE INDEX [key_hash] ON ${table} ([_elt_key_hash]);`,
       history,
+      indexes: new TableIndexes({
+        dataset: name,
+        table,
+        columns: declared,
+        indexes,
+      }),
       view: new TargetReaderView(
         name,
         table,
@@ -314,6 +326,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
         await declared.history.expire(connection);
       return rows;
     });
+    for (const { indexes } of this.#tables) await indexes.reconcile(connection);
     const session = new Lock();
     const settle = (work: (commit: () => Promise<number>) => Promise<void>) =>
       session.run(() => load.transaction(() => work(commits())), { signal });
@@ -456,8 +469,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
   // new shape, and the views over the old tables read the new ones (ADR
   // 0006). A column whose type changes in a way that a history cannot follow,
   // such as a vector of other dimensions, expires each position before the
-  // commit, which only the rows of the old history read. Each make of the
-  // raw table runs the statements of afterCreate after it (ADR 0008).
+  // commit, which only the rows of the old history read.
   async #declare(
     connection: SqlServerConnection,
     commit: () => Promise<number>,
@@ -477,7 +489,6 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
         await history.create(connection, table);
         await view.describe(connection);
       }
-      if (missing) await this.#afterCreated(connection);
       return;
     }
     const committedIn = await commit();
@@ -512,16 +523,8 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
           await history.create(connection, table);
           await view.replace(connection);
         }
-        await this.#afterCreated(connection);
       },
     );
-  }
-
-  // Runs the statements of afterCreate, one at a time, on the raw table that
-  // the dataset made.
-  async #afterCreated(connection: SqlServerConnection): Promise<void> {
-    for (const statement of this.#afterCreate)
-      await connection.query(statement);
   }
 
   // Each input by key, from the rows of each relation of from that exists

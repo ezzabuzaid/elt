@@ -138,9 +138,9 @@ _Avoid_: Advisory lock (Postgres's word), mutex (`@zukhruf/mutex` is the package
 A `vector(n)` column of a rule: n float32 values that a model made. The destination keeps it as `VECTOR(n)`, at most 1,998 dimensions, and sends each value as the JSON text of `@zukhruf/vectors/sqlserver`. `sys.columns` gives its dimensions in `vector_dimensions`, so a column of other dimensions does not fit its declaration.
 _Avoid_: Embedding (the model's output before it is a column), blob
 
-**Table statements**:
-The T-SQL that `afterCreate` gives for the raw table of a computed dataset, such as a `CREATE VECTOR INDEX`. They run each time the dataset makes the table.
-_Avoid_: Hook, migration, post-hook (dbt's word)
+**Declared index**:
+An index that a computed dataset declares on its raw table (`indexes`) or its parts table (`partIndexes`): a nonclustered index over key columns, or a DiskANN vector index over a vector column with its metric. The destination names it `ix_elt_<hash>` from its declaration and reconciles the declared indexes with `sys.indexes` at each refresh, so an index of another name, such as a person's own, stays.
+_Avoid_: Hook, `afterCreate` (removed), post-hook (dbt's word), physical property (SQLMesh's word for more than indexes)
 
 **Parts table**:
 The table `_warehouse.raw_<name>_parts` that a computed dataset of a table rule keeps beside its raw table, with one row for each part, for example `_warehouse.raw_document_chunks_parts`. Readers query the view `marts.<name>_parts`. It has a row number, the key, `seq`, `part_hash`, the content and place columns of the rule, and the key hash, and it is unique on the key hash and `seq`.

@@ -28,7 +28,7 @@ The words in these documents have one meaning each. See the glossary in [CONTEXT
 - The file columns: parsed text, references to the files of a storage, and the original bytes of a file in a file store (see "File bytes in the database" below).
 - `reading(position?)`: a session of its own that reads the database as of a position (see "Commit numbers and positions" below), and `readPassStatus(login)`.
 - `View`, and its rows of `derived_status` (see "Declare a view" and "Derived status" below).
-- `ComputedDataset` of a `Rule` or a `TableRule`, with `text`, `blob`, `integer` and `vector(n)` rule columns, the parts table of a `TableRule`, `afterCreate`, and its rows of `derived_status` (see "Declare a computed dataset" below).
+- `ComputedDataset` of a `Rule` or a `TableRule`, with `text`, `blob`, `integer` and `vector(n)` rule columns, the parts table of a `TableRule`, declared indexes, and its rows of `derived_status` (see "Declare a computed dataset" below).
 - A failure of the setup of the database is a `SqlServerSetupError`. Its [failure type](../../elt/README.md#failure-types) is `config`. A login without a permission that a statement of the destination or of `SqlServerCheckpointStore` needs is also `config`: a `SqlServerPermissionError` of sdk-microsoft-sql-server, and the SQL Server errors 229 and 230 (a permission on an object or a column) and 262 (a permission in the database, such as `CREATE TABLE`). A login that the server refuses (`SqlServerLoginError`: wrong credentials, a disabled login, a database that it may not open) is `config` too, as a wrong password is in elt-postgresql. Each other error, for example a server that cannot be reached, is `system`.
 
 ## Load a stream into SQL Server
@@ -124,17 +124,26 @@ class View {
 }
 
 class ComputedDataset<Input> {
-  constructor(options: {
-    into: SqlServerDestination;
-    name: string;
-    description: string;
-    from: readonly (SqlServerTable | View)[];
-    compute:
-      Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
-    // T-SQL that runs each time the dataset makes its raw table, such as a vector index.
-    afterCreate?: (table: string) => readonly string[];
-  });
+  constructor(
+    options: {
+      into: SqlServerDestination;
+      name: string;
+      description: string;
+      from: readonly (SqlServerTable | View)[];
+      indexes?: readonly SqlServerIndex[]; // of _warehouse.raw_<name>
+    } & (
+      | { compute: Rule<Input, RuleColumns> }
+      | {
+          compute: TableRule<Input, RuleColumns, RuleColumns>;
+          partIndexes?: readonly SqlServerIndex[]; // of _warehouse.raw_<name>_parts
+        }
+    ),
+  );
 }
+
+type SqlServerIndex =
+  | { type: 'nonclustered'; columns: readonly [string, ...string[]] }
+  | { type: 'vector'; column: string; metric: 'cosine' | 'euclidean' | 'dot' }; // DiskANN
 
 class SqlServerCheckpointStore {
   constructor(options: { login: SqlServerLogin });
@@ -224,15 +233,14 @@ new ComputedDataset({
     key: 'id',
     fields: ['text'],
   }),
-  afterCreate: (table) => [
-    `CREATE VECTOR INDEX ix_staff_passage_vectors ON ${table} (vector) WITH (METRIC = 'cosine', TYPE = 'DiskANN')`,
-  ],
+  indexes: [{ type: 'vector', column: 'vector', metric: 'cosine' }],
 });
 ```
 
 - The raw table `_warehouse.raw_staff_passage_vectors` has the column `vector VECTOR(1536)`. A value is the JSON text of `toSql` of `@zukhruf/vectors/sqlserver`, with 9 significant digits, which keeps each float32 value; the commit casts it with `CAST(… AS VECTOR(1536))`.
 - A rule column of more than 1,998 dimensions fails the constructor of `ComputedDataset` with a `TypeError` that names the column and the limit of a float32 `VECTOR`.
-- `afterCreate` gets the quoted name of the raw table, `[_warehouse].[raw_staff_passage_vectors]`, and gives T-SQL that runs in the transaction that makes the raw table, each time the dataset makes it. A statement that fails fails the dataset, and the transaction leaves no table ([ADR 0008](./docs/adr/0008-a-computed-dataset-runs-the-sql-of-the-host-each-time-it-makes-its-raw-table.md)). Thus a vector index stays when a changed declaration makes the table again. An index made on an empty table starts as an exact index, and Azure SQL builds its graph after the rows come (`@zukhruf/vectors`, "SQL Server: what the probes found").
+- The vector index is `CREATE VECTOR INDEX … ON [_warehouse].[raw_staff_passage_vectors] ([vector]) WITH (METRIC = 'cosine', TYPE = 'DiskANN')`, which each refresh makes when the table does not have it, also after a changed declaration makes the table again (see "Declare a computed dataset" below). An index made on an empty table starts as an exact index, and Azure SQL builds its graph after the rows come (`@zukhruf/vectors`, "SQL Server: what the probes found").
+- SQL Server 2025 in Docker makes a vector index only with `PREVIEW_FEATURES` on and only on an `int` clustered key, so it refuses the index of a computed dataset (error 42217); the tests check the statement there and nothing more ([ADR 0013, probe](./docs/adr/0013-a-computed-dataset-declares-its-indexes-and-the-destination-reconciles-them.md#probe-2026-11-21-vector-indexes-in-sql-server-2025-in-docker)).
 - The search is the host's own SQL, with every feature of Azure SQL:
 
 ```sql
@@ -344,13 +352,15 @@ As in [elt-postgresql](../postgresql/README.md#declare-a-computed-dataset). A co
 - When the stored columns of the raw table differ from its declaration, for example a vector of other dimensions, the refresh makes the table again in one commit: the history keeps each old row and takes the new shape, `CREATE OR ALTER VIEW` keeps the reader view, and `sp_refreshview` refreshes each view over it ([ADR 0006](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md)). A column whose type the history cannot widen, such as `VECTOR(3)` to `VECTOR(4)`, expires each position before that commit, as a reload of a stream does.
 - The dataset reads each relation of `from` through its reader view in one statement. A table of `from` must be loaded by a copy into the same database.
 - `qualifiedName` is `marts.<name>`. A `View` declared after the dataset that reads it waits while the dataset waits.
-- `afterCreate` gives the statements that run after each make of the raw table, in the same transaction (see "Store vectors" above).
+- `indexes` declares the indexes of the raw table: `{ type: 'nonclustered', columns }` or `{ type: 'vector', column, metric }` (see "Store vectors" above). The constructor refuses, with a `TypeError`, a column that the table does not have, a vector index on a column that is not a vector, and an index key that SQL Server refuses: `NVARCHAR(MAX)`, `VARBINARY(MAX)` or `VECTOR` (errors 1919 and 1978). Thus of the engine columns only `committed_in` can be a key.
+- The destination names each index `ix_elt_` and the first 16 hex digits of the SHA-256 of its declaration. Each refresh, before it writes a row, reads the indexes of the table with that start from `sys.indexes`, drops each one that is no longer declared and makes each declared one that is missing, one statement at a time and outside a transaction, since SQL Server makes a vector index only there. No row is written or computed again, and an index of another name, such as a person's own, stays ([ADR 0013](./docs/adr/0013-a-computed-dataset-declares-its-indexes-and-the-destination-reconciles-them.md)). A person's index is gone after a changed declaration makes the table again; a declared one is made again.
 
 A `TableRule` gives many parts for one input, as in [elt-postgresql](../postgresql/README.md) and [elt ADR 0026](../../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md). The raw table then keeps one output row for each key, with no rule column, and the parts table `_warehouse.raw_<name>_parts` keeps one row for each part. Readers query the view `marts.<name>_parts`: the key, `seq` (`INT`, from 0), `part_hash` (`NVARCHAR(MAX)`), the content columns and the place columns.
 
 - The parts table also has `_elt_row`, its clustered key, `committed_in`, `_elt_row_hash` and `_elt_key_hash`. It is unique on `_elt_key_hash` and `seq`, because the key is `NVARCHAR(MAX)` (ADR 0004). The key hash of a part is the key hash of its output row.
 - The commit of a settled call writes the output rows and their parts. A part whose row hash did not change keeps its commit. The changed parts are one `MERGE` on `_elt_key_hash` and `seq`, and the parts beyond the new count of their row are one `DELETE`; the history keeps each part that they replace or remove. A row that is `empty` or `failed` has no parts, and a removed input removes its parts in the commit that removes its output row.
 - The two tables are one declaration: when either one differs from its declaration, the refresh makes both again in one commit, and `sp_refreshview` refreshes the views over each.
+- `partIndexes` declares the indexes of the parts table, as `indexes` does for the raw table. Only a `TableRule` takes it.
 - The constructor refuses a column of the rule named `seq` or `part_hash` as well, in any case. `validate` refuses a copy that makes `<name>_parts` or `raw_<name>_parts`.
 - `derived_status` counts the output rows, one for each key, not the parts.
 
@@ -420,7 +430,7 @@ Checked on 2026-11-19 (Node.js 26.13.0; npm search for `sql server destination`,
 | `@eltjs/embedding`                 | gives `Vector` values of its `dimensions`                                                                                                                                                                                                                                                                                     |
 | `@zukhruf/vectors`                 | `toSql` and the `VECTOR(n)` type of a column                                                                                                                                                                                                                                                                                  |
 | `@zukhruf/mutex`                   | `SqlServerStore` for the checkpoint locks                                                                                                                                                                                                                                                                                     |
-| `@zukhruf/testing`                 | `SqlServer`, the database of the tests (SQL Server 2025 in Docker; it has no DiskANN, so the tests run the exact search only)                                                                                                                                                                                                 |
+| `@zukhruf/testing`                 | `SqlServer`, the database of the tests (SQL Server 2025 in Docker; its DiskANN index is a preview that needs an `int` clustered key, so the tests run the exact search only)                                                                                                                                                  |
 
 ## Ezz's rulings (2026-11-19)
 
@@ -428,7 +438,7 @@ Checked on 2026-11-19 (Node.js 26.13.0; npm search for `sql server destination`,
 2. **The value of a vector column** is a `Vector` of `@zukhruf/vectors`, and `@eltjs/elt` takes that package ([ADR 0007](./docs/adr/0007-a-rule-column-can-be-a-vector-with-a-fixed-number-of-dimensions.md)).
 3. **The login.** The destination takes the `SqlServerDatabase` of `@eltjs/sdk-microsoft-sql-server`, and the SDK gets write sessions.
 4. **The type of a vector column.** `@zukhruf/vectors` gives the type for a kind of vector and a count of dimensions, such as `sqlType(Vector, 1536)`.
-5. **`afterCreate`.** The name and the shape are accepted, and `View` does not take it ([ADR 0008](./docs/adr/0008-a-computed-dataset-runs-the-sql-of-the-host-each-time-it-makes-its-raw-table.md)).
+5. **Indexes.** A computed dataset declares its indexes, and the destination reconciles them with `sys.indexes` at each refresh; `afterCreate` is removed (2026-11-21, [ADR 0013](./docs/adr/0013-a-computed-dataset-declares-its-indexes-and-the-destination-reconciles-them.md), which supersedes [ADR 0008](./docs/adr/0008-a-computed-dataset-runs-the-sql-of-the-host-each-time-it-makes-its-raw-table.md)).
 6. **Keys.** A unique index on `_elt_key_hash` ([ADR 0004](./docs/adr/0004-a-key-is-indexed-by-its-hash.md)).
 
 ## Probes to run before code
@@ -454,8 +464,9 @@ All seven ran on 2026-11-20, on Azure SQL Database (datahub BILLING) and on SQL 
 - [ADR 0005](./docs/adr/0005-a-commit-is-one-merge-whose-output-keeps-the-replaced-rows-in-the-history.md): a commit is one `MERGE` whose output keeps the replaced rows in the history.
 - [ADR 0006](./docs/adr/0006-a-change-of-a-table-refreshes-the-views-over-it.md): a change of a table refreshes the views over it.
 - [ADR 0007](./docs/adr/0007-a-rule-column-can-be-a-vector-with-a-fixed-number-of-dimensions.md): a rule column can be a vector with a fixed number of dimensions.
-- [ADR 0008](./docs/adr/0008-a-computed-dataset-runs-the-sql-of-the-host-each-time-it-makes-its-raw-table.md): a computed dataset runs the SQL of the host each time it makes its raw table.
+- [ADR 0008](./docs/adr/0008-a-computed-dataset-runs-the-sql-of-the-host-each-time-it-makes-its-raw-table.md): a computed dataset runs the SQL of the host each time it makes its raw table. Superseded by ADR 0013.
 - [ADR 0009](./docs/adr/0009-each-lock-is-an-application-lock-of-sql-server.md): each lock is an application lock of SQL Server.
 - [ADR 0010](./docs/adr/0010-a-reading-sets-its-position-in-the-session-context-and-reads-row-versions.md): a reading sets its position in the session context and reads row versions.
 - [ADR 0011](./docs/adr/0011-a-batch-travels-as-one-json-parameter-that-openjson-reads.md): a batch travels as one JSON parameter that `OPENJSON` reads.
 - [ADR 0012](./docs/adr/0012-the-rules-that-the-destinations-share-move-into-elt-before-the-third-destination.md): the rules that the destinations share move into elt before the third destination.
+- [ADR 0013](./docs/adr/0013-a-computed-dataset-declares-its-indexes-and-the-destination-reconciles-them.md): a computed dataset declares its indexes and the destination reconciles them.

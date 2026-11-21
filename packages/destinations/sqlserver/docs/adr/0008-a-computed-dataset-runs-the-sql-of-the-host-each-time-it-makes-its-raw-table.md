@@ -1,6 +1,6 @@
 # A computed dataset runs the SQL of the host each time it makes its raw table
 
-Status: accepted by Ezz (2026-11-19).
+Status: superseded by [ADR 0013](./0013-a-computed-dataset-declares-its-indexes-and-the-destination-reconciles-them.md) (Ezz, 2026-11-21). Accepted by Ezz (2026-11-19). `afterCreate` is removed. What still holds: an index made on an empty table starts exact, and an `NVARCHAR(MAX)` column cannot be the key of an index (error 1919).
 
 An approximate search of Azure SQL needs a vector index on the column: `CREATE VECTOR INDEX … WITH (METRIC = 'cosine', TYPE = 'DiskANN')`. The index has options that change with the engine (the version 3 index refuses the old `TOP_N`, `@zukhruf/vectors` README). A computed dataset makes its raw table again when its declaration changes (elt-sqlite ADR 0004), and an index that the host made by hand is then gone. The host also cannot make the index before the first refresh makes the table.
 

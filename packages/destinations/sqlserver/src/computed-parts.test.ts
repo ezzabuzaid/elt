@@ -22,6 +22,7 @@ import { SqlServerDatabase } from '@eltjs/sdk-microsoft-sql-server';
 import {
   ComputedDataset,
   SqlServerDestination,
+  type SqlServerIndex,
   type SqlServerLogin,
   SqlServerSyncHistory,
 } from './index.ts';
@@ -168,7 +169,14 @@ class Pieces extends TableRule<Note, RuleColumns, RuleColumns> {
 
 // A pipeline that copies notes into _warehouse.raw_notes, read through
 // marts.notes, and keeps the dataset pieces in marts.
-function pieces(login: SqlServerLogin, rule = new Pieces()) {
+function pieces(
+  login: SqlServerLogin,
+  rule = new Pieces(),
+  indexes: {
+    indexes?: readonly SqlServerIndex[];
+    partIndexes?: readonly SqlServerIndex[];
+  } = {},
+) {
   const source = new Notes();
   const destination = new SqlServerDestination({ login });
   const target = destination.table('notes');
@@ -190,6 +198,7 @@ function pieces(login: SqlServerLogin, rule = new Pieces()) {
         description: 'The pieces of each note.',
         from: [target],
         compute: rule,
+        ...indexes,
       }),
     ],
   });
@@ -532,6 +541,54 @@ test('a changed declaration of the parts makes both tables again in one commit, 
         { seq: 1, text: 'two' },
       ],
     },
+  );
+});
+
+test('a table rule indexes its parts table and its raw table each by its own declaration', async () => {
+  await using database = await scratch();
+  const { source, pipeline } = pieces(database.login, new Pieces(), {
+    indexes: [{ type: 'nonclustered', columns: ['committed_in'] }],
+    partIndexes: [{ type: 'nonclustered', columns: ['tokens', 'seq'] }],
+  });
+  source.rows = [{ id: 'n1', text: 'ab|c' }];
+
+  await pipeline.run();
+
+  const indexes = (table: string) =>
+    database.rows(
+      `SELECT STRING_AGG(c.[name], N',') WITHIN GROUP (ORDER BY ic.[key_ordinal]) AS [columns]
+       FROM sys.indexes AS i
+       JOIN sys.index_columns AS ic ON ic.[object_id] = i.[object_id] AND ic.[index_id] = i.[index_id]
+       JOIN sys.columns AS c ON c.[object_id] = ic.[object_id] AND c.[column_id] = ic.[column_id]
+       WHERE i.[object_id] = OBJECT_ID(N'${table}') AND i.[name] LIKE N'ix[_]elt[_]%'
+       GROUP BY i.[name]`,
+    );
+  assert.deepEqual(
+    {
+      raw: await indexes('_warehouse.raw_pieces'),
+      parts: await indexes('_warehouse.raw_pieces_parts'),
+    },
+    {
+      raw: [{ columns: 'committed_in' }],
+      parts: [{ columns: 'tokens,seq' }],
+    },
+  );
+});
+
+test('an index of the parts table on a column that only the raw table has is refused when the dataset is constructed', () => {
+  assert.throws(
+    () =>
+      new ComputedDataset({
+        into: new SqlServerDestination({ login: 'Server=none;Database=none' }),
+        name: 'pieces',
+        description: 'The pieces of each note.',
+        from: [],
+        compute: new Pieces(),
+        partIndexes: [{ type: 'nonclustered', columns: ['input_hash'] }],
+      }),
+    new TypeError(
+      'Computed dataset pieces declares an index on input_hash, which [_warehouse].[raw_pieces_parts] does not have',
+    ),
   );
 });
 
