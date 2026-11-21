@@ -1,7 +1,5 @@
 # elt-sqlserver
 
-> **Partly built.** See the banner of the [README](./README.md).
-
 A host wants the data that elt copies in a SQL Server or Azure SQL database, with typed columns, which readers query while the loads run, and the vectors of its computed datasets in a column that Azure SQL can search. The SQL Server destination loads each stream into a raw table in `_warehouse`, keeps a reader view of each raw table in `marts`, and keeps the views and computed datasets that the pipeline derives from them. Its checkpoint store and its sync history keep their data in the same database. The words that all of elt uses, for example pass, commit, writer and checkpoint, are in the glossary of [elt](../../elt/CONTEXT.md). The words that this context shares with [elt-postgresql](../postgresql/CONTEXT.md) have the same meaning; this glossary gives each one again only where SQL Server makes it different.
 
 ## Language
@@ -15,7 +13,7 @@ What the destination connects with: the parts of a SQL Server login, or an ADO.N
 _Avoid_: URL (SQL Server has no URL form that `mssql` reads), connection (a connection is one session of the login)
 
 **Raw table**:
-The table that a copy loads, `_warehouse.raw_<name>` for the reader name `<name>`, for example `_warehouse.raw_drive_items`. Readers do not query it.
+The table that a copy loads, `_warehouse.raw_<name>` for the reader name `<name>`, for example `_warehouse.raw_drive_items`. Readers query its reader view. Only an approximate vector search reads the raw table of a computed dataset, because `VECTOR_SEARCH` uses a vector index only on a table.
 _Avoid_: Staging table, source table
 
 **Reader view**:
