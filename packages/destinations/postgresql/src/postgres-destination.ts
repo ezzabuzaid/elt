@@ -2,6 +2,7 @@ import {
   type CopyConfiguration,
   Destination,
   type FailureType,
+  type FileStorage,
   type Load,
   type PipelineClock,
   parsePosition,
@@ -113,7 +114,7 @@ export class PostgresDestination extends Destination<PostgresTable> {
 
   // A file storage in the database of this destination, which a copy gives
   // to .store() and a DocumentText reads.
-  files(): PostgresFiles {
+  files(): FileStorage {
     return new PostgresFiles(this.#url);
   }
 

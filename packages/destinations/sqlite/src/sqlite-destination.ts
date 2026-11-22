@@ -5,6 +5,7 @@ import { transaction } from '@zukhruf/sqlite-transaction';
 import type {
   CopyConfiguration,
   FailureType,
+  FileStorage,
   Load,
   PipelineClock,
 } from '@eltjs/elt';
@@ -112,7 +113,7 @@ export class SQLiteDestination extends Destination<SQLiteTable> {
 
   // A file storage in the file of this destination, which a copy gives to
   // .store() and a DocumentText reads.
-  files(): SQLiteFiles {
+  files(): FileStorage {
     if (this.path === ':memory:')
       throw new TypeError('File storage requires a SQLite destination file');
     return new SQLiteFiles(this.path);

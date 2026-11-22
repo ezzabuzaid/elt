@@ -2,6 +2,7 @@ import {
   type CopyConfiguration,
   Destination,
   type FailureType,
+  type FileStorage,
   type Load,
   type PipelineClock,
   parsePosition,
@@ -119,7 +120,7 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
 
   // A file storage in the database of this destination, which a copy gives
   // to .store() and a DocumentText reads.
-  files(): SqlServerFiles {
+  files(): FileStorage {
     return new SqlServerFiles(this[database]);
   }
 
