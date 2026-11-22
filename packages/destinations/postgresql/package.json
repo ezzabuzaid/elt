@@ -1,6 +1,6 @@
 {
   "name": "@eltjs/elt-postgresql",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "The Postgres destination of elt: each stream is a typed table in _warehouse, with a reader view in marts that the host names, a history of each row for readings as of a position, and the views and computed datasets that a pipeline derives.",
   "license": "Apache-2.0",
   "repository": {
@@ -37,7 +37,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@eltjs/elt": "^0.11.0",
+    "@eltjs/elt": "^0.12.0",
     "@zukhruf/async": "^0.8.31",
     "@zukhruf/vectors": "^0.8.40",
     "postgres": "^3.4.9"
