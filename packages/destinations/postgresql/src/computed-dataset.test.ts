@@ -342,7 +342,7 @@ test('the next run reads only the files that are new or that another parser woul
   ];
 
   await files.pipeline.run();
-  const second = [...files.parser().parsed];
+  const second = files.parser().parsed.toSorted();
   files.replaceParser(new TextParser('text-v2'));
   await files.pipeline.run();
 
