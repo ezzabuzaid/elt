@@ -143,7 +143,8 @@ Each folder is the full URL of a folder in a document library of the site, as th
 - `driveItems` loads the scope folders and each file and folder under them. Only those files are downloaded.
 - `drives` loads only the libraries that hold a scope folder. `sites` loads the site.
 - `lists`, `listColumns`, `listItems`, `accessRequests` and `pages` load nothing: no record of them shows which folder holds it. The source exports these names as `restrictedSharePointStreams`.
-- The first read of a scoped site takes the delta link of each library with a scope folder, then lists the scope folders and what they hold. A change during the listing comes again in the next read.
+- The first read of a scoped site takes the delta link of each library with a scope folder, then lists the scope folders and what they hold. A change during the listing comes again in the next read, from that delta link.
+- Each page of children that the first read lists ends in a checkpoint. A first read that fails lists on from the page after the last checkpoint, with the same delta link, and does not download the files of the pages before it again. A change in a folder that the failed read listed comes in the read after the listing ends.
 - Later reads read the changes of each library after its delta link, and keep only the items under the scope folders. An item that moves out of them, or is deleted, is deleted with each item under it. A folder that moves into them is listed with each item under it, because a delta does not give the items of a folder again when the folder moves.
 - The checkpoint keeps the scope folders and the items under them by ID, not by path. A rename inside a scope folder keeps its items. Other scope folders than the checkpoint holds, a site that was read in full and is now scoped, and the other way round, start the site over with a `RESET`. Thus narrowing a site removes every row outside its scope folders.
 
@@ -181,6 +182,8 @@ Each folder is the full URL of a folder in a document library of the site, as th
 - A reload commits one time, when it ends. A `RESET` of a partition replaces the rows of the partition at its next commit ([elt ADR 0007](../../../elt/docs/adr/0007-a-stream-that-starts-over-reloads-into-a-hidden-target.md)). Thus readers keep the old rows of the site until the reload ends. A reload that fails starts again on the next run.
 
 The checkpoint of a site is `{ fields, links }`: the fields that the reads carried, and for each collection ID `{ delta }`, its delta link, or `{ next }`, the next link of the page that a read got to.
+
+The checkpoint of a scoped site also has `scope`: `{ folders, items, walks }`. `folders` are the scope folders as `driveId/itemId`. `items` gives, for each library, each item under the scope folders with the folder that holds it. `walks` gives, for each library whose first read has not ended, `{ delta, folders, next }`: the delta link that the read took before it listed, the folders that it has still to list, the first being the one that it lists now, and the next link of the children of that folder, or `null`. A library has a walk until its first read ends, and then a link in `links`.
 
 **Snapshot** streams list their records in full on each read. An incremental copy compares each read with the snapshot of the last read, writes only the records that changed, and deletes the keys that Graph no longer lists (`ClosedWorld`). A read keeps one record for each primary key. When the pages of a collection give one item two times, for example because it changed during the read, the last one is the record.
 
@@ -233,6 +236,7 @@ On 2026-11-17, with the app-only token of an app that holds only `Sites.Selected
 Not checked live:
 
 - An expired delta link: none was available. Graph documents a 410, and the tests stub it.
+- A next link of the children of a folder that a later run uses, after a first read failed: Graph does not document how long it serves one. The tests stub a next link that still answers.
 - That the `lastModifiedDateTime` of a list moves when one of its items changes, which `SiteVersion` uses. The app has only a read grant, and no test site is available.
 - A pass of this source over the site. `src/sharepoint-live.test.ts` makes one, and skips unless `SHAREPOINT_TENANT_ID`, `SHAREPOINT_CLIENT_ID` and `SHAREPOINT_CLIENT_SECRET` are set. It downloads only the workbooks of the site.
 

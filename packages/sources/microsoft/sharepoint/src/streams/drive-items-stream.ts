@@ -18,6 +18,7 @@ import {
   type DeltaState,
   DeltaStream,
   type Link,
+  type Walk,
   resumeLink,
 } from '../delta-stream.ts';
 import type { ScopeFolder } from '../folder-scope.ts';
@@ -212,11 +213,13 @@ export class DriveItemsStream extends DeltaStream<DriveItem> {
   // A site limited to folders loads the scope folders and each item under
   // them (ADR 0003). The first read takes the delta link of each drive, then
   // lists the folders, so a change during the listing comes again in the next
-  // read. Later reads apply the changes of the drive delta to the items under
-  // the folders: an item that leaves them is deleted with what it holds, and
-  // a folder that enters them is listed, since a delta gives no item again
-  // when its folder moves. Other scope folders than the state was read with
-  // start the site over with a RESET.
+  // read. It saves where the listing stands after each page of children, so
+  // a first read that fails lists on from there. Later reads apply the
+  // changes of the drive delta to the items under the folders: an item that
+  // leaves them is deleted with what it holds, and a folder that enters them
+  // is listed, since a delta gives no item again when its folder moves. Other
+  // scope folders than the state was read with start the site over with a
+  // RESET.
   protected override async *scoped(
     configuration: CopyConfiguration,
     saved: DeltaState | null,
@@ -260,6 +263,9 @@ export class DriveItemsStream extends DeltaStream<DriveItem> {
         new Map(Object.entries(parents)),
       ]),
     );
+    const walks = new Map<string, Walk>(
+      Object.entries(from?.scope?.walks ?? {}),
+    );
     const state = () =>
       this.state(links, {
         folders: ids,
@@ -269,6 +275,7 @@ export class DriveItemsStream extends DeltaStream<DriveItem> {
             Object.fromEntries(parents),
           ]),
         ),
+        walks: Object.fromEntries(walks),
       });
     for (const driveId of new Set(folders.map((it) => it.driveId))) {
       const roots = folders.filter((it) => it.driveId === driveId);
@@ -279,17 +286,50 @@ export class DriveItemsStream extends DeltaStream<DriveItem> {
       items.set(driveId, trees.items);
       const link = links.get(driveId);
       if (link === undefined) {
-        const delta = await run.client.latestDriveDeltaLink(driveId, signal);
-        for (const root of roots)
-          yield* this.#enter(
-            configuration,
-            url,
-            driveId,
-            root.item,
-            trees,
-            run,
-            signal,
-          );
+        const open = walks.get(driveId);
+        const delta =
+          open?.delta ??
+          (await run.client.latestDriveDeltaLink(driveId, signal));
+        if (open === undefined)
+          for (const root of roots)
+            yield* this.messages(
+              configuration,
+              url,
+              driveId,
+              root.item,
+              run,
+              signal,
+            );
+        const listing = this.#list(
+          configuration,
+          url,
+          driveId,
+          open ?? {
+            folders: roots
+              .filter((it) => it.item.folder !== undefined)
+              .map((it) => it.item.id),
+            next: null,
+          },
+          trees,
+          run,
+          signal,
+        );
+        for await (const message of listing) {
+          if (!(message instanceof Listed)) {
+            yield message;
+            continue;
+          }
+          const [first, ...rest] = message.folders;
+          // The state of the drive's delta link follows the last page.
+          if (first === undefined) continue;
+          walks.set(driveId, {
+            delta,
+            folders: [first, ...rest],
+            next: message.next,
+          });
+          yield state();
+        }
+        walks.delete(driveId);
         links.set(driveId, { delta });
         yield state();
         continue;
@@ -332,13 +372,49 @@ export class DriveItemsStream extends DeltaStream<DriveItem> {
   ): AsyncGenerator<SourceMessage> {
     yield* this.messages(configuration, url, driveId, item, run, signal);
     if (item.folder === undefined) return;
-    // A queue that grows as the walk finds folders.
-    const folders = [item.id];
-    for (const folder of folders) {
-      for (const child of await run.client.children(driveId, folder, signal)) {
-        trees.items.set(child.id, folder);
-        yield* this.messages(configuration, url, driveId, child, run, signal);
-        if (child.folder !== undefined) folders.push(child.id);
+    for await (const message of this.#list(
+      configuration,
+      url,
+      driveId,
+      { folders: [item.id], next: null },
+      trees,
+      run,
+      signal,
+    ))
+      if (!(message instanceof Listed)) yield message;
+  }
+
+  // Lists folders and each folder under them, breadth first: the messages of
+  // each child, and after each page of children where the listing stands.
+  // next is the next link of the children of the first folder, or null to
+  // list it from the start.
+  async *#list(
+    configuration: CopyConfiguration,
+    url: string,
+    driveId: string,
+    from: { readonly folders: readonly string[]; readonly next: string | null },
+    trees: Subtrees,
+    run: SharePointRun,
+    signal: AbortSignal,
+  ): AsyncGenerator<SourceMessage | Listed> {
+    // A queue that grows as the listing finds folders.
+    const folders = [...from.folders];
+    let next = from.next;
+    for (let folder = folders[0]; folder !== undefined; folder = folders[0]) {
+      for await (const page of run.client.children(
+        driveId,
+        folder,
+        next ?? undefined,
+        signal,
+      )) {
+        for (const child of page.items) {
+          trees.items.set(child.id, folder);
+          yield* this.messages(configuration, url, driveId, child, run, signal);
+          if (child.folder !== undefined) folders.push(child.id);
+        }
+        next = 'nextLink' in page ? page.nextLink : null;
+        if (next === null) folders.shift();
+        yield new Listed([...folders], next);
       }
     }
   }
@@ -393,6 +469,18 @@ export class DriveItemsStream extends DeltaStream<DriveItem> {
         itemId: gone,
       });
     }
+  }
+}
+
+// Where a listing of folders stands after a page of children: the folders
+// it has still to list, and the next link of the children of the first.
+class Listed {
+  readonly folders: readonly string[];
+  readonly next: string | null;
+
+  constructor(folders: readonly string[], next: string | null) {
+    this.folders = folders;
+    this.next = next;
   }
 }
 

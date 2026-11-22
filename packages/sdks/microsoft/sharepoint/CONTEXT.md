@@ -37,7 +37,7 @@ A read of a drive or a list that gives its items page by page, and then only the
 _Avoid_: Sync, changes API, poll
 
 **Next link**:
-The link of the next page of a delta query, while the query has more pages.
+The link of the next page of a delta query or of the children of a folder, while it has more pages.
 _Avoid_: Cursor, skip token
 
 **Delta link**:

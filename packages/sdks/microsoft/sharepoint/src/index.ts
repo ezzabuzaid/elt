@@ -1,3 +1,4 @@
+export type { CollectionPage } from './collection-page.ts';
 export type { Column } from './column.ts';
 export type { DeltaPage } from './delta.ts';
 export type { Drive } from './drive.ts';

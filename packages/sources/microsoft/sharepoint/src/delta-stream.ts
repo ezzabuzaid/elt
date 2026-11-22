@@ -13,11 +13,24 @@ import { SharePointStream } from './sharepoint-stream.ts';
 // before it.
 export type Link = { readonly delta: string } | { readonly next: string };
 
-// A site limited to folders: its scope folders, as driveId/itemId, and each
-// item under them, by drive, with the folder that holds it.
+// Where the first read of the scope folders of a drive stands: the delta link
+// that the read took before it listed them, the folders it has still to list,
+// the first being the one it lists now, and the next link of the children of
+// that folder after the pages it read, or null to list it from the start.
+export type Walk = {
+  readonly delta: string;
+  readonly folders: readonly [string, ...string[]];
+  readonly next: string | null;
+};
+
+// A site limited to folders: its scope folders, as driveId/itemId, each item
+// under them, by drive, with the folder that holds it, and the walk of each
+// drive whose first read has not ended. A drive has a walk or a link, never
+// both.
 export type FolderState = {
   readonly folders: readonly string[];
   readonly items: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  readonly walks: Readonly<Record<string, Walk>>;
 };
 
 // Where a site stands: the link of each collection, a drive or a list, by its
@@ -49,6 +62,23 @@ function texts(value: unknown): value is readonly string[] {
   return Array.isArray(value) && value.every((it) => typeof it === 'string');
 }
 
+function walk(value: unknown): Walk | undefined {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('delta' in value) ||
+    typeof value.delta !== 'string' ||
+    !('folders' in value) ||
+    !texts(value.folders) ||
+    !('next' in value) ||
+    (value.next !== null && typeof value.next !== 'string')
+  )
+    return undefined;
+  const [first, ...rest] = value.folders;
+  if (first === undefined) return undefined;
+  return { delta: value.delta, folders: [first, ...rest], next: value.next };
+}
+
 function folderState(value: unknown): FolderState | undefined {
   if (
     typeof value !== 'object' ||
@@ -57,7 +87,10 @@ function folderState(value: unknown): FolderState | undefined {
     !texts(value.folders) ||
     !('items' in value) ||
     typeof value.items !== 'object' ||
-    value.items === null
+    value.items === null ||
+    !('walks' in value) ||
+    typeof value.walks !== 'object' ||
+    value.walks === null
   )
     return undefined;
   const items: Record<string, Record<string, string>> = {};
@@ -70,7 +103,13 @@ function folderState(value: unknown): FolderState | undefined {
     }
     items[drive] = byItem;
   }
-  return { folders: value.folders, items };
+  const walks: Record<string, Walk> = {};
+  for (const [drive, saved] of Object.entries(value.walks)) {
+    const parsed = walk(saved);
+    if (parsed === undefined) return undefined;
+    walks[drive] = parsed;
+  }
+  return { folders: value.folders, items, walks };
 }
 
 function parse(state: unknown): DeltaState | null {
@@ -232,7 +271,7 @@ export abstract class DeltaStream<Item> extends SharePointStream {
   // empties what an earlier read of the whole site loaded.
   *#nothing(saved: DeltaState | null): Generator<SourceMessage> {
     if (saved !== null && saved.scope === undefined) yield* this.reset();
-    yield this.state(new Map(), { folders: [], items: {} });
+    yield this.state(new Map(), { folders: [], items: {}, walks: {} });
   }
 
   async *#reload(read: Read): AsyncGenerator<SourceMessage> {

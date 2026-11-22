@@ -17,6 +17,7 @@ import {
   Copy,
   type CopyResult,
   DocumentText,
+  type FileContent,
   LocalFiles,
   Pipeline,
   type PipelineClock,
@@ -595,12 +596,17 @@ async function warehouse(
     documents = false,
     fullRefresh = false,
     clock = globalThis,
-  }: { documents?: boolean; fullRefresh?: boolean; clock?: PipelineClock } = {},
+    files = new LocalFiles({ directory: join(directory, 'files') }),
+  }: {
+    documents?: boolean;
+    fullRefresh?: boolean;
+    clock?: PipelineClock;
+    files?: LocalFiles;
+  } = {},
 ) {
   const destination = new SQLiteDestination({
     path: join(directory, 'warehouse.sqlite'),
   });
-  const files = new LocalFiles({ directory: join(directory, 'files') });
   const parser = new OfficeDocumentParser();
   const { streams } = await source.discover();
   const targets = new Map(
@@ -2058,6 +2064,152 @@ test('a scoped first read that fails partway loads every item of the scope folde
   await pipeline.run();
 
   assert.deepEqual(itemIds(dir.path), proposalsTree);
+});
+
+test('a scoped first read that fails partway keeps the files it stored, so the next run downloads and stores only the files after them', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = proposalsSite();
+  for (const id of ['file-brief', 'file-bid'])
+    sales.contents.set(id, await wordDocument(`# ${id}`));
+  const world: World = { sites: [sales], pageSize: 200 };
+  using graph = microsoft(world);
+  let saves = 0;
+  const files = new (class extends LocalFiles {
+    override async save(scope: string, content: FileContent) {
+      saves++;
+      return super.save(scope, content);
+    }
+  })({ directory: join(dir.path, 'files') });
+  const pipeline = await warehouse(
+    graph.source([{ url: SALES, folders: [PROPOSALS] }]),
+    dir.path,
+    { documents: true, files },
+  );
+  // Brief.docx is listed, downloaded and stored before the listing of
+  // Proposals 2025 fails.
+  world.intercept = (url) =>
+    url.pathname.endsWith('/items/folder-2025/children')
+      ? refusal(500, 'generalException')
+      : undefined;
+  await failedRun(pipeline.run());
+  const storedBeforeFailure = saves;
+  world.intercept = undefined;
+  const asked = graph.requests().length;
+
+  await pipeline.run();
+
+  assert.equal(storedBeforeFailure, 1);
+  assert.deepEqual(
+    graph
+      .requests()
+      .slice(asked)
+      .filter((request) => request.endsWith('/content')),
+    ['/drives/b!documents/items/file-bid/content'],
+  );
+  assert.equal(saves - storedBeforeFailure, 1);
+  assert.deepEqual(itemIds(dir.path), proposalsTree);
+});
+
+test('a scoped first read that fails inside a folder lists that folder on from the next link it saved, then the folders it found before the failure', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = proposalsSite();
+  const [documents] = sales.drives;
+  assert.ok(documents !== undefined);
+  documents.feed.put(
+    driveFolder('b!documents', 'folder-2026', 'Proposals 2026', {
+      parent: 'folder-proposals',
+    }),
+  );
+  documents.feed.put(
+    driveFile('b!documents', 'file-plan', 'Plan.docx', {
+      parent: 'folder-2026',
+    }),
+  );
+  for (const id of ['file-brief', 'file-bid', 'file-plan'])
+    sales.contents.set(id, await wordDocument(`# ${id}`));
+  // One child a page: Proposals gives Brief.docx, Proposals 2025, and then
+  // Proposals 2026, whose page fails, while Proposals 2025 waits to be listed.
+  const world: World = { sites: [sales], pageSize: 1 };
+  using graph = microsoft(world);
+  const pipeline = await warehouse(
+    graph.source([{ url: SALES, folders: [PROPOSALS] }]),
+    dir.path,
+    { documents: true },
+  );
+  world.intercept = (url) =>
+    url.pathname.endsWith('/items/folder-proposals/children') &&
+    url.searchParams.get('$skiptoken') === '2'
+      ? refusal(500, 'generalException')
+      : undefined;
+  await failedRun(pipeline.run());
+  world.intercept = undefined;
+  const asked = graph.requests().length;
+
+  await pipeline.run();
+
+  const retry = graph.requests().slice(asked);
+  assert.deepEqual(
+    retry
+      .filter((request) => request.includes('/children'))
+      .map((request) => request.replace(/\?\$select=.*$/, '')),
+    [
+      '/drives/b!documents/items/folder-proposals/children?$skiptoken=2',
+      '/drives/b!documents/items/folder-2025/children',
+      '/drives/b!documents/items/folder-2026/children',
+    ],
+  );
+  assert.deepEqual(
+    retry.filter((request) => request.endsWith('/content')),
+    [
+      '/drives/b!documents/items/file-bid/content',
+      '/drives/b!documents/items/file-plan/content',
+    ],
+  );
+  assert.deepEqual(itemIds(dir.path), [
+    'file-bid',
+    'file-brief',
+    'file-plan',
+    'folder-2025',
+    'folder-2026',
+    'folder-proposals',
+  ]);
+});
+
+test('a file added to a listed folder while a scoped first read is open loads through the delta that the read took before it listed the folders', async () => {
+  await using dir = await new TemporaryFiles().directory('sharepoint-');
+  const sales = proposalsSite();
+  const [documents] = sales.drives;
+  assert.ok(documents !== undefined);
+  const world: World = { sites: [sales], pageSize: 200 };
+  using graph = microsoft(world);
+  const pipeline = await warehouse(
+    graph.source([{ url: SALES, folders: [PROPOSALS] }]),
+    dir.path,
+  );
+  world.intercept = (url) =>
+    url.pathname.endsWith('/items/folder-2025/children')
+      ? refusal(500, 'generalException')
+      : undefined;
+  await failedRun(pipeline.run());
+  world.intercept = undefined;
+  // Proposals was listed before the failure, so the read that lists on does
+  // not list it again.
+  documents.feed.put(
+    driveFile('b!documents', 'file-late', 'Late.docx', {
+      parent: 'folder-proposals',
+    }),
+  );
+
+  await pipeline.run();
+  await pipeline.run();
+
+  assert.deepEqual(itemIds(dir.path), [
+    'file-bid',
+    'file-brief',
+    'file-late',
+    'folder-2025',
+    'folder-proposals',
+  ]);
 });
 
 test('a delta link that Graph no longer serves reloads a scoped site', async () => {

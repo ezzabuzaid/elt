@@ -4,6 +4,7 @@ import { pipeline } from 'node:stream/promises';
 
 import type { z } from 'zod';
 
+import type { CollectionPage } from './collection-page.ts';
 import { type Column, column } from './column.ts';
 import { type DeltaPage, deltaPage } from './delta.ts';
 import {
@@ -183,14 +184,20 @@ export class SharePointClient {
     );
   }
 
-  /** The files and folders directly in a folder of a drive. */
+  /**
+   * The files and folders directly in a folder of a drive, page by page:
+   * every page without `link`, else the pages after it. `link` is the
+   * `nextLink` of an earlier page.
+   */
   children(
     driveId: string,
     folderId: string,
+    link: string | undefined,
     signal: AbortSignal,
-  ): Promise<readonly PresentDriveItem[]> {
-    return this.#graph.collection(
-      `/drives/${driveId}/items/${folderId}/children?$select=${DRIVE_ITEM_FIELDS}`,
+  ): AsyncGenerator<CollectionPage<PresentDriveItem>, void, undefined> {
+    return this.#graph.pages(
+      link ??
+        `/drives/${driveId}/items/${folderId}/children?$select=${DRIVE_ITEM_FIELDS}`,
       presentDriveItem,
       `the drive ${driveId}`,
       signal,

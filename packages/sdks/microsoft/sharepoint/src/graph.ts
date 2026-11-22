@@ -2,6 +2,7 @@ import { ConfidentialClientApplication, ServerError } from '@azure/msal-node';
 import { type WallClock, delay, untilAborted } from '@zukhruf/async';
 import { z } from 'zod';
 
+import type { CollectionPage } from './collection-page.ts';
 import {
   GraphError,
   SharePointAccessError,
@@ -92,6 +93,34 @@ export class Graph {
     );
   }
 
+  /**
+   * The pages of a collection from `first`, a path under v1.0 or the
+   * `@odata.nextLink` of an earlier page, until the page with no next link.
+   */
+  async *pages<T>(
+    first: string,
+    item: z.ZodType<T>,
+    resource: string,
+    signal: AbortSignal,
+  ): AsyncGenerator<CollectionPage<T>, void, undefined> {
+    const page = z.object({
+      value: z.array(item),
+      '@odata.nextLink': z.string().optional(),
+    });
+    for (let next: string | undefined = first; next !== undefined;) {
+      const body: z.infer<typeof page> = await this.json(
+        next,
+        page,
+        resource,
+        signal,
+      );
+      next = body['@odata.nextLink'];
+      yield next === undefined
+        ? { items: body.value }
+        : { items: body.value, nextLink: next };
+    }
+  }
+
   /** Every item of a collection, page after page of `@odata.nextLink`. */
   async collection<T>(
     path: string,
@@ -99,22 +128,9 @@ export class Graph {
     resource: string,
     signal: AbortSignal,
   ): Promise<readonly T[]> {
-    const page = z.object({
-      value: z.array(item),
-      '@odata.nextLink': z.string().optional(),
-    });
     const items: T[] = [];
-    let next: string | undefined = path;
-    while (next !== undefined) {
-      const body: z.infer<typeof page> = await this.json(
-        next,
-        page,
-        resource,
-        signal,
-      );
-      items.push(...body.value);
-      next = body['@odata.nextLink'];
-    }
+    for await (const page of this.pages(path, item, resource, signal))
+      items.push(...page.items);
     return items;
   }
 
