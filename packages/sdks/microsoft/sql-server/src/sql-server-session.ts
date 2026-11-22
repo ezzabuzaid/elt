@@ -231,11 +231,16 @@ export class SqlServerSession implements AsyncDisposable {
   // 0, so the value carries the time of the last refresh too. A table with no
   // statistics has no count, so its value never moves. A login that can read
   // a table can read its counts.
-  async statistics(): Promise<ReadonlyMap<string, string>> {
+  // The signal cancels the query.
+  async statistics(options?: {
+    readonly signal?: AbortSignal;
+  }): Promise<ReadonlyMap<string, string>> {
     const rows = await query(
       this.#pool.request(),
       this.#location,
       statisticsQuery,
+      [],
+      options?.signal,
     );
     return new Map(
       rows.map(([table, counts]) => [
@@ -249,11 +254,16 @@ export class SqlServerSession implements AsyncDisposable {
   // it in the table's metadata: an insert, a delete or a TRUNCATE moves it,
   // also in a table whose statistics SQL Server has not built, but an update
   // does not. A login that can read a table can read its count.
-  async rowCounts(): Promise<ReadonlyMap<string, string>> {
+  // The signal cancels the query.
+  async rowCounts(options?: {
+    readonly signal?: AbortSignal;
+  }): Promise<ReadonlyMap<string, string>> {
     const rows = await query(
       this.#pool.request(),
       this.#location,
       rowCountsQuery,
+      [],
+      options?.signal,
     );
     return new Map(
       rows.map(([table, count]) => [
@@ -268,11 +278,16 @@ export class SqlServerSession implements AsyncDisposable {
   // column with no statistics, but not a TRUNCATE. A restart forgets both,
   // so the value of each table is then empty. A login needs VIEW SERVER
   // STATE to read them (VIEW DATABASE STATE on Azure SQL Database).
-  async lastWrites(): Promise<ReadonlyMap<string, string>> {
+  // The signal cancels the query.
+  async lastWrites(options?: {
+    readonly signal?: AbortSignal;
+  }): Promise<ReadonlyMap<string, string>> {
     const rows = await query(
       this.#pool.request(),
       this.#location,
       lastWritesQuery,
+      [],
+      options?.signal,
     ).catch((error: unknown) => {
       // 297: the login may not read the state of the server or database.
       if (error instanceof sql.RequestError && error.number === 297)

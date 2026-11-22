@@ -1,4 +1,5 @@
 import {
+  type Check,
   Collector,
   Future,
   type Gauge,
@@ -11,17 +12,20 @@ import type {
   SqlServerSession,
 } from '@eltjs/sdk-microsoft-sql-server';
 
-// A value of each table, by its quoted name, from one query.
+// A value of each table, by its quoted name, from one query, which a check
+// that times out cancels on the server.
 class TableValues extends Collector<string> {
-  readonly #read: () => Promise<ReadonlyMap<string, string>>;
+  readonly #read: (signal: AbortSignal) => Promise<ReadonlyMap<string, string>>;
 
-  constructor(read: () => Promise<ReadonlyMap<string, string>>) {
+  constructor(
+    read: (signal: AbortSignal) => Promise<ReadonlyMap<string, string>>,
+  ) {
     super();
     this.#read = read;
   }
 
-  protected collect() {
-    return this.#read();
+  protected collect(check: Check) {
+    return this.#read(check.signal);
   }
 }
 
@@ -80,14 +84,14 @@ export class WatchGauges implements AsyncDisposable {
   constructor(database: SqlServerDatabase) {
     const session = new WatchSession(database);
     this.#session = session;
-    this.statistics = new TableValues(async () =>
-      (await session.open()).statistics(),
+    this.statistics = new TableValues(async (signal) =>
+      (await session.open()).statistics({ signal }),
     );
-    this.rowCounts = new TableValues(async () =>
-      (await session.open()).rowCounts(),
+    this.rowCounts = new TableValues(async (signal) =>
+      (await session.open()).rowCounts({ signal }),
     );
-    this.lastWrites = new TableValues(async () =>
-      (await session.open()).lastWrites(),
+    this.lastWrites = new TableValues(async (signal) =>
+      (await session.open()).lastWrites({ signal }),
     );
     const version = new DatabaseVersion(session);
     this.changeTracking = version.gauge('changeTracking');

@@ -1776,6 +1776,83 @@ test(
 );
 
 test(
+  'a check that times out while an open TRUNCATE blocks its queries stops them on the server, and the next check after the commit wakes every stream',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin.request().batch(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.tracked (id int PRIMARY KEY);
+    ALTER TABLE dbo.tracked ENABLE CHANGE_TRACKING;
+    CREATE TABLE dbo.plain (id int PRIMARY KEY);
+    CREATE TABLE dbo.other (id int PRIMARY KEY);
+    INSERT dbo.plain VALUES (1);
+    INSERT dbo.other VALUES (1);`);
+    // A server permission, so it is granted in master.
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
+      "GRANT VIEW CHANGE TRACKING ON dbo.tracked TO {user}; EXEC master.sys.sp_executesql N'GRANT VIEW SERVER STATE TO {user}';",
+    );
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    const requests = async (where: string) =>
+      (
+        await admin
+          .request()
+          .input('login', reader.login)
+          .query<{ requests: number }>(
+            `SELECT COUNT(*) AS requests FROM sys.dm_exec_requests AS r JOIN sys.dm_exec_sessions AS s ON s.session_id = r.session_id WHERE s.login_name = @login ${where}`,
+          )
+      ).recordset[0]?.requests;
+    await using warehouse = await postgresServer.database();
+    await using watch = watcher(t, source, warehouse.connectionString);
+    assert.deepEqual(await watch.first(), [
+      'dbo.other',
+      'dbo.plain',
+      'dbo.tracked',
+    ]);
+    const blocker = new sql.Transaction(admin);
+    await blocker.begin();
+    let committed = false;
+    try {
+      await new sql.Request(blocker).batch('TRUNCATE TABLE dbo.other;');
+      const pass = watch.next();
+      await watch.check();
+      // The statistics, the row counts and the last writes wait on the lock.
+      await waitFor(
+        async () =>
+          assert.equal(await requests('AND r.blocking_session_id <> 0'), 3),
+        { signal: t.signal },
+      );
+
+      await watch.clock.tickAsync(10_000);
+
+      await waitFor(async () => assert.equal(await requests(''), 0), {
+        signal: t.signal,
+      });
+      await blocker.commit();
+      committed = true;
+      await watch.check();
+      assert.deepEqual(loadedBy(await pass), [
+        'dbo.other',
+        'dbo.plain',
+        'dbo.tracked',
+      ]);
+    } finally {
+      if (!committed) await blocker.rollback();
+    }
+  },
+);
+
+test(
   'a watch wakes a Change Tracking table within one check of a truncate, which moves no Change Tracking version, and the read empties it',
   { timeout: 120_000 },
   async (t) => {

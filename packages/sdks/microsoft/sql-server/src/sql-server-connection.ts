@@ -5,8 +5,8 @@ import sql from 'mssql';
 import { SqlServerUnavailableError } from './errors.ts';
 import {
   type SqlServerRead,
+  cancellable,
   connectionFailure,
-  readError,
 } from './sql-server-request.ts';
 
 // How long a session runs nothing before it runs SELECT 1. Azure SQL's
@@ -95,8 +95,7 @@ export class SqlServerConnection
   // transaction count it began with and drops each #temp table it makes at its
   // end; a batch with none runs as it is, so it can begin or end a
   // transaction, or make a #temp table that the session keeps. The signal
-  // cancels the batch: the driver sends SQL Server's attention and settles
-  // once the server confirms it, so the session is free for the next batch.
+  // cancels the batch, and the session is free for the next batch.
   async query(
     text: string,
     parameters: Readonly<Record<string, string | null>> = {},
@@ -113,20 +112,20 @@ export class SqlServerConnection
     const named = Object.entries(parameters);
     for (const [name, value] of named)
       request.input(name, sql.NVarChar(sql.MAX), value);
-    const cancel = () => request.cancel();
-    signal?.addEventListener('abort', cancel, { once: true });
     this.#clock.clearTimeout(this.#idle);
     this.#running++;
     try {
-      const { recordsets } = await (named.length === 0
-        ? request.batch<Record<string, unknown>>(text)
-        : request.query<Record<string, unknown>>(text));
+      const { recordsets } = await cancellable(
+        request,
+        this.#location,
+        signal,
+        () =>
+          named.length === 0
+            ? request.batch<Record<string, unknown>>(text)
+            : request.query<Record<string, unknown>>(text),
+      );
       return recordsets.flat();
-    } catch (error) {
-      if (signal?.aborted) throw signal.reason;
-      throw readError(error, this.#location);
     } finally {
-      signal?.removeEventListener('abort', cancel);
       this.#running--;
       if (this.#running === 0 && !this.#ended.signal.aborted)
         this.#idle = this.#clock.setTimeout(() => void this.#beat(), idleMs);

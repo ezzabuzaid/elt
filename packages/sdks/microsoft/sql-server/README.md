@@ -25,7 +25,7 @@ for (const table of await session.tables()) {
 - `tables` gives each user table that the login can read. A view is not in the list. Each `SqlServerTable` has its columns, its primary key and its Change Tracking state. `unreadable` names the columns that the login cannot read.
 - `rows`, `page`, `rowversions` and `changes` take a `SqlServerRead`: a `clock`, which an app gives as `globalThis`, and a `signal`, which stops the read also when the server sends nothing. A read that gets no row between two checks an hour apart fails with `SqlServerUnavailableError`.
 - `rows`, `page` and `rowversions` read rows of a table. `changes` gives the rows that changed after a `ChangePosition`, each row once.
-- `version`, `statistics`, `rowCounts` and `lastWrites` give the values that show that a table changed.
+- `version`, `statistics`, `rowCounts` and `lastWrites` give the values that show that a table changed. `statistics`, `rowCounts` and `lastWrites` read every table of the database, so an open `TRUNCATE` or `ALTER` of any table blocks them. Each takes `{ signal }`: when the signal aborts, the session sends SQL Server an attention, as `query` of `SqlServerConnection` does, and the read fails with the reason of the signal after the server stops the query.
 
 ## Errors
 

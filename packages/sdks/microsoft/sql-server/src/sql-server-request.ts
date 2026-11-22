@@ -84,21 +84,43 @@ function asRow(row: unknown): unknown[] {
   return row;
 }
 
+// Runs the request. The signal cancels it: the driver sends SQL Server's
+// attention and settles once the server confirms it, so the connection is free
+// for the next statement, and run rejects with the signal's reason. A signal
+// that is already aborted sends nothing.
+export async function cancellable<T>(
+  request: sql.Request,
+  location: string,
+  signal: AbortSignal | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  signal?.throwIfAborted();
+  const cancel = () => request.cancel();
+  signal?.addEventListener('abort', cancel, { once: true });
+  try {
+    return await run();
+  } catch (error) {
+    if (signal?.aborted) throw signal.reason;
+    throw readError(error, location);
+  } finally {
+    signal?.removeEventListener('abort', cancel);
+  }
+}
+
 // Every row of one statement, each as the values it selects in order.
 export async function query(
   request: sql.Request,
   location: string,
   text: string,
   parameters: readonly string[] = [],
+  signal?: AbortSignal,
 ): Promise<unknown[][]> {
   request.arrayRowMode = true;
   bind(request, parameters);
-  try {
-    const { recordset } = await request.query(text);
-    return recordset.map(asRow);
-  } catch (error) {
-    throw readError(error, location);
-  }
+  const { recordset } = await cancellable(request, location, signal, () =>
+    request.query(text),
+  );
+  return recordset.map(asRow);
 }
 
 // The rows of one statement as the driver receives them; stopping early
