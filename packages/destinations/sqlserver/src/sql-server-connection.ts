@@ -1,6 +1,7 @@
 import type {
   SqlServerConnection,
   SqlServerDatabase,
+  SqlServerRead,
 } from '@eltjs/sdk-microsoft-sql-server';
 
 import { quote } from './sql-server-identifiers.ts';
@@ -10,11 +11,14 @@ export type SqlServerLogin = ConstructorParameters<typeof SqlServerDatabase>[0];
 
 // One session of the database for the destination: a statement that fails
 // inside a transaction rolls the whole transaction back, so no commit keeps
-// a part of its writes.
+// a part of its writes. While it runs nothing, it waits on clock to run its
+// next SELECT 1, so a session that a load, a pass or a lock holds outlives
+// the idle limit of Azure SQL's gateway.
 export async function connect(
   database: SqlServerDatabase,
+  clock: SqlServerRead['clock'],
 ): Promise<SqlServerConnection> {
-  const connection = await database.connect();
+  const connection = await database.connect(clock);
   try {
     await connection.query('SET XACT_ABORT ON');
     return connection;

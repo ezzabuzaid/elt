@@ -44,7 +44,7 @@ async function scratch() {
     password: database.password,
     trustServerCertificate: true,
   };
-  const admin = await new SqlServerDatabase(login).connect();
+  const admin = await new SqlServerDatabase(login).connect(globalThis);
   await admin.query(
     `ALTER DATABASE [${database.database}] SET ALLOW_SNAPSHOT_ISOLATION ON; ALTER DATABASE [${database.database}] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE`,
   );
@@ -176,7 +176,7 @@ async function notesOf(connection: SqlServerConnection) {
 
 // The rows that a session reads as of a position, as a reading sets it.
 async function asOf(login: SqlServerLogin, position: string) {
-  await using reader = await new SqlServerDatabase(login).connect();
+  await using reader = await new SqlServerDatabase(login).connect(globalThis);
   // A session context value is a sql_variant, which holds no nvarchar(max).
   await reader.query(
     `DECLARE @position bigint = CAST(@number AS bigint); EXEC sp_set_session_context @key = N'elt.position', @value = @position, @read_only = 1`,

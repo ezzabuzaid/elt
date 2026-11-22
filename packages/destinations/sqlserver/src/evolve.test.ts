@@ -40,7 +40,7 @@ async function scratch() {
     password: database.password,
     trustServerCertificate: true,
   };
-  const admin = await new SqlServerDatabase(login).connect();
+  const admin = await new SqlServerDatabase(login).connect(globalThis);
   await admin.query(
     `ALTER DATABASE [${database.database}] SET ALLOW_SNAPSHOT_ISOLATION ON; ALTER DATABASE [${database.database}] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE`,
   );
@@ -182,7 +182,7 @@ async function newest(login: SqlServerLogin) {
 
 // The rows that a session reads of a relation as of a position.
 async function asOf(login: SqlServerLogin, position: string, query: string) {
-  await using reader = await new SqlServerDatabase(login).connect();
+  await using reader = await new SqlServerDatabase(login).connect(globalThis);
   // A session context value is a sql_variant, which holds no nvarchar(max).
   await reader.query(
     `DECLARE @position bigint = CAST(@number AS bigint); EXEC sp_set_session_context @key = N'elt.position', @value = @position, @read_only = 1`,
@@ -437,7 +437,9 @@ test('a reader that holds the table delays its change: the copy fails after the 
     states,
   } as const;
   {
-    await using reader = await new SqlServerDatabase(database.login).connect();
+    await using reader = await new SqlServerDatabase(database.login).connect(
+      globalThis,
+    );
     await reader.query('BEGIN TRANSACTION');
     await reader.query(
       'SELECT COUNT(*) AS [rows] FROM _warehouse.raw_measures WITH (TABLOCK, HOLDLOCK)',

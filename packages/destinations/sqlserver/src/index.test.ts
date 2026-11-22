@@ -50,7 +50,7 @@ async function scratch({ rowVersions = true } = {}) {
     password: database.password,
     trustServerCertificate: true,
   };
-  const admin = await new SqlServerDatabase(login).connect();
+  const admin = await new SqlServerDatabase(login).connect(globalThis);
   if (rowVersions)
     await admin.query(
       `ALTER DATABASE [${database.database}] SET ALLOW_SNAPSHOT_ISOLATION ON; ALTER DATABASE [${database.database}] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE`,
@@ -275,7 +275,9 @@ test('the first run into a new database makes what its targets share under the l
   const source = new Notes();
   source.upstream = [{ n: 1, text: 'after the lock' }];
   const { pipeline: run } = pipeline(database.login, source);
-  await using holder = await new SqlServerDatabase(database.login).connect();
+  await using holder = await new SqlServerDatabase(database.login).connect(
+    globalThis,
+  );
   await holder.query(
     "BEGIN TRANSACTION; DECLARE @result int; EXEC @result = sp_getapplock @Resource = N'elt:_warehouse', @LockMode = N'Exclusive', @LockOwner = N'Transaction';",
   );
@@ -372,7 +374,7 @@ test('connections of one pipeline that open their loads in one database at the s
   // open of the next pass waits on that row after it inserts its own, until
   // all of them run at once (platform setup that no operation of the
   // destination gives).
-  await using holder = await new SqlServerDatabase(login).connect();
+  await using holder = await new SqlServerDatabase(login).connect(globalThis);
   await holder.query(
     'BEGIN TRANSACTION; UPDATE _warehouse._elt_loads SET closed_at = closed_at',
   );
@@ -448,7 +450,7 @@ test('connections whose commits apply the retention at the same time each load t
   // A session holds the row of the numbering, so each commit waits for it at
   // its retention, until both commits wait there (platform setup that no
   // operation of the destination gives).
-  await using holder = await new SqlServerDatabase(login).connect();
+  await using holder = await new SqlServerDatabase(login).connect(globalThis);
   await holder.query(
     'BEGIN TRANSACTION; UPDATE _warehouse._elt_epoch SET min_valid = min_valid',
   );
@@ -512,11 +514,11 @@ test('a commit that applies the retention while another connection opens its loa
   // load of the first pass, until the open has inserted its load and the
   // retention has deleted the load of the first pass (platform setup that no
   // operation of the destination gives).
-  await using opens = await new SqlServerDatabase(login).connect();
+  await using opens = await new SqlServerDatabase(login).connect(globalThis);
   await opens.query(
     "BEGIN TRANSACTION; DECLARE @result int; EXEC @result = sp_getapplock @Resource = N'elt:_warehouse._elt_loads', @LockMode = N'Exclusive', @LockOwner = N'Transaction';",
   );
-  await using second = await new SqlServerDatabase(login).connect();
+  await using second = await new SqlServerDatabase(login).connect(globalThis);
   await second.query(
     'BEGIN TRANSACTION; UPDATE _warehouse._elt_loads SET closed_at = closed_at WHERE id = (SELECT MAX(id) FROM _warehouse._elt_loads WHERE closed_at IS NOT NULL)',
   );
@@ -850,7 +852,7 @@ test('a database restored from a backup gives numbers again, so its next load st
   await using master = await new SqlServerDatabase({
     ...database.login,
     database: 'master',
-  }).connect();
+  }).connect(globalThis);
   await master.query(
     `ALTER DATABASE [${database.name}] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
      RESTORE DATABASE [${database.name}] FROM DISK = N'${backup}' WITH REPLACE;

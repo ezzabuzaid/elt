@@ -49,7 +49,7 @@ export class SqlServerLoad implements AsyncDisposable {
     owner: LoadOwner,
     retaining: Retaining,
   ): Promise<SqlServerLoad> {
-    const connection = await connect(database);
+    const connection = await connect(database, retaining.clock);
     try {
       const loadedAt = new Date(retaining.clock.Date.now());
       await installNumbering(connection, await databaseCopy(connection));

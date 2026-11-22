@@ -44,7 +44,7 @@ export class SqlServerCheckpointStore extends CheckpointStore {
     this.#database = database;
     this.#locks = new Mutex(
       new SqlServerStore({
-        connect: () => database.connect(),
+        connect: () => database.connect(globalThis),
         sequence: tokens,
         heartbeatInterval: 10_000,
         clock: globalThis,
@@ -61,7 +61,7 @@ export class SqlServerCheckpointStore extends CheckpointStore {
     ids: readonly string[],
     work: (session: CheckpointSession) => Promise<T>,
   ): Promise<T> {
-    await using connection = await connect(this.#database);
+    await using connection = await connect(this.#database, globalThis);
     await create(connection);
     return await this.#held(ids, () => withTable(connection, work));
   }

@@ -38,7 +38,7 @@ export class SqlServerFiles extends DatabaseFiles<SqlServerConnection> {
   // database can ignore case, and then a.PDF and a.pdf, the same bytes with
   // two extensions, would be one file (ADR 0015).
   protected override async connect(): Promise<SqlServerConnection> {
-    const connection = await connect(this.#database);
+    const connection = await connect(this.#database, globalThis);
     try {
       const [found] = await connection.query(
         `SELECT IIF(OBJECT_ID(N'${table}', N'U') IS NULL, 0, 1) AS [made]`,

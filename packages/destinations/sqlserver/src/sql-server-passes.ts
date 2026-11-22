@@ -38,7 +38,10 @@ export async function readPassStatus(login: SqlServerLogin): Promise<{
   readonly pass: PassStatus | null;
   readonly streams: readonly StreamPassStatus[];
 }> {
-  await using connection = await connect(new SqlServerDatabase(login));
+  await using connection = await connect(
+    new SqlServerDatabase(login),
+    globalThis,
+  );
   let rows;
   try {
     rows = await connection.query(status);

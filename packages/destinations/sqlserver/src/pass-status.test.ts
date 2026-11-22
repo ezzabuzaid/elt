@@ -43,7 +43,7 @@ async function scratch({ rowVersions = true } = {}) {
     password: database.password,
     trustServerCertificate: true,
   };
-  const admin = await new SqlServerDatabase(login).connect();
+  const admin = await new SqlServerDatabase(login).connect(globalThis);
   if (rowVersions)
     await admin.query(
       `ALTER DATABASE [${database.database}] SET ALLOW_SNAPSHOT_ISOLATION ON; ALTER DATABASE [${database.database}] SET READ_COMMITTED_SNAPSHOT ON WITH ROLLBACK IMMEDIATE`,

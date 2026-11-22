@@ -3,6 +3,8 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
 
+import { createClock } from '@sinonjs/fake-timers';
+import { waitFor } from '@zukhruf/testing/async';
 import { SQL_SERVER_FULL_IMAGE, SqlServer } from '@zukhruf/testing/sqlserver';
 import sql from 'mssql';
 
@@ -23,7 +25,7 @@ test('a connection keeps one session from one statement to the next, also past a
     password: scratch.password,
     trustServerCertificate: true,
   });
-  await using connection = await database.connect();
+  await using connection = await database.connect(globalThis);
 
   const [first] = await connection.query(
     'CREATE TABLE #notes (note nvarchar(max) NULL); SELECT @@SPID AS spid',
@@ -75,7 +77,7 @@ test('a connection whose session the server ends tells its owner, and never conn
     password: scratch.password,
     trustServerCertificate: true,
   });
-  await using connection = await database.connect();
+  await using connection = await database.connect(globalThis);
   const [session] = await connection.query('SELECT @@SPID AS spid');
   const ended = once(connection, 'end');
 
@@ -103,7 +105,7 @@ test('a signal that aborts while a batch runs cancels the batch on the server an
     password: scratch.password,
     trustServerCertificate: true,
   });
-  await using connection = await database.connect();
+  await using connection = await database.connect(globalThis);
   await connection.query('CREATE TABLE dbo.notes (note nvarchar(max) NULL)');
   const [before] = await connection.query('SELECT @@SPID AS spid');
   const stop = new AbortController();
@@ -142,7 +144,7 @@ test('a signal that is already aborted sends no batch and rejects with its reaso
     password: scratch.password,
     trustServerCertificate: true,
   });
-  await using connection = await database.connect();
+  await using connection = await database.connect(globalThis);
   await connection.query('CREATE TABLE dbo.notes (note nvarchar(max) NULL)');
   const reason = new Error('the model ran out of time');
 
@@ -160,4 +162,47 @@ test('a signal that is already aborted sends no batch and rejects with its reaso
 
   assert.equal(refused, reason);
   assert.deepEqual(notes, []);
+});
+
+test('a connection that runs nothing for a minute on its clock runs a statement on its session, so a gateway that ends idle sessions keeps it', async (t) => {
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  const database = new SqlServerDatabase({
+    server: scratch.host,
+    port: scratch.port,
+    database: scratch.database,
+    user: scratch.user,
+    password: scratch.password,
+    trustServerCertificate: true,
+  });
+  const clock = createClock(Date.now());
+  await using connection = await database.connect(clock);
+  const [session] = await connection.query('SELECT @@SPID AS spid');
+  const lastRequest = async () => {
+    const { recordset } = await admin
+      .request()
+      .input('spid', sql.Int, Number(session?.spid))
+      .query<{ ended: Date }>(
+        'SELECT last_request_end_time AS ended FROM sys.dm_exec_sessions WHERE session_id = @spid',
+      );
+    return recordset[0]?.ended.getTime();
+  };
+  const before = await lastRequest();
+
+  await clock.tickAsync(60_000);
+
+  // The statement reaches the server in real time once the clock moved.
+  await waitFor(
+    async () => {
+      const after = await lastRequest();
+      assert.ok(before !== undefined && after !== undefined, 'a session');
+      assert.ok(after > before, `${after} is after ${before}`);
+    },
+    { signal: t.signal },
+  );
 });

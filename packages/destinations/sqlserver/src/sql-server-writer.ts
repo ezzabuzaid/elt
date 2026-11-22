@@ -809,7 +809,7 @@ export abstract class SqlServerWriter extends Writer {
     { writer, clock, connection: connector }: Clearing,
     committed?: (values: FieldValues) => Promise<void>,
   ): Promise<void> {
-    await using connection = await connect(this.#database);
+    await using connection = await connect(this.#database, clock);
     await installNumbering(connection, await databaseCopy(connection));
     await makeWriterTables(connection);
     await transaction(connection, async () => {

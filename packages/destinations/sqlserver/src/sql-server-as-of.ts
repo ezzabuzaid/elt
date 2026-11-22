@@ -45,7 +45,7 @@ export async function readAsOf(
       ? undefined
       : parsePosition(position, sqlServerDatabase);
   await using stack = new AsyncDisposableStack();
-  const connection = stack.use(await connect(database));
+  const connection = stack.use(await connect(database, globalThis));
   await requireRowVersions(connection);
   const settled = await settledMark(connection);
   if (settled === null) return { expired: 'No load has committed yet' };

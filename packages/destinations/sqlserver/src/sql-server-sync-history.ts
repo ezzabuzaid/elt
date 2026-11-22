@@ -18,6 +18,7 @@ import {
 import {
   type SqlServerConnection,
   SqlServerDatabase,
+  SqlServerUnavailableError,
 } from '@eltjs/sdk-microsoft-sql-server';
 
 import {
@@ -83,7 +84,7 @@ export class SqlServerSyncHistory extends SyncHistory<SqlServerTable> {
     connection: Connection<SqlServerTable>,
     streamChecks: readonly StreamCheck[],
   ): Promise<void> {
-    await using session = await connect(this.#database);
+    await using session = await connect(this.#database, globalThis);
     await transaction(session, async () => {
       for (const { stream, at } of streamChecks)
         await session.query(
@@ -107,7 +108,7 @@ export class SqlServerSyncHistory extends SyncHistory<SqlServerTable> {
     copies: readonly DeclaredCopy<SqlServerTable>[],
     at: Date,
   ): Promise<RecordedPass<SqlServerTable>> {
-    const session = await connect(this.#database);
+    const session = await connect(this.#database, globalThis);
     try {
       const id = await transaction(session, async () => {
         await failEnded(session, connection.name, at);
@@ -145,17 +146,27 @@ export class SqlServerSyncHistory extends SyncHistory<SqlServerTable> {
           );
         return attempt.id;
       });
+      // The session runs SELECT 1 each idle minute on real time, as no
+      // caller has another correct value. When the server or the network ends
+      // it all the same, the record goes on a session of its own and replaces
+      // the failure that the next begin may have recorded (ADR 0016). A record
+      // sets the same values again, so it is safe to repeat.
+      const record = async (
+        work: (session: SqlServerConnection) => Promise<void>,
+      ) => {
+        try {
+          await transaction(session, () => work(session));
+        } catch (error) {
+          if (!sessionEnded(error)) throw error;
+          await using again = await connect(this.#database, globalThis);
+          await transaction(again, () => work(again));
+        }
+      };
       return {
-        finish: async (outcomes, upstream, ended) => {
-          await transaction(session, () =>
-            finish(session, id, outcomes, upstream, ended),
-          );
-        },
-        fail: async (error, failureType, ended) => {
-          await transaction(session, () =>
-            fail(session, [id], error, failureType, ended),
-          );
-        },
+        finish: (outcomes, upstream, ended) =>
+          record((session) => finish(session, id, outcomes, upstream, ended)),
+        fail: (error, failureType, ended) =>
+          record((session) => fail(session, [id], error, failureType, ended)),
         [Symbol.asyncDispose]: () => session[Symbol.asyncDispose](),
       };
     } catch (error) {
@@ -167,7 +178,7 @@ export class SqlServerSyncHistory extends SyncHistory<SqlServerTable> {
   // Makes the history's tables, publishes its views and the catalog, and
   // grants each reader the numbering; safe to repeat.
   override async install(): Promise<void> {
-    await using session = await connect(this.#database);
+    await using session = await connect(this.#database, globalThis);
     if (this.#readers.length > 0)
       await installNumbering(session, await databaseCopy(session));
     await transaction(session, async () => {
@@ -180,6 +191,13 @@ export class SqlServerSyncHistory extends SyncHistory<SqlServerTable> {
     });
   }
 }
+
+// Whether a record failed because its session ended: the statement failed,
+// or the statement and then the rollback of its transaction did, and the
+// server rolled back what the session did not commit.
+const sessionEnded = (error: unknown): boolean =>
+  error instanceof SqlServerUnavailableError ||
+  (error instanceof SuppressedError && sessionEnded(error.suppressed));
 
 // The application lock of an attempt, named by its hash, as sp_getapplock
 // keeps 255 characters of a name.

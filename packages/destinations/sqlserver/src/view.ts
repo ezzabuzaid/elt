@@ -76,7 +76,7 @@ export class View extends DerivedDataset<SqlServerTable> {
     readonly earlier: readonly DerivedDataset<SqlServerTable>[];
     readonly clock: PipelineClock;
   }): Promise<void> {
-    await using connection = await connect(this.into[database]);
+    await using connection = await connect(this.into[database], clock);
     await refreshView({
       publish: () =>
         transaction(connection, () => publishViews(connection, [this.#view])),

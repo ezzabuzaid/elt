@@ -3,7 +3,11 @@ import sql from 'mssql';
 import { cellNumber } from './cells.ts';
 import { SqlServerVersionError } from './errors.ts';
 import { SqlServerConnection } from './sql-server-connection.ts';
-import { connectionFailure, query } from './sql-server-request.ts';
+import {
+  type SqlServerRead,
+  connectionFailure,
+  query,
+} from './sql-server-request.ts';
 import { SqlServerSession } from './sql-server-session.ts';
 
 // One database on a SQL Server, named by its parts or by an ADO.NET
@@ -65,9 +69,9 @@ export class SqlServerDatabase {
 
   // One session of the database, for work that keeps state from one
   // statement to the next, such as a load that stages its rows in a #temp
-  // table, or a lock of the session.
-  connect(): Promise<SqlServerConnection> {
-    return SqlServerConnection.open(this.#config, this.location);
+  // table, or a lock of the session. It waits on clock while it runs nothing.
+  connect(clock: SqlServerRead['clock']): Promise<SqlServerConnection> {
+    return SqlServerConnection.open(this.#config, this.location, clock);
   }
 
   async open(): Promise<SqlServerSession> {

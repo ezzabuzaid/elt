@@ -136,7 +136,7 @@ function host(parser: DocumentParser, source: Library) {
   });
 }
 
-await using admin = await new SqlServerDatabase(login).connect();
+await using admin = await new SqlServerDatabase(login).connect(globalThis);
 const show = async (title: string, sql: string) => {
   console.log(title);
   console.table(await admin.query(sql));

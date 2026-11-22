@@ -128,6 +128,10 @@ _Avoid_: Snapshot (a reading has one, but a snapshot alone shows commits inside 
 A lock of `sp_getapplock` on a name, owned by a session or by a transaction. Each lock of the destination is one.
 _Avoid_: Advisory lock (Postgres's word), mutex (`@zukhruf/mutex` is the package that holds some of them)
 
+**Held session**:
+A session that a pass keeps from its start to its end: the session of the load, of the history's attempt, of the checkpoint store, and of each lock of a copy. Each one runs `SELECT 1` when it ran no statement for a minute, so a gateway that ends idle sessions keeps it (ADR 0016).
+_Avoid_: Keepalive (TCP's own, which the gateway of Azure SQL does not count), connection pool (a held session is one connection)
+
 **Vector column**:
 A `vector(n)` column of a rule: n float32 values that a model made. The destination keeps it as `VECTOR(n)`, at most 1,998 dimensions, and sends each value as the JSON text of `@zukhruf/vectors/sqlserver`. `sys.columns` gives its dimensions in `vector_dimensions`, so a column of other dimensions does not fit its declaration.
 _Avoid_: Embedding (the model's output before it is a column), blob

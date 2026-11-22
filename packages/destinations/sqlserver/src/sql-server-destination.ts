@@ -99,7 +99,7 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
   ): Promise<readonly string[] | { readonly expired: string }> {
     const since =
       after === undefined ? undefined : parsePosition(after, sqlServerDatabase);
-    await using connection = await connect(this[database]);
+    await using connection = await connect(this[database], globalThis);
     return positionsAfter(
       await readNumbering(connection),
       since,
