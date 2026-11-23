@@ -27,7 +27,6 @@ export default defineConfig(
       'zukhruf/base',
       'zukhruf/tests',
       'zukhruf/diagnostics',
-      'zukhruf/react',
       'island/recommended',
       'manifest/recommended',
     ],

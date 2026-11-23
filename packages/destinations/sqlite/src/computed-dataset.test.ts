@@ -15,7 +15,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { Latch, untilAborted } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 import { Vector } from '@zukhruf/vectors';
 import { fromSql } from '@zukhruf/vectors/sqlite';
 
@@ -436,7 +436,7 @@ test('under a watch, a file that a commit removes with its rows while the file i
     released.open();
     // The refresh that read b.txt counts two inputs; the one after the
     // commit that removed b.txt counts one.
-    const after = await timebox(
+    const after = await waitFor(
       () => {
         const [row] = files.read(status);
         assert.deepEqual(row, {
@@ -448,11 +448,7 @@ test('under a watch, a file that a commit removes with its rows while the file i
         });
         return row;
       },
-      {
-        minTimeout: 10,
-        maxRetryTime: 5_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 10 },
     );
 
     assert.deepEqual(after, {
@@ -787,7 +783,7 @@ test('a storage that fails to read the first bytes of a file for a reason other 
   );
 });
 
-test('a refresh that its watch stops while a file is parsed stores no row for that file and stays refreshing with no error, as a stop is not the file’s failure', async () => {
+test('a refresh that its watch stops while a file is parsed stores no row for that file and stays refreshing with no error, as a stop is not the file’s failure', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
@@ -801,16 +797,12 @@ test('a refresh that its watch stops while a file is parsed stores no row for th
   let held;
   try {
     await watching.next();
-    held = await timebox(
+    held = await waitFor(
       () => {
         assert.deepEqual(files.parser().parsed, ['a.txt']);
         return files.read(status);
       },
-      {
-        minTimeout: 10,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 10 },
     );
   } finally {
     controller.abort();
@@ -834,7 +826,7 @@ test('a refresh that its watch stops while a file is parsed stores no row for th
   );
 });
 
-test('a file that is slow to read holds only its own place: the text of the files read after it lands while it is still being read', async () => {
+test('a file that is slow to read holds only its own place: the text of the files read after it lands while it is still being read', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   const names = Array.from({ length: 40 }, (_, index) => `f${index}.txt`);
@@ -848,7 +840,7 @@ test('a file that is slow to read holds only its own place: the text of the file
   files.parser().holding.set('slow.txt', released);
 
   const running = files.pipeline.run();
-  await timebox(
+  await waitFor(
     () => {
       const landed = files.read(
         "SELECT ref FROM file_text WHERE status = 'computed'",
@@ -858,11 +850,7 @@ test('a file that is slow to read holds only its own place: the text of the file
         `only ${landed.length} of ${names.length} files landed while slow.txt was read`,
       );
     },
-    {
-      minTimeout: 10,
-      maxRetryTime: 10_000,
-      shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-    },
+    { signal: t.signal, interval: 10 },
   );
   const whileHeld = files.read(
     "SELECT ref FROM file_text WHERE ref = 'slow.txt'",
@@ -877,7 +865,7 @@ test('a file that is slow to read holds only its own place: the text of the file
   );
 });
 
-test('while a file is slow to read, derived_status says that the dataset refreshes and how many inputs are pending, and once the refresh ends that it is current, with each status counted', async () => {
+test('while a file is slow to read, derived_status says that the dataset refreshes and how many inputs are pending, and once the refresh ends that it is current, with each status counted', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   const names = Array.from({ length: 8 }, (_, index) => `f${index}.txt`);
@@ -892,18 +880,13 @@ test('while a file is slow to read, derived_status says that the dataset refresh
   const status = `SELECT kind, state, inputs, computed, failed, pending, as_of IS NOT NULL AS dated FROM derived_status WHERE dataset = 'file_text'`;
 
   const running = files.pipeline.run();
-  const whileHeld = await timebox(
+  const whileHeld = await waitFor(
     () => {
       const [row] = files.read(status);
       assert.equal(row?.pending, 1);
       return row;
     },
-    {
-      minTimeout: 10,
-      maxRetryTime: 10_000,
-      shouldRetry: ({ error }) =>
-        error instanceof assert.AssertionError || Error.isError(error),
-    },
+    { signal: t.signal, interval: 10 },
   );
   released.open();
   await running;
@@ -1026,7 +1009,7 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
     const second = await pass();
     const whileHeld = files.read(text);
     released.open();
-    await timebox(
+    await waitFor(
       () => {
         assert.notEqual(
           files.read("SELECT ref FROM file_text WHERE ref = 'b.txt'").length,
@@ -1034,11 +1017,7 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
           'b.txt never got its text',
         );
       },
-      {
-        minTimeout: 10,
-        maxRetryTime: 5_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 10 },
     );
 
     assert.equal(first.done, false);
@@ -1056,7 +1035,7 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
   }
 });
 
-test('derived_status gives as_of as the time the last refresh began to read, which refreshing_since shows while that refresh runs', async () => {
+test('derived_status gives as_of as the time the last refresh began to read, which refreshing_since shows while that refresh runs', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice');
@@ -1072,16 +1051,12 @@ test('derived_status gives as_of as the time the last refresh began to read, whi
   const status = `SELECT state, as_of, refreshed_at, refreshing_since FROM derived_status WHERE dataset = 'file_text'`;
 
   const running = files.pipeline.run();
-  const [whileHeld] = await timebox(
+  const [whileHeld] = await waitFor(
     () => {
       assert.equal(files.parser().parsed.length, 2);
       return files.read(status);
     },
-    {
-      minTimeout: 10,
-      maxRetryTime: 10_000,
-      shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-    },
+    { signal: t.signal, interval: 10 },
   );
   await sleep(20);
   released.open();
@@ -1219,7 +1194,7 @@ test('a rule call that fails stops the calls after it: the call beside it lands 
   );
 });
 
-test('a refresh that its watch stops while the model answers stays refreshing in derived_status, with no error, as a stop is not the dataset’s failure', async () => {
+test('a refresh that its watch stops while the model answers stays refreshing in derived_status, with no error, as a stop is not the dataset’s failure', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const model = new Model(1);
   const answers = modelImport(scratch.path, model);
@@ -1232,16 +1207,12 @@ test('a refresh that its watch stops while the model answers stays refreshing in
   let held;
   try {
     await watching.next();
-    held = await timebox(
+    held = await waitFor(
       () => {
         assert.deepEqual(model.calls, [['a.txt']]);
         return answers.read(status);
       },
-      {
-        minTimeout: 10,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 10 },
     );
   } finally {
     controller.abort();
@@ -1270,7 +1241,7 @@ test('a computed dataset whose input table a person dropped waits in derived_sta
   }
   answers.source.filesGone = true;
 
-  await answers.pipeline.run().catch(() => undefined);
+  await assert.rejects(answers.pipeline.run(), PipelineError);
 
   assert.deepEqual(
     {

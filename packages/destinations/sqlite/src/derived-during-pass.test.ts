@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { Latch } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Catalog,
@@ -193,24 +193,20 @@ function notesPipeline(directory: string) {
   return { source, shout, pipeline, shouts, passes };
 }
 
-const untilShown = {
-  minTimeout: 10,
-  maxRetryTime: 5_000,
-  shouldRetry: ({ error }: { error: unknown }) =>
-    error instanceof assert.AssertionError,
-};
-
-test('during a long run, a computed dataset holds the outputs of the rows the first checkpoint committed before the pass ends', async () => {
+test('during a long run, a computed dataset holds the outputs of the rows the first checkpoint committed before the pass ends', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-derived-');
   const { source, pipeline, shouts } = notesPipeline(scratch.path);
 
   const run = pipeline.run();
   try {
-    await timebox(() => {
-      assert.deepEqual(shouts(), [
-        { id: 'n1', status: 'computed', loud: 'N1' },
-      ]);
-    }, untilShown);
+    await waitFor(
+      () => {
+        assert.deepEqual(shouts(), [
+          { id: 'n1', status: 'computed', loud: 'N1' },
+        ]);
+      },
+      { signal: t.signal, interval: 10 },
+    );
   } finally {
     source.rest.open();
     await run;
@@ -222,7 +218,7 @@ test('during a long run, a computed dataset holds the outputs of the rows the fi
   ]);
 });
 
-test('under a watch, a consumer reads the outputs of the rows the first checkpoint committed before the watch yields the pass', async () => {
+test('under a watch, a consumer reads the outputs of the rows the first checkpoint committed before the watch yields the pass', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-derived-');
   const { source, pipeline, shouts } = notesPipeline(scratch.path);
   const controller = new AbortController();
@@ -230,11 +226,14 @@ test('under a watch, a consumer reads the outputs of the rows the first checkpoi
 
   const first = watching.next();
   try {
-    await timebox(() => {
-      assert.deepEqual(shouts(), [
-        { id: 'n1', status: 'computed', loud: 'N1' },
-      ]);
-    }, untilShown);
+    await waitFor(
+      () => {
+        assert.deepEqual(shouts(), [
+          { id: 'n1', status: 'computed', loud: 'N1' },
+        ]);
+      },
+      { signal: t.signal, interval: 10 },
+    );
   } finally {
     source.rest.open();
     await first;
@@ -248,15 +247,20 @@ test('under a watch, a consumer reads the outputs of the rows the first checkpoi
   ]);
 });
 
-test('a row that fails during a pass is tried again only by the refresh after the next pass, as each pass tries it once', async () => {
+test('a row that fails during a pass is tried again only by the refresh after the next pass, as each pass tries it once', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-derived-');
   const { source, shout, pipeline, shouts } = notesPipeline(scratch.path);
   shout.failing.add('n1');
   const first = pipeline.run();
   try {
-    await timebox(() => {
-      assert.deepEqual(shouts(), [{ id: 'n1', status: 'failed', loud: null }]);
-    }, untilShown);
+    await waitFor(
+      () => {
+        assert.deepEqual(shouts(), [
+          { id: 'n1', status: 'failed', loud: null },
+        ]);
+      },
+      { signal: t.signal, interval: 10 },
+    );
   } finally {
     source.rest.open();
     await first;
@@ -270,19 +274,22 @@ test('a row that fails during a pass is tried again only by the refresh after th
   const second = pipeline.run();
   try {
     // n3 is new, so a refresh during the pass makes it; n1 waits.
-    await timebox(() => {
-      assert.deepEqual(
-        shouts().map(({ id, status }: { id: string; status: string }) => [
-          id,
-          status,
-        ]),
-        [
-          ['n1', 'failed'],
-          ['n2', 'computed'],
-          ['n3', 'computed'],
-        ],
-      );
-    }, untilShown);
+    await waitFor(
+      () => {
+        assert.deepEqual(
+          shouts().map(({ id, status }: { id: string; status: string }) => [
+            id,
+            status,
+          ]),
+          [
+            ['n1', 'failed'],
+            ['n2', 'computed'],
+            ['n3', 'computed'],
+          ],
+        );
+      },
+      { signal: t.signal, interval: 10 },
+    );
   } finally {
     source.rest.open();
     await second;
@@ -305,7 +312,7 @@ test('a row that fails during a pass is tried again only by the refresh after th
   );
 });
 
-test('a run that its signal stops after its pass, while a refresh reads, resolves as its pass did and keeps what it committed', async () => {
+test('a run that its signal stops after its pass, while a refresh reads, resolves as its pass did and keeps what it committed', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-derived-');
   const { source, shout, pipeline, shouts, passes } = notesPipeline(
     scratch.path,
@@ -317,10 +324,13 @@ test('a run that its signal stops after its pass, while a refresh reads, resolve
 
   const run = pipeline.run({ signal: stop.signal });
   try {
-    await timebox(() => {
-      assert.deepEqual(passes(), [{ status: 'succeeded' }]);
-      assert.deepEqual(shout.calls, ['n1']);
-    }, untilShown);
+    await waitFor(
+      () => {
+        assert.deepEqual(passes(), [{ status: 'succeeded' }]);
+        assert.deepEqual(shout.calls, ['n1']);
+      },
+      { signal: t.signal, interval: 10 },
+    );
   } finally {
     stop.abort();
     held.open();
@@ -335,7 +345,7 @@ test('a run that its signal stops after its pass, while a refresh reads, resolve
   assert.deepEqual(shouts(), []);
 });
 
-test('a row that a refresh during a stopped pass failed is tried again by the refresh after the pass of a restarted pipeline, once', async () => {
+test('a row that a refresh during a stopped pass failed is tried again by the refresh after the pass of a restarted pipeline, once', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-derived-');
   const before = notesPipeline(scratch.path);
   before.shout.failing.add('n1');
@@ -345,11 +355,14 @@ test('a row that a refresh during a stopped pass failed is tried again by the re
     (error: unknown) => error,
   );
   try {
-    await timebox(() => {
-      assert.deepEqual(before.shouts(), [
-        { id: 'n1', status: 'failed', loud: null },
-      ]);
-    }, untilShown);
+    await waitFor(
+      () => {
+        assert.deepEqual(before.shouts(), [
+          { id: 'n1', status: 'failed', loud: null },
+        ]);
+      },
+      { signal: t.signal, interval: 10 },
+    );
   } finally {
     stop.abort();
     before.source.rest.open();
@@ -484,7 +497,7 @@ class Rows extends Source {
   }
 }
 
-test('a target dropped by hand does not stop a watch: its dataset waits with its rows, and once the copy loads the target again it asks the rule for nothing', async () => {
+test('a target dropped by hand does not stop a watch: its dataset waits with its rows, and once the copy loads the target again it asks the rule for nothing', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-derived-');
   const path = join(scratch.path, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
@@ -542,15 +555,18 @@ test('a target dropped by hand does not stop a watch: its dataset waits with its
     for await (const _ of watch);
   })();
   try {
-    await timebox(() => {
-      assert.deepEqual(
-        read('SELECT id, status FROM shouts').map(({ id, status }) => [
-          id,
-          status,
-        ]),
-        [['a1', 'computed']],
-      );
-    }, untilShown);
+    await waitFor(
+      () => {
+        assert.deepEqual(
+          read('SELECT id, status FROM shouts').map(({ id, status }) => [
+            id,
+            status,
+          ]),
+          [['a1', 'computed']],
+        );
+      },
+      { signal: t.signal, interval: 10 },
+    );
 
     {
       // A person's hand: no operation of a pipeline drops a target.
@@ -562,26 +578,35 @@ test('a target dropped by hand does not stop a watch: its dataset waits with its
     // table that is gone.
     other.rows = ['b1', 'b2'];
     other.dial.turns += 1;
-    await timebox(() => {
-      assert.ok(refreshes.count > beforeOther);
-      assert.equal(read('SELECT id FROM other').length, 2);
-    }, untilShown);
+    await waitFor(
+      () => {
+        assert.ok(refreshes.count > beforeOther);
+        assert.equal(read('SELECT id FROM other').length, 2);
+      },
+      { signal: t.signal, interval: 10 },
+    );
     const during = read('SELECT id FROM shouts').map(({ id }) => id);
     const beforeReload = refreshes.count;
     dropped.dial.turns += 1;
-    await timebox(() => {
-      assert.ok(refreshes.count > beforeReload);
-      assert.equal(read('SELECT id FROM raw_dropped_rows').length, 1);
-    }, untilShown);
-    await timebox(() => {
-      assert.deepEqual(
-        read('SELECT id, status FROM shouts').map(({ id, status }) => [
-          id,
-          status,
-        ]),
-        [['a1', 'computed']],
-      );
-    }, untilShown);
+    await waitFor(
+      () => {
+        assert.ok(refreshes.count > beforeReload);
+        assert.equal(read('SELECT id FROM raw_dropped_rows').length, 1);
+      },
+      { signal: t.signal, interval: 10 },
+    );
+    await waitFor(
+      () => {
+        assert.deepEqual(
+          read('SELECT id, status FROM shouts').map(({ id, status }) => [
+            id,
+            status,
+          ]),
+          [['a1', 'computed']],
+        );
+      },
+      { signal: t.signal, interval: 10 },
+    );
 
     assert.deepEqual(during, ['a1']);
     assert.deepEqual(shout.calls, ['a1']);

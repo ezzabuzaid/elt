@@ -37,12 +37,12 @@
   },
   "dependencies": {
     "@azure/msal-node": "^7.2.2",
-    "@zukhruf/async": "^0.8.31",
+    "@zukhruf/async": "^0.8.82",
     "zod": "4.6.5"
   },
   "devDependencies": {
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/testing": "^0.8.31",
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/testing": "^0.8.82",
     "msw": "^3.0.3"
   }
 }

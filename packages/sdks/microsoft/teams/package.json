@@ -12,10 +12,10 @@
   "dependencies": {
     "@eltjs/codec-chromium-indexeddb": "0.0.1",
     "@eltjs/sdk-macos-app-database": "0.0.1",
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/sqlite-data-version": "^0.8.31"
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/sqlite-data-version": "^0.8.82"
   },
   "devDependencies": {
-    "@zukhruf/testing": "^0.8.31"
+    "@zukhruf/testing": "^0.8.82"
   }
 }

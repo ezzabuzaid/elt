@@ -13,7 +13,7 @@ import { crc32 } from 'node:zlib';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -1624,7 +1624,7 @@ test('an Activity watch keeps every stream current while its stores hold still',
       interval: 1,
     });
     await clock.tickAsync(50);
-    await timebox(
+    await waitFor(
       () => {
         const rows = status.all();
         assert.ok(
@@ -1635,11 +1635,7 @@ test('an Activity watch keeps every stream current while its stores hold still',
           `not current: ${JSON.stringify(rows)}`,
         );
       },
-      {
-        minTimeout: 100,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 100 },
     );
 
     assert.equal(

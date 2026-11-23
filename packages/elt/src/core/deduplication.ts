@@ -65,11 +65,7 @@ export class Deduplication {
       !Object.hasOwn(properties, field)
     )
       throw new TypeError(`Schema must describe key/cursor field ${field}`);
-    const schema: unknown = Reflect.get(properties, field);
-    const type: unknown =
-      schema !== null && typeof schema === 'object'
-        ? Reflect.get(schema, 'type')
-        : undefined;
+    const type: unknown = properties[field]?.type;
     if (
       type !== 'string' &&
       type !== 'number' &&

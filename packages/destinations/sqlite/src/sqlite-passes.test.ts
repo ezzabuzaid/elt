@@ -292,7 +292,9 @@ test("a pass that did not load says whether its failures are the user's to fix, 
     history,
   });
   const pass = async () => {
-    await pipeline.run().catch(() => {});
+    await pipeline.run().catch((error: unknown) => {
+      if (!(error instanceof PipelineError)) throw error;
+    });
     return readPassStatus(destination.path).pass;
   };
 
@@ -390,7 +392,9 @@ test('each stream reads with the error of its latest attempt, which a later atte
     history: new SQLiteSyncHistory(),
   });
   const streams = async () => {
-    await pipeline.run().catch(() => {});
+    await pipeline.run().catch((error: unknown) => {
+      if (!(error instanceof PipelineError)) throw error;
+    });
     return readPassStatus(destination.path).streams.map(
       ({ stream, state, error }) => [stream, state, error],
     );
@@ -465,7 +469,7 @@ test('each recorded failure keeps the causes its error chains, such as why a con
     history,
   });
   const failures = async () => {
-    await pipeline.run().catch(() => {});
+    await assert.rejects(pipeline.run(), PipelineError);
     return shell(
       destination.path,
       "SELECT json_extract(value, '$.error') AS error, json_extract(value, '$.stacktrace') AS stacktrace FROM extraction_coverage, json_each(failures) WHERE attempt_id = (SELECT latest_attempt_id FROM sync_status)",
@@ -793,7 +797,9 @@ test('a file that several connections load reads as one pass, which is only as g
     history: new SQLiteSyncHistory(),
   });
   const pass = async () => {
-    await pipeline.run().catch(() => {});
+    await pipeline.run().catch((error: unknown) => {
+      if (!(error instanceof PipelineError)) throw error;
+    });
     return readPassStatus(destination.path).pass;
   };
   const attempts = () =>
@@ -833,14 +839,19 @@ test('a file that several connections load reads as one pass, which is only as g
   };
   passChannels.finish.subscribe(hear);
   const stop = new AbortController();
-  const running = pipeline.run({ signal: stop.signal }).catch(() => {});
+  const reason = new Error('stopped by the test');
+  // A run that its signal stops rejects with the signal's reason.
+  const running = assert.rejects(
+    pipeline.run({ signal: stop.signal }),
+    (error) => Object.is(error, reason),
+  );
   let during;
   try {
     await Promise.all([reading.promise, notesEnded.promise]);
     during = readPassStatus(destination.path).pass;
   } finally {
     passChannels.finish.unsubscribe(hear);
-    stop.abort(new Error('stopped by the test'));
+    stop.abort(reason);
     waiting.resolve();
     await running;
   }

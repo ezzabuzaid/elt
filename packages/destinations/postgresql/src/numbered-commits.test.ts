@@ -453,10 +453,7 @@ test('a commit still in flight keeps every later commit of the database from bei
   clients.defer(() => stalled.release());
   await stalled`BEGIN`;
   await stalled`LOCK TABLE _warehouse.raw_a_notes IN ACCESS EXCLUSIVE MODE`;
-  const second = run(url, a('a2').connection).then(
-    () => 'committed',
-    () => 'failed',
-  );
+  const second = assert.rejects(run(url, a('a2').connection), PipelineError);
   const pid = await waitFor(
     async () => {
       const [blocked] = await watcher<{ pid: number }[]>`
@@ -470,13 +467,12 @@ test('a commit still in flight keeps every later commit of the database from bei
 
   const during = await walkable(b.destination);
   await watcher`SELECT pg_terminate_backend(${pid})`;
-  const outcome = await second;
+  await second;
   await stalled`ROLLBACK`;
   const [b1] = await watcher`SELECT committed_in FROM _warehouse.raw_b_notes`;
   const after = await walkable(b.destination);
 
   assert.deepEqual(during, before);
-  assert.equal(outcome, 'failed');
   assert.deepEqual(after, [...before, Number(b1?.committed_in)]);
 });
 

@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Catalog,
@@ -15,6 +15,7 @@ import {
   Connection,
   Copy,
   type CopyConfiguration,
+  DerivedDatasetError,
   Gauge,
   Pipeline,
   PipelineError,
@@ -296,9 +297,10 @@ test('derived_status says that a view waits while its input has not loaded, that
   const source = new Records(['r1']);
   const status = `SELECT dataset, kind, state, error IS NOT NULL AS failing FROM derived_status ORDER BY dataset`;
   source.failing = true;
-  await recordsPipeline(path, source, 'SELECT count(*) AS n FROM records')
-    .run()
-    .catch(() => undefined);
+  await assert.rejects(
+    recordsPipeline(path, source, 'SELECT count(*) AS n FROM records').run(),
+    PipelineError,
+  );
   const waiting = shell(path, status).rows;
   source.failing = false;
   await recordsPipeline(
@@ -308,9 +310,10 @@ test('derived_status says that a view waits while its input has not loaded, that
   ).run();
   const current = shell(path, status).rows;
 
-  await recordsPipeline(path, source, 'SELECT count(*) AS n FROM recordz')
-    .run()
-    .catch(() => undefined);
+  await assert.rejects(
+    recordsPipeline(path, source, 'SELECT count(*) AS n FROM recordz').run(),
+    DerivedDatasetError,
+  );
 
   assert.deepEqual(
     { waiting, current, failed: shell(path, status).rows },
@@ -439,14 +442,15 @@ test('a view redeclared over a table its copy has not loaded yet leaves no view 
   const path = join(scratch.path, 'data.sqlite');
   const sources = { records: new Records(['r1']), inputs: new Inputs(['r1']) };
   sources.inputs.failing = true;
-  await judgedPipeline(
-    path,
-    sources,
-    { sql: 'SELECT id FROM records', columns: { id: 'Record id.' } },
-    { sql: 'SELECT id FROM candidates', columns: { id: 'Record id.' } },
-  )
-    .run()
-    .catch(() => undefined);
+  await assert.rejects(
+    judgedPipeline(
+      path,
+      sources,
+      { sql: 'SELECT id FROM records', columns: { id: 'Record id.' } },
+      { sql: 'SELECT id FROM candidates', columns: { id: 'Record id.' } },
+    ).run(),
+    PipelineError,
+  );
   const ownViews = (names: readonly string[]) =>
     names.filter((name) => name === 'candidates' || name === 'judgment_inputs');
   const before = ownViews(views(path));
@@ -610,7 +614,7 @@ test('under a watch, a view that reads a view still waiting for its copy waits t
   );
 });
 
-test('under a watch, a view appears after the pass that loads its input, without holding the pass back', async () => {
+test('under a watch, a view appears after the pass that loads its input, without holding the pass back', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
   const pipeline = recordsPipeline(
@@ -622,18 +626,14 @@ test('under a watch, a view appears after the pass that loads its input, without
 
   const watching = pipeline.watch({ signal: controller.signal });
   const pass = await watching.next();
-  await timebox(
+  await waitFor(
     () => {
       assert.ok(
         views(path).includes('record_count'),
         'the view never appeared',
       );
     },
-    {
-      minTimeout: 10,
-      maxRetryTime: 2_000,
-      shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-    },
+    { signal: t.signal, interval: 10 },
   );
   controller.abort();
   await watching.return(undefined);

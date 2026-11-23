@@ -1,6 +1,11 @@
 import { type DatabaseSync, type SQLInputValue, constants } from 'node:sqlite';
 
-import { UnavailableError, open } from '@zukhruf/sqlite-open';
+import {
+  SQLITE_ERROR,
+  UnavailableError,
+  open,
+  sqliteResultCode,
+} from '@zukhruf/sqlite-open';
 
 import {
   type Position,
@@ -295,8 +300,9 @@ function refuseQualified(
     for (const view of views) {
       try {
         database.prepare(`SELECT * FROM temp.${quote(view)}`);
-      } catch {
+      } catch (error) {
         // A view that fails to prepare fails when it is read, too.
+        if (sqliteResultCode(error)?.code !== SQLITE_ERROR) throw error;
       }
       if (found !== undefined)
         throw new TypeError(

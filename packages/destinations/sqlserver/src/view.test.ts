@@ -9,6 +9,7 @@ import {
   Copy,
   type CopyConfiguration,
   type DerivedDataset,
+  DerivedDatasetError,
   Pipeline,
   PipelineError,
   Source,
@@ -315,17 +316,19 @@ test('marts.derived_status says that a view waits while its input has not loaded
     recordsPipeline(database.login, source, (marts) => [count(marts, query)])
       .pipeline;
   source.failing = true;
-  await counting('SELECT count(*) AS n FROM _warehouse.raw_records')
-    .run()
-    .catch(() => undefined);
+  await assert.rejects(
+    counting('SELECT count(*) AS n FROM _warehouse.raw_records').run(),
+    PipelineError,
+  );
   const waiting = await status();
   source.failing = false;
   await counting('SELECT count(*) AS n FROM _warehouse.raw_records').run();
   const current = await status();
 
-  await counting('SELECT count(*) AS n FROM recordz')
-    .run()
-    .catch(() => undefined);
+  await assert.rejects(
+    counting('SELECT count(*) AS n FROM recordz').run(),
+    DerivedDatasetError,
+  );
 
   const row = (state: string, failing: number, dated: number) => ({
     dataset: 'marts.record_count',

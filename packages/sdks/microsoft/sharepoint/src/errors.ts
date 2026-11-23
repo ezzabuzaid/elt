@@ -22,7 +22,11 @@ export class GraphError extends Error {
 
   static async of(response: Response): Promise<GraphError> {
     const body = graphErrorBody.safeParse(
-      await response.json().catch(() => undefined),
+      // A body that is not JSON, such as a proxy's HTML page, says nothing.
+      await response.json().catch((error: unknown) => {
+        if (error instanceof SyntaxError) return undefined;
+        throw error;
+      }),
     );
     const code = body.success ? body.data.error.code : undefined;
     const said = body.success ? `: ${body.data.error.message}` : '';

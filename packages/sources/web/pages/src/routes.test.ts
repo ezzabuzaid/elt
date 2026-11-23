@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { Latch } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 import type { Response } from 'got';
@@ -201,7 +201,7 @@ test('the routes stream stores each URL a listing named, so a walk from the home
   );
 });
 
-test('while the crawl of an input goes on, the routes of each checkpoint reach their table and a view over the pages appears', async () => {
+test('while the crawl of an input goes on, the routes of each checkpoint reach their table and a view over the pages appears', async (t) => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const rest = new Latch();
   await using site = await new HttpServer().start(async (request, response) => {
@@ -273,7 +273,7 @@ test('while the crawl of an input goes on, the routes of each checkpoint reach t
 
   const run = ingestion.run();
   try {
-    await timebox(
+    await waitFor(
       () => {
         assert.deepEqual(
           found(
@@ -283,11 +283,7 @@ test('while the crawl of an input goes on, the routes of each checkpoint reach t
         );
         assert.deepEqual(found('SELECT path FROM page_paths'), [{ path: '/' }]);
       },
-      {
-        minTimeout: 10,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 10 },
     );
   } finally {
     rest.open();

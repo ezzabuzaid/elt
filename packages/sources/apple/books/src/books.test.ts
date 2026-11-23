@@ -22,7 +22,7 @@ import { promisify } from 'node:util';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import { referenceDate } from '@eltjs/codec-apple-reference-date';
 import {
@@ -3046,7 +3046,7 @@ test('a Books watch keeps every stream current while its stores hold still', asy
       interval: 1,
     });
     await clock.tickAsync(1000);
-    await timebox(
+    await waitFor(
       () => {
         const rows = status.all();
         assert.ok(
@@ -3057,11 +3057,7 @@ test('a Books watch keeps every stream current while its stores hold still', asy
           `not current: ${JSON.stringify(rows)}`,
         );
       },
-      {
-        minTimeout: 100,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 100 },
     );
 
     assert.equal(

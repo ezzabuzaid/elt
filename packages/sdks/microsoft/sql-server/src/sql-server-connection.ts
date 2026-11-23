@@ -135,10 +135,17 @@ export class SqlServerConnection
   async #beat(): Promise<void> {
     try {
       await this.query('SELECT 1');
-    } catch {
-      // It needs no handling of its own: it fails because the session ended,
-      // which 'end' tells the owner, or because the owner disposed the
-      // connection.
+    } catch (error) {
+      // A beat that fails because the session ended needs nothing more: 'end'
+      // tells the owner, or the owner disposed the connection. Any other
+      // failure goes to an owner that listens for 'error', as the pool's own
+      // error does.
+      if (
+        !this.#ended.signal.aborted &&
+        Error.isError(error) &&
+        this.listenerCount('error') > 0
+      )
+        this.emit('error', error);
     }
   }
 

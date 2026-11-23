@@ -1,6 +1,8 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import { isErrno } from '@zukhruf/fs';
+
 import { referenceDateSeconds } from '@eltjs/codec-apple-reference-date';
 import {
   type PlistValue,
@@ -92,7 +94,10 @@ export class Attachment {
     if (typeof filename !== 'string') return false;
     return access(attachmentPath(filename, this.#home)).then(
       () => true,
-      () => false,
+      (error: unknown) => {
+        if (isErrno(error, 'ENOENT')) return false;
+        throw error;
+      },
     );
   }
 }

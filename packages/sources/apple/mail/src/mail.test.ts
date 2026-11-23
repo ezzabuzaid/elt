@@ -29,7 +29,7 @@ import {
   PoolWorkers,
 } from '@zukhruf/pool';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -3232,7 +3232,7 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
     });
     await clock.tickAsync(1000);
     // Waits for a check the watch recorded, as its sync history keeps it.
-    await timebox(
+    await waitFor(
       () => {
         assert.notEqual(
           out.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n,
@@ -3240,11 +3240,7 @@ test('a Mail watch makes no pass while Mail and the Accounts store hold still, a
           'the watch recorded no check',
         );
       },
-      {
-        minTimeout: 100,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 100 },
     );
 
     const [pass] = out

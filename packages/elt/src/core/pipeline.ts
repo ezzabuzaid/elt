@@ -333,7 +333,9 @@ export class Pipeline<Target extends DestinationTarget> {
           if (connection.source.failureType(error) === 'config') return;
         }
         await delay(interval, { clock: this.#clock, signal: watching }).catch(
-          () => undefined,
+          (error: unknown) => {
+            if (error !== watching.reason) throw error;
+          },
         );
       }
     };
@@ -515,7 +517,9 @@ export class Pipeline<Target extends DestinationTarget> {
           clock: this.#clock,
           signal: graced.signal,
           ref: false,
-        }).catch(() => undefined),
+        }).catch((error: unknown) => {
+          if (error !== graced.signal.reason) throw error;
+        }),
       ]);
       graced.abort();
     }

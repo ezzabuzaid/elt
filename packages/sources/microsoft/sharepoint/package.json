@@ -38,16 +38,16 @@
   "dependencies": {
     "@eltjs/elt": "^0.12.0",
     "@eltjs/sdk-microsoft-sharepoint": "^0.12.0",
-    "@zukhruf/async": "^0.8.31",
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/snapshot-differential": "^0.8.31"
+    "@zukhruf/async": "^0.8.82",
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/snapshot-differential": "^0.8.82"
   },
   "devDependencies": {
     "@eltjs/elt-sqlite": "^0.12.0",
     "@eltjs/parser-office": "^0.12.0",
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/sqlite-open": "^0.8.31",
-    "@zukhruf/testing": "^0.8.31",
+    "@zukhruf/sqlite-open": "^0.8.82",
+    "@zukhruf/testing": "^0.8.82",
     "msw": "^3.0.3",
     "officeparser": "^8.8.0"
   }

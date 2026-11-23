@@ -20,7 +20,7 @@ import { deflateSync } from 'node:zlib';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import { referenceDate } from '@eltjs/codec-apple-reference-date';
 import {
@@ -3262,7 +3262,7 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
     });
     await clock.tickAsync(1000);
     // Waits for a check the watch recorded, as its sync history keeps it.
-    await timebox(
+    await waitFor(
       () => {
         assert.notEqual(
           out.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n,
@@ -3270,11 +3270,7 @@ test('while Safari is closed, a Safari watch makes no pass while its stores hold
           'the watch recorded no check',
         );
       },
-      {
-        minTimeout: 100,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 100 },
     );
     const [pass] = out
       .prepare('SELECT started_at, completed_at FROM sync_attempts')

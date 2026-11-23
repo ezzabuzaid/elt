@@ -10,6 +10,7 @@ import {
   Copy,
   type CopyConfiguration,
   type DerivedDataset,
+  DerivedDatasetError,
   Pipeline,
   PipelineError,
   Source,
@@ -228,17 +229,19 @@ test('marts.derived_status says that a view waits while its input has not loaded
   const counting = (query: string) =>
     recordsPipeline(url, source, (marts) => [count(marts, query)]);
   source.failing = true;
-  await counting('SELECT count(*)::int AS n FROM _warehouse.raw_records')
-    .run()
-    .catch(() => undefined);
+  await assert.rejects(
+    counting('SELECT count(*)::int AS n FROM _warehouse.raw_records').run(),
+    PipelineError,
+  );
   const waiting = await status();
   source.failing = false;
   await counting('SELECT count(*)::int AS n FROM _warehouse.raw_records').run();
   const current = await status();
 
-  await counting('SELECT count(*)::int AS n FROM recordz')
-    .run()
-    .catch(() => undefined);
+  await assert.rejects(
+    counting('SELECT count(*)::int AS n FROM recordz').run(),
+    DerivedDatasetError,
+  );
 
   assert.deepEqual(
     { waiting, current, failed: await status() },
@@ -366,14 +369,15 @@ test('a view redeclared over a table its copy has not loaded yet leaves no view 
   const sql = client(url, clients);
   const sources = { records: new Records(['r1']), inputs: new Inputs(['r1']) };
   sources.inputs.failing = true;
-  await judgedPipeline(
-    url,
-    sources,
-    { sql: 'SELECT id FROM records', columns: { id: 'Record id.' } },
-    { sql: 'SELECT id FROM candidates', columns: { id: 'Record id.' } },
-  )
-    .run()
-    .catch(() => undefined);
+  await assert.rejects(
+    judgedPipeline(
+      url,
+      sources,
+      { sql: 'SELECT id FROM records', columns: { id: 'Record id.' } },
+      { sql: 'SELECT id FROM candidates', columns: { id: 'Record id.' } },
+    ).run(),
+    PipelineError,
+  );
   const ownViews = (names: readonly string[]) =>
     names.filter((name) => name === 'candidates' || name === 'judgment_inputs');
   const before = ownViews(await views(sql));

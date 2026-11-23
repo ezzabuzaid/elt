@@ -17,7 +17,7 @@ import {
   Retention,
 } from '@zukhruf/snapshot-differential';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Catalog,
@@ -7126,21 +7126,17 @@ async function checkedPipeline(
       'SELECT started_at FROM sync_attempts ORDER BY attempt_id DESC LIMIT 1',
     )[0]?.started_at;
   // Waits until what a reader sees meets done.
-  const until = (done: () => boolean) =>
-    timebox(
+  const until = (done: () => boolean, signal: AbortSignal) =>
+    waitFor(
       () => {
         assert.ok(done(), `never happened: ${JSON.stringify(streams())}`);
       },
-      {
-        minTimeout: 50,
-        maxRetryTime: 5_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal, interval: 50 },
     );
   return { source, pipeline, path, read, streams, connector, startedAt, until };
 }
 
-test('under a watch, a stream whose change fails to load stays current only as of before that change, and so does its connector, while the others move on with the next check', async () => {
+test('under a watch, a stream whose change fails to load stays current only as of before that change, and so does its connector, while the others move on with the next check', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, connector, until } = await checkedPipeline(
     scratch.path,
@@ -7157,7 +7153,7 @@ test('under a watch, a stream whose change fails to load stays current only as o
     const pass = await watching.next();
     const checked = new Date().toISOString();
     source.checks.emit('check', []);
-    await until(() => String(streams().b?.current_as_of) >= checked);
+    await until(() => String(streams().b?.current_as_of) >= checked, t.signal);
 
     assert.equal(pass.value?.outcomes[0]?.failures.length, 1);
     assert.equal(streams().a?.current_as_of, loaded.a?.current_as_of);
@@ -7169,7 +7165,7 @@ test('under a watch, a stream whose change fails to load stays current only as o
   }
 });
 
-test('under a watch, a stream whose change signal times out at one check and reads the same version at the next loads again, so readers see the stream and its connector succeeded, and no other stream loads', async () => {
+test('under a watch, a stream whose change signal times out at one check and reads the same version at the next loads again, so readers see the stream and its connector succeeded, and no other stream loads', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const path = join(scratch.path, 'data.sqlite');
   const clock = createClock(0);
@@ -7226,7 +7222,7 @@ test('under a watch, a stream whose change signal times out at one check and rea
     // Each second on the clock is the interval or the timeout of one check:
     // the second check times out, and the third reads the same version. The
     // race gives the next pass of the watch once it ran.
-    const reload = await timebox(
+    const reload = await waitFor(
       async () => {
         await clock.tickAsync(1000);
         return Promise.race([
@@ -7238,11 +7234,7 @@ test('under a watch, a stream whose change signal times out at one check and rea
           ),
         ]);
       },
-      {
-        minTimeout: 50,
-        maxRetryTime: 5_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 50 },
     );
 
     assert.deepEqual(
@@ -7277,7 +7269,7 @@ test('under a watch, a stream whose change signal times out at one check and rea
   }
 });
 
-test('under a watch, a check that finds nothing changed makes each stream current as of the check, while its last successful sync stays the pass', async () => {
+test('under a watch, a check that finds nothing changed makes each stream current as of the check, while its last successful sync stays the pass', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, until } = await checkedPipeline(
     scratch.path,
@@ -7290,10 +7282,12 @@ test('under a watch, a check that finds nothing changed makes each stream curren
 
     const checked = new Date().toISOString();
     source.checks.emit('check', []);
-    await until(() =>
-      Object.values(streams()).every(
-        ({ current_as_of }) => String(current_as_of) >= checked,
-      ),
+    await until(
+      () =>
+        Object.values(streams()).every(
+          ({ current_as_of }) => String(current_as_of) >= checked,
+        ),
+      t.signal,
     );
 
     for (const stream of ['a', 'b']) {
@@ -7335,7 +7329,7 @@ test('a source that says its upstream matched after the pass began leaves the st
   assert.equal(streams().a?.current_as_of, startedAt());
 });
 
-test('under a watch, a check while the source says its upstream stopped keeps the stream current as of then, not as of the check', async () => {
+test('under a watch, a check while the source says its upstream stopped keeps the stream current as of then, not as of the check', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, until } = await checkedPipeline(
     scratch.path,
@@ -7351,7 +7345,7 @@ test('under a watch, a check while the source says its upstream stopped keeps th
 
     const checked = new Date().toISOString();
     source.checks.emit('check', []);
-    await until(() => String(streams().b?.current_as_of) >= checked);
+    await until(() => String(streams().b?.current_as_of) >= checked, t.signal);
 
     assert.equal(streams().a?.current_as_of, stopped.toISOString());
   } finally {
@@ -7404,7 +7398,7 @@ test('a stream whose source cannot tell how current its upstream is fails with t
   assert.equal(streams().a?.current_as_of, null);
 });
 
-test('under a watch, a check leaves out a stream whose source cannot tell how current its upstream is, and the watch goes on', async () => {
+test('under a watch, a check leaves out a stream whose source cannot tell how current its upstream is, and the watch goes on', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, until } = await checkedPipeline(
     scratch.path,
@@ -7418,7 +7412,7 @@ test('under a watch, a check leaves out a stream whose source cannot tell how cu
 
     const checked = new Date().toISOString();
     source.checks.emit('check', []);
-    await until(() => String(streams().b?.current_as_of) >= checked);
+    await until(() => String(streams().b?.current_as_of) >= checked, t.signal);
     source.checks.emit('check', [source.b]);
     const pass = await watching.next();
 
@@ -7430,7 +7424,7 @@ test('under a watch, a check leaves out a stream whose source cannot tell how cu
   }
 });
 
-test('a watch asks the source how current each stream is only for a check it records, at most once a minute', async () => {
+test('a watch asks the source how current each stream is only for a check it records, at most once a minute', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const { source, pipeline, streams, until } = await checkedPipeline(
     scratch.path,
@@ -7443,7 +7437,7 @@ test('a watch asks the source how current each stream is only for a check it rec
 
     const checked = new Date().toISOString();
     for (let check = 0; check < 3; check++) source.checks.emit('check', []);
-    await until(() => String(streams().b?.current_as_of) >= checked);
+    await until(() => String(streams().b?.current_as_of) >= checked, t.signal);
     // Gives the two later checks time to reach the history.
     await sleep(300);
 
@@ -7454,7 +7448,7 @@ test('a watch asks the source how current each stream is only for a check it rec
   }
 });
 
-test('one sync history records each connection’s first unchanged check at once, even right after another connection’s, and no second check within a minute', async () => {
+test('one sync history records each connection’s first unchanged check at once, even right after another connection’s, and no second check within a minute', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-checks-');
   const path = join(scratch.path, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
@@ -7508,7 +7502,7 @@ test('one sync history records each connection’s first unchanged check at once
     const checked = new Date().toISOString();
     first.checks.emit('check', []);
     second.checks.emit('check', []);
-    await timebox(
+    await waitFor(
       () => {
         const seen = current();
         assert.ok(
@@ -7516,11 +7510,7 @@ test('one sync history records each connection’s first unchanged check at once
           `never recorded: ${JSON.stringify(seen)}`,
         );
       },
-      {
-        minTimeout: 50,
-        maxRetryTime: 5_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 50 },
     );
     const recorded = current();
     // So a second record would carry a later time than the first.
@@ -7751,7 +7741,7 @@ test(
 test(
   'under a watch, a stream whose load failed loads at once when its own source reports a change, and one whose load failed for a config reason waits for that change',
   { timeout: 30_000 },
-  async () => {
+  async (t) => {
     await using scratch = await new TemporaryFiles().directory('elt-retry-');
     const clock = createClock(0);
     const { source, pipeline } = await checkedPipeline(scratch.path, clock);
@@ -7762,7 +7752,7 @@ test(
     // The watch runs on the fake clock: time moves in steps of 100 ms until
     // the pass comes, so the clock tells how long the watch waited for it.
     const passed = <T>(pending: Promise<T>) =>
-      timebox(
+      waitFor(
         async () => {
           await clock.tickAsync(100);
           return Promise.race([
@@ -7772,11 +7762,7 @@ test(
             ),
           ]);
         },
-        {
-          minTimeout: 10,
-          maxRetryTime: 20_000,
-          shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-        },
+        { signal: t.signal, interval: 10 },
       );
     try {
       await passed(watching.next());

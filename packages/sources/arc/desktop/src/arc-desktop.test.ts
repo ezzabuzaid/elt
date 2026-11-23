@@ -14,7 +14,7 @@ import { test } from 'node:test';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -796,7 +796,7 @@ test('a watch over a sidebar that holds still runs no pass and records it curren
 
     // The watch's next check finds the file unchanged and records each
     // stream current as of the file's last write, with no pass.
-    await timebox(
+    await waitFor(
       () =>
         assert.deepEqual(
           read(
@@ -807,11 +807,7 @@ test('a watch over a sidebar that holds still runs no pass and records it curren
             { stream: 'spaces', checked_at: lastWrite.toISOString() },
           ],
         ),
-      {
-        minTimeout: 100,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 100 },
     );
     assert.deepEqual(
       read('select stream, current_as_of from stream_status order by stream'),

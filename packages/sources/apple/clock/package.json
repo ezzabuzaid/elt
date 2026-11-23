@@ -13,14 +13,14 @@
     "@eltjs/elt": "*",
     "@eltjs/sdk-apple-clock": "0.0.1",
     "@eltjs/source-apple-macos": "0.0.1",
-    "@zukhruf/snapshot-differential": "^0.8.31"
+    "@zukhruf/snapshot-differential": "^0.8.82"
   },
   "devDependencies": {
     "@eltjs/codec-plist": "0.0.1",
     "@eltjs/elt-sqlite": "*",
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/sqlite-open": "^0.8.31",
-    "@zukhruf/testing": "^0.8.31"
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/sqlite-open": "^0.8.82",
+    "@zukhruf/testing": "^0.8.82"
   }
 }

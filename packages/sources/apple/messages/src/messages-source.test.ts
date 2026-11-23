@@ -17,7 +17,7 @@ import {
   PoolWorkers,
 } from '@zukhruf/pool';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -1493,7 +1493,7 @@ test('a Messages watch keeps every stream current while chat.db holds still', as
       interval: 1,
     });
     await clock.tickAsync(1000);
-    await timebox(
+    await waitFor(
       () => {
         const rows = status.all();
         assert.ok(
@@ -1504,11 +1504,7 @@ test('a Messages watch keeps every stream current while chat.db holds still', as
           `not current: ${JSON.stringify(rows)}`,
         );
       },
-      {
-        minTimeout: 100,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 100 },
     );
 
     assert.equal(

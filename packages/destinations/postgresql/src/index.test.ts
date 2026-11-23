@@ -8,7 +8,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { TemporaryFiles } from '@zukhruf/fs';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
-import { timebox } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
@@ -3664,7 +3664,7 @@ test('each recorded failure keeps the causes its error chains, such as why a con
     ],
   });
   const failures = async () => {
-    await pipeline.run().catch(() => {});
+    await assert.rejects(pipeline.run(), PipelineError);
     const [copy] = await sql`SELECT failures FROM marts.extraction_coverage
       WHERE attempt_id = (SELECT latest_attempt_id FROM marts.sync_status)`;
     return copy?.failures;
@@ -5697,22 +5697,19 @@ async function checkedPipeline(url: string, sql: postgres.Sql) {
   // Waits until what a reader sees meets done.
   const until = (
     done: (seen: Awaited<ReturnType<typeof streams>>) => boolean,
+    signal: AbortSignal,
   ) =>
-    timebox(
+    waitFor(
       async () => {
         const seen = await streams();
         assert.ok(done(seen), `never happened: ${JSON.stringify(seen)}`);
       },
-      {
-        minTimeout: 50,
-        maxRetryTime: 5_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal, interval: 50 },
     );
   return { source, pipeline, streams, connector, startedAt, until };
 }
 
-test('under a watch, a stream whose change fails to load stays current only as of before that change, and so does its connector, while the others move on with the next check, in Postgres', async () => {
+test('under a watch, a stream whose change fails to load stays current only as of before that change, and so does its connector, while the others move on with the next check, in Postgres', async (t) => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = clients.adopt(
@@ -5735,7 +5732,7 @@ test('under a watch, a stream whose change fails to load stays current only as o
     const pass = await watching.next();
     const checked = new Date();
     source.checks.emit('check', []);
-    await until((seen) => Number(seen.b?.current_as_of) >= +checked);
+    await until((seen) => Number(seen.b?.current_as_of) >= +checked, t.signal);
 
     const seen = await streams();
     assert.equal(pass.value?.outcomes[0]?.failures.length, 1);
@@ -5748,7 +5745,7 @@ test('under a watch, a stream whose change fails to load stays current only as o
   }
 });
 
-test('under a watch, a check that finds nothing changed makes each stream current as of the check, while its last successful sync stays the pass, in Postgres', async () => {
+test('under a watch, a check that finds nothing changed makes each stream current as of the check, while its last successful sync stays the pass, in Postgres', async (t) => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = clients.adopt(
@@ -5767,10 +5764,12 @@ test('under a watch, a check that finds nothing changed makes each stream curren
 
     const checked = new Date();
     source.checks.emit('check', []);
-    await until((seen) =>
-      Object.values(seen).every(
-        ({ current_as_of }) => Number(current_as_of) >= +checked,
-      ),
+    await until(
+      (seen) =>
+        Object.values(seen).every(
+          ({ current_as_of }) => Number(current_as_of) >= +checked,
+        ),
+      t.signal,
     );
 
     const seen = await streams();
@@ -5826,7 +5825,7 @@ test('a source that says its upstream matched after the pass began leaves the st
   assert.deepEqual((await streams()).a?.current_as_of, await startedAt());
 });
 
-test('under a watch, a check while the source says its upstream stopped keeps the stream current as of then, not as of the check, in Postgres', async () => {
+test('under a watch, a check while the source says its upstream stopped keeps the stream current as of then, not as of the check, in Postgres', async (t) => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const sql = clients.adopt(
@@ -5848,7 +5847,7 @@ test('under a watch, a check while the source says its upstream stopped keeps th
 
     const checked = new Date();
     source.checks.emit('check', []);
-    await until((seen) => Number(seen.b?.current_as_of) >= +checked);
+    await until((seen) => Number(seen.b?.current_as_of) >= +checked, t.signal);
 
     assert.deepEqual((await streams()).a?.current_as_of, stopped);
   } finally {

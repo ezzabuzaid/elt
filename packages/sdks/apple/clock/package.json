@@ -13,7 +13,7 @@
     "@eltjs/codec-apple-reference-date": "0.0.1",
     "@eltjs/codec-plist": "0.0.1",
     "@eltjs/sdk-macos-app-database": "0.0.1",
-    "@zukhruf/sqlite-data-version": "^0.8.31",
-    "@zukhruf/sqlite-snapshot": "^0.8.31"
+    "@zukhruf/sqlite-data-version": "^0.8.82",
+    "@zukhruf/sqlite-snapshot": "^0.8.82"
   }
 }

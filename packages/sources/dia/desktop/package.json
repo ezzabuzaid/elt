@@ -17,8 +17,8 @@
   "devDependencies": {
     "@eltjs/elt-sqlite": "*",
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/sqlite-open": "^0.8.31",
-    "@zukhruf/testing": "^0.8.31"
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/sqlite-open": "^0.8.82",
+    "@zukhruf/testing": "^0.8.82"
   }
 }

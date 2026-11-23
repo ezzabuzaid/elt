@@ -11,7 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -1453,7 +1453,7 @@ test('each image loads with its file, and an image the issuer replaces loads aga
   );
 });
 
-test('a Wallet watch loads each commit while passd keeps its store open, and stops when aborted', async () => {
+test('a Wallet watch loads each commit while passd keeps its store open, and stops when aborted', async (t) => {
   await using dir = await new TemporaryFiles().directory('elt-wallet-');
   {
     using wallet = new ScratchWallet(dir.path);
@@ -1472,7 +1472,7 @@ test('a Wallet watch loads each commit while passd keeps its store open, and sto
   // The watch polls on the fake clock: time moves in steps of 100 ms until
   // its next pass comes.
   const passed = <T>(pending: Promise<T>) =>
-    timebox(
+    waitFor(
       async () => {
         await clock.tickAsync(100);
         return Promise.race([
@@ -1482,11 +1482,7 @@ test('a Wallet watch loads each commit while passd keeps its store open, and sto
           ),
         ]);
       },
-      {
-        minTimeout: 10,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 10 },
     );
   const watching = run.watch({ signal: controller.signal });
   for (const change of [
@@ -1752,7 +1748,7 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
       interval: 1,
     });
     await clock.tickAsync(1000);
-    await timebox(
+    await waitFor(
       () => {
         const rows = status.all();
         assert.ok(
@@ -1763,11 +1759,7 @@ test('a Wallet watch keeps every stream current while passd changes nothing', as
           `not current: ${JSON.stringify(rows)}`,
         );
       },
-      {
-        minTimeout: 100,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 100 },
     );
 
     assert.equal(

@@ -2,6 +2,7 @@ import { access } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
+import { isErrno } from '@zukhruf/fs';
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
 
 import { referenceDate } from '@eltjs/codec-apple-reference-date';
@@ -309,7 +310,10 @@ export class NoteStoreSnapshot implements Disposable {
           file !== null &&
           access(file).then(
             () => true,
-            () => false,
+            (error: unknown) => {
+              if (isErrno(error, 'ENOENT')) return false;
+              throw error;
+            },
           ),
         table: () =>
           row.ZTYPEUTI !== tableType || locked || !(data instanceof Uint8Array)

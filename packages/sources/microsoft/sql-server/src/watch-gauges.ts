@@ -155,12 +155,18 @@ class Closed implements SessionState {
 
 class Opening implements SessionState {
   readonly #opened: Future<SqlServerSession>;
+  // What a dispose closes: the session, or nothing once the open failed, as
+  // its gauges gave its error.
+  readonly #closable = new Future<SqlServerSession | undefined>();
 
   constructor(database: SqlServerDatabase, failed: () => void) {
     this.#opened = Future.run(async () => {
       try {
-        return await database.open();
+        const session = await database.open();
+        this.#closable.resolve(session);
+        return session;
       } catch (error) {
+        this.#closable.resolve(undefined);
         failed();
         throw error;
       }
@@ -175,9 +181,8 @@ class Opening implements SessionState {
     return this.#opened.wait();
   }
 
-  // An open that failed has nothing to close; its gauges gave its error.
   async [Symbol.asyncDispose](): Promise<void> {
-    const session = await this.#opened.wait().catch(() => undefined);
+    const session = await this.#closable.wait();
     await session?.[Symbol.asyncDispose]();
   }
 }

@@ -42,8 +42,8 @@
   },
   "devDependencies": {
     "@eltjs/elt-sqlite": "^0.12.0",
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/sqlite-open": "^0.8.31",
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/sqlite-open": "^0.8.82",
     "gpt-tokenizer": "^4.1.2"
   }
 }

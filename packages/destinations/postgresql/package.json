@@ -38,13 +38,13 @@
   },
   "dependencies": {
     "@eltjs/elt": "^0.12.0",
-    "@zukhruf/async": "^0.8.31",
-    "@zukhruf/vectors": "^0.8.40",
+    "@zukhruf/async": "^0.8.82",
+    "@zukhruf/vectors": "^0.8.82",
     "postgres": "^3.4.9"
   },
   "devDependencies": {
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/snapshot-differential": "^0.8.31",
-    "@zukhruf/testing": "^0.8.31"
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/snapshot-differential": "^0.8.82",
+    "@zukhruf/testing": "^0.8.82"
   }
 }

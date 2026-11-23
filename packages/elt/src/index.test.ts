@@ -2165,7 +2165,7 @@ test("a pass publishes each copy's progress: what the source emitted, what commi
     ],
   });
 
-  await pipeline.run().catch(() => {});
+  await assert.rejects(pipeline.run(), PipelineError);
 
   const progress = listened.heard.flatMap((message) =>
     message instanceof CopyProgress
@@ -2239,7 +2239,7 @@ test('a copy that fails before reading still reports how it ended', async () => 
     connections: [leftOnly('locked', source)],
   });
 
-  await pipeline.run().catch(() => {});
+  await assert.rejects(pipeline.run(), PipelineError);
 
   assert.deepEqual(
     listened.heard.flatMap((message) =>

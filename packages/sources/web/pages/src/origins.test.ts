@@ -8,7 +8,7 @@ import { TemporaryFiles } from '@zukhruf/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 
-import { Connection, Copy, Pipeline } from '@eltjs/elt';
+import { Connection, Copy, Pipeline, PipelineError } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
   SQLiteDestination,
@@ -199,10 +199,7 @@ test("a 429 to one input holds another input's requests to that origin", async (
     time,
   );
 
-  await ran(
-    ingestion.run().catch(() => undefined),
-    time,
-  );
+  await ran(assert.rejects(ingestion.run(), PipelineError), time);
 
   // The second input asks nothing of the blocked origin, not even its sitemap.
   assert.deepEqual(requests, ['/robots.txt', '/a.xml', '/a']);
@@ -237,31 +234,31 @@ test('a block and a slowdown outlive the source that met them', async () => {
   await using checkpoints = await new Sqlite().database();
   // Each run is a new source, as a process that starts again makes one.
   const run = async (input: string) =>
-    ran(
-      (
-        await pipeline(
-          new WebSource({
-            cachePath,
-            streams: [{ stream: articles(), inputs: [input] }],
-          }),
-          database.path,
-          checkpoints.path,
-          time,
-        )
+    (
+      await pipeline(
+        new WebSource({
+          cachePath,
+          streams: [{ stream: articles(), inputs: [input] }],
+        }),
+        database.path,
+        checkpoints.path,
+        time,
       )
-        .run()
-        .catch(() => undefined),
-      time,
-    );
+    ).run();
+  // A run that meets the block fails; one that asks nothing does not.
+  const tolerant = (run: Promise<unknown>) =>
+    run.catch((error: unknown) => {
+      if (!(error instanceof PipelineError)) throw error;
+    });
 
-  await run(`${upstream.origin}/blocked.xml`);
+  await ran(tolerant(run(`${upstream.origin}/blocked.xml`)), time);
   requests.length = 0;
-  await run(`${upstream.origin}/blocked.xml`);
+  await ran(tolerant(run(`${upstream.origin}/blocked.xml`)), time);
   const whileBlocked = requests.splice(0).map(({ path }) => path);
   blocking = false;
   // A block ends by the clock, so an hour and a second pass.
   time.fake.tick(3_601_000);
-  await run(`${upstream.origin}/slow.xml`);
+  await ran(run(`${upstream.origin}/slow.xml`), time);
 
   // The block of an hour outlived the first source, so the second asked nothing.
   assert.deepEqual(whileBlocked, []);

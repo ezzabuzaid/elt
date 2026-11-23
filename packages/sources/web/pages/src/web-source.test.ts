@@ -8,7 +8,7 @@ import { setImmediate, setTimeout } from 'node:timers/promises';
 import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
 import { type TimerId, createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
-import { timebox } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 import type { Response } from 'got';
@@ -2011,7 +2011,7 @@ class BodyExtractor extends RecordExtractor {
 test(
   'a watched input whose read failed for a reason that is not a page, such as a record that the schema rejects, is read again when its starting URL is due as a failed one',
   { timeout: 20_000 },
-  async () => {
+  async (t) => {
     await using cache = await new TemporaryFiles().directory('web-cache-');
     let body = 'broken';
     await using upstream = await new HttpServer().start((request, response) => {
@@ -2055,7 +2055,7 @@ test(
     // The watch runs on the fake clock: time moves in steps of 100 ms until
     // its next pass comes, so the clock tells how long it waited.
     const passed = <T>(pending: Promise<T>) =>
-      timebox(
+      waitFor(
         async () => {
           await clock.tickAsync(100);
           return Promise.race([
@@ -2065,11 +2065,7 @@ test(
             ),
           ]);
         },
-        {
-          minTimeout: 10,
-          maxRetryTime: 15_000,
-          shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-        },
+        { signal: t.signal, interval: 10 },
       );
     try {
       const failed = await passed(watch.next());
@@ -2182,7 +2178,7 @@ class OpensOnSecondTry extends BodyExtractor {
 test(
   'a watched input whose read failed before its crawl began, such as an extractor that did not open, is read again when its starting URL is due as a failed one',
   { timeout: 20_000 },
-  async () => {
+  async (t) => {
     // The watch runs on a fake clock, so the due time is known.
     const clock = createClock(Date.now());
     await using cache = await new TemporaryFiles().directory('web-cache-');
@@ -2226,7 +2222,7 @@ test(
     // Time moves in steps of 100 ms until the next pass comes, so the clock
     // tells when the watch read the input again.
     const passed = <T>(pending: Promise<T>) =>
-      timebox(
+      waitFor(
         async () => {
           await clock.tickAsync(100);
           return Promise.race([
@@ -2236,11 +2232,7 @@ test(
             ),
           ]);
         },
-        {
-          minTimeout: 10,
-          maxRetryTime: 15_000,
-          shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-        },
+        { signal: t.signal, interval: 10 },
       );
     try {
       const failed = await passed(watch.next());

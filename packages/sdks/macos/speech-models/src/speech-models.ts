@@ -61,7 +61,16 @@ export class SpeechModels {
 }
 
 // Spotlight lists every .bin and .gguf file, and some cannot be read as a
-// model, such as a download still in progress.
+// model, such as a download still in progress. @huggingface/gguf 0.4.6 gives
+// such a file a plain Error with no code, so only its message tells it from
+// other failures (https://github.com/huggingface/huggingface.js, gguf.ts).
 function read(path: string): Promise<SpeechModel | undefined> {
-  return SpeechModel.read(path).catch(() => undefined);
+  return SpeechModel.read(path).catch((error: unknown) => {
+    if (
+      Error.isError(error) &&
+      error.message.startsWith('not a valid gguf file')
+    )
+      return undefined;
+    throw error;
+  });
 }

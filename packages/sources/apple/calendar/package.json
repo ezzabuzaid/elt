@@ -18,12 +18,12 @@
     "@eltjs/google-auth": "0.0.1",
     "@eltjs/sdk-apple-eventkit": "0.0.1",
     "@eltjs/source-apple-macos": "0.0.1",
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/snapshot-differential": "^0.8.31"
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/snapshot-differential": "^0.8.82"
   },
   "devDependencies": {
     "@eltjs/elt-sqlite": "*",
-    "@zukhruf/sqlite-open": "^0.8.31",
-    "@zukhruf/testing": "^0.8.31"
+    "@zukhruf/sqlite-open": "^0.8.82",
+    "@zukhruf/testing": "^0.8.82"
   }
 }

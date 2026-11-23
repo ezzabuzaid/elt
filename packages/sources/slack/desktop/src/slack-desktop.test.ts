@@ -17,7 +17,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   type IndexedDBWrite,
@@ -2676,7 +2676,7 @@ test('a Slack watch makes no pass while the app saves nothing, and keeps every s
     });
     await clock.tickAsync(1000);
     // Waits for a check the watch recorded, as its sync history keeps it.
-    await timebox(
+    await waitFor(
       () => {
         assert.notEqual(
           data.prepare('SELECT count(*) AS n FROM _elt_stream_checks').get()?.n,
@@ -2684,11 +2684,7 @@ test('a Slack watch makes no pass while the app saves nothing, and keeps every s
           'the watch recorded no check',
         );
       },
-      {
-        minTimeout: 100,
-        maxRetryTime: 10_000,
-        shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-      },
+      { signal: t.signal, interval: 100 },
     );
 
     const [pass] = data

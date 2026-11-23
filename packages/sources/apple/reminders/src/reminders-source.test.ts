@@ -13,7 +13,7 @@ import { promisify } from 'node:util';
 
 import { TemporaryFiles } from '@zukhruf/fs';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
-import { timebox, waitFor } from '@zukhruf/testing/async';
+import { waitFor } from '@zukhruf/testing/async';
 
 import {
   Connection,
@@ -1576,7 +1576,7 @@ test(
       // EventKit notifies of a change anywhere in the store, so a pass for
       // another calendar may run meanwhile; this asserts only that the
       // streams become current with no change of their own.
-      await timebox(
+      await waitFor(
         () => {
           const rows = status.all();
           assert.ok(
@@ -1587,11 +1587,7 @@ test(
             `not current: ${JSON.stringify(rows)}`,
           );
         },
-        {
-          minTimeout: 100,
-          maxRetryTime: 10_000,
-          shouldRetry: ({ error }) => error instanceof assert.AssertionError,
-        },
+        { signal: t.signal, interval: 100 },
       );
 
       for (const row of status.all())

@@ -15,8 +15,8 @@
     "@huggingface/gguf": "0.4.6"
   },
   "devDependencies": {
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/pool": "^0.8.45",
-    "@zukhruf/testing": "^0.8.31"
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/pool": "^0.8.82",
+    "@zukhruf/testing": "^0.8.82"
   }
 }

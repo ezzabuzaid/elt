@@ -12,16 +12,16 @@
   "dependencies": {
     "@eltjs/elt": "*",
     "@eltjs/source-apple-macos": "0.0.1",
-    "@zukhruf/async": "^0.8.31",
-    "@zukhruf/snapshot-differential": "^0.8.31",
+    "@zukhruf/async": "^0.8.82",
+    "@zukhruf/snapshot-differential": "^0.8.82",
     "@eltjs/sdk-chromium-browser": "0.0.1",
     "@eltjs/sdk-chromium-history": "0.0.1",
     "@eltjs/sdk-chromium-bookmarks": "0.0.1"
   },
   "devDependencies": {
     "@eltjs/elt-sqlite": "*",
-    "@zukhruf/fs": "^0.8.31",
-    "@zukhruf/sqlite-open": "^0.8.31",
-    "@zukhruf/testing": "^0.8.31"
+    "@zukhruf/fs": "^0.8.82",
+    "@zukhruf/sqlite-open": "^0.8.82",
+    "@zukhruf/testing": "^0.8.82"
   }
 }
