@@ -228,7 +228,8 @@ async function sessionsOf(admin: sql.ConnectionPool, login: string) {
 // stall in the middle of a read.
 async function relay(database: Database) {
   const sockets = new Set<Socket>();
-  const hop = { reachable: true };
+  // The bytes the server sent through the hop.
+  const hop = { reachable: true, received: 0 };
   const links = new Map<Socket, Socket>();
   let stalling: { left: number; reached: () => void } | undefined;
   const server = createServer((client) => {
@@ -240,6 +241,7 @@ async function relay(database: Database) {
     links.set(upstream, client);
     upstream.on('close', () => links.delete(upstream));
     upstream.on('data', (chunk) => {
+      hop.received += chunk.length;
       if (stalling === undefined) return;
       stalling.left -= chunk.length;
       if (stalling.left > 0) return;
@@ -1194,6 +1196,146 @@ test('discovery keeps only the schemas asked for, and refuses a schema asked for
     /The schemas to keep name Audit, which holds no table this login can read in /,
   );
 });
+
+test(
+  'a discovery that an open ALTER blocks fails with the reason of its signal when the signal aborts, stops its queries on the server and closes its sessions, and a discovery after the commit gives every table',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin.request().batch(`
+    CREATE TABLE dbo.items (id int PRIMARY KEY);
+    CREATE TABLE dbo.other (id int PRIMARY KEY);`);
+    // A server permission, so it is granted in master.
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
+      "EXEC master.sys.sp_executesql N'GRANT VIEW SERVER STATE TO {user}';",
+    );
+    const database = new SqlServerDatabase(reader.connectionString);
+    const requests = async (where: string) =>
+      (
+        await admin
+          .request()
+          .input('login', reader.login)
+          .query<{ requests: number }>(
+            `SELECT COUNT(*) AS requests FROM sys.dm_exec_requests AS r JOIN sys.dm_exec_sessions AS s ON s.session_id = r.session_id WHERE s.login_name = @login ${where}`,
+          )
+      ).recordset[0]?.requests;
+    const blocker = new sql.Transaction(admin);
+    await blocker.begin();
+    let committed = false;
+    try {
+      await new sql.Request(blocker).batch(
+        'ALTER TABLE dbo.other ADD note nvarchar(10) NULL;',
+      );
+      const stop = new AbortController();
+      const discovery = SqlServerSource.discover(database, {
+        signal: stop.signal,
+      });
+      await waitFor(
+        async () =>
+          assert.notEqual(await requests('AND r.blocking_session_id <> 0'), 0),
+        { signal: t.signal },
+      );
+
+      const reason = new Error('The host stopped discovery');
+      stop.abort(reason);
+
+      await assert.rejects(discovery, (error) => error === reason);
+      assert.equal(await requests(''), 0);
+      await waitFor(
+        async () => assert.equal(await sessionsOf(admin, reader.login), 0),
+        { signal: t.signal },
+      );
+      await blocker.commit();
+      committed = true;
+      const source = await SqlServerSource.discover(database, {
+        signal: t.signal,
+      });
+      assert.deepEqual(
+        source.streams.map(({ name }) => name),
+        ['dbo.items', 'dbo.other'],
+      );
+    } finally {
+      if (!committed) await blocker.rollback();
+    }
+  },
+);
+
+// Where a stall stops discovery, in the bytes the server sends: right after
+// the two logins that opening the session makes (the pool tries one
+// connection, and the query takes another), as in backlog #4206; in the
+// tables; and in the last writes, which discovery reads last.
+for (const [when, stallAt] of [
+  ['right after it logs in', ({ login }) => 2 * login],
+  ['while it reads the tables', ({ login }) => login + 20_000],
+  ['while it reads the last writes', ({ total }) => total - 100_000],
+] as const satisfies readonly (readonly [
+  string,
+  (bytes: { login: number; total: number }) => number,
+])[]) {
+  test(
+    `a discovery whose server stops sending ${when} fails with the reason of its signal when the signal aborts, and a discovery after the server sends again gives every table`,
+    { timeout: 120_000 },
+    async () => {
+      await using server = await sqlServer.database();
+      await using clients = new AsyncDisposableStack();
+      const admin = clients.adopt(
+        new sql.ConnectionPool(server.connectionString),
+        (pool) => pool.close(),
+      );
+      await admin.connect();
+      // Names long enough that the tables and the last writes each take more
+      // bytes than the hop forwards in one chunk.
+      await admin.request().batch(`
+      DECLARE @table int = 0;
+      WHILE @table < 800
+      BEGIN
+        DECLARE @create nvarchar(max) = CONCAT(N'CREATE TABLE dbo.', REPLICATE(N'n', 110), N'_', @table, N' (id int PRIMARY KEY)');
+        EXEC(@create);
+        SET @table += 1;
+      END;`);
+      // A server permission, so it is granted in master.
+      await using reader = await readOnlyLogin(
+        server,
+        admin,
+        "EXEC master.sys.sp_executesql N'GRANT VIEW SERVER STATE TO {user}';",
+      );
+      await using hop = await relay(server);
+      const connectionString = reader.connectionString.replace(
+        `Server=${server.host},${server.port}`,
+        `Server=${hop.server}`,
+      );
+      const database = new SqlServerDatabase(connectionString);
+      const probe = new sql.ConnectionPool(connectionString);
+      await probe.connect();
+      const login = hop.received;
+      await probe.close();
+      await SqlServerSource.discover(database);
+      const total = hop.received - login;
+      const stalled = hop.stallAfter(stallAt({ login, total }));
+      const stop = new AbortController();
+      const discovery = SqlServerSource.discover(database, {
+        signal: stop.signal,
+      });
+      await stalled;
+
+      const reason = new Error('The host stopped discovery');
+      stop.abort(reason);
+
+      await assert.rejects(discovery, (error) => error === reason);
+      hop.resume();
+      const source = await SqlServerSource.discover(database);
+      assert.equal(source.streams.length, 800);
+    },
+  );
+}
 
 test('two databases that each hold a table of one name load side by side in one pipeline', async () => {
   await using billing = await sqlServer.database();

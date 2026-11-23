@@ -42,7 +42,7 @@ await new Pipeline({
 ## How to use it
 
 1. Make a `SqlServerDatabase` from the parts of a login (`server`, `port`, `database`, `user`, `password`) or from an ADO.NET connection string, which [mssql](https://github.com/tediousjs/node-mssql) parses. It does not read an `mssql://` URL. Both must name a database. A password that holds `;` or braces gets to the server only through the parts (see the [SDK](../../../sdks/microsoft/sql-server/README.md)).
-2. Call `SqlServerSource.discover(database, { schemas })`. The streams are the tables of the database, so the source is discovered. A host discovers it again on each run.
+2. Call `SqlServerSource.discover(database, { schemas, signal })`. The streams are the tables of the database, so the source is discovered. A host discovers it again on each run. Discovery has no time limit: an open `TRUNCATE` or `ALTER` of any table blocks its queries, and a server that stops sending stops them. Give a `signal` that aborts at the limit of the host, such as `AbortSignal.any([stop, AbortSignal.timeout(ms)])`. When it aborts, discovery cancels its queries on the server, closes its connections and fails with the reason of the signal. When the server sends nothing, discovery can fail up to 30 seconds after the signal: the driver has 5 seconds to cancel a query, 15 seconds to connect, and 30 seconds to lend a connection, which it first checks with `SELECT 1`.
 3. Call `sqlServerCopies` to make one copy for each discovered table, with the sync strategy that discovery selected.
 4. Connect the copies to a destination and a checkpoint store through `Connection` and `Pipeline`. The function that you give to `sqlServerCopies` names the target of each stream. For Postgres, that name is the reader view in `marts`, so a prefix such as `shop_` keeps the tables of two databases apart. The [naming rule](../../../elt/README.md#names) turns `shop_dbo.orders` into a name that Postgres can hold.
 
@@ -217,3 +217,5 @@ Run on 2026-11-07 against SQL Server 2022 in a container:
 - [ADR 0002: Each column is read as the text that SQL Server spells](./docs/adr/0002-each-column-is-read-as-the-text-that-sql-server-spells.md)
 - [ADR 0003: An added field takes the next free name](./docs/adr/0003-an-added-field-takes-the-next-free-name.md)
 - [ADR 0004: A copy ID carries the source identity](./docs/adr/0004-a-copy-id-carries-the-source-identity.md)
+- [ADR 0005: A read with no rows for too long fails](./docs/adr/0005-a-read-with-no-rows-for-too-long-fails.md)
+- [ADR 0006: The host limits discovery through its signal](./docs/adr/0006-the-host-limits-discovery-through-its-signal.md)

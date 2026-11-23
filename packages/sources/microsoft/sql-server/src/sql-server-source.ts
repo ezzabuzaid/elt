@@ -96,23 +96,29 @@ export class SqlServerSource extends Source<OpenRead> {
 
   static async discover(
     database: SqlServerDatabase,
-    options: { readonly schemas?: readonly string[] } = {},
+    {
+      schemas,
+      signal,
+    }: {
+      readonly schemas?: readonly string[];
+      readonly signal?: AbortSignal;
+    } = {},
   ): Promise<SqlServerSource> {
-    await using session = await database.open();
+    await using session = await database.open({ signal });
     // A table whose every column is denied has nothing to read.
-    const tables = (await session.tables()).filter(
+    const tables = (await session.tables({ signal })).filter(
       ({ schema, columns }) =>
         columns.length > 0 &&
-        (options.schemas === undefined || options.schemas.includes(schema)),
+        (schemas === undefined || schemas.includes(schema)),
     );
     // A schema that keeps nothing is misspelled, cased unlike the database, or
     // not granted; loading less in silence would hide it.
-    for (const schema of options.schemas ?? [])
+    for (const schema of schemas ?? [])
       if (!tables.some((table) => table.schema === schema))
         throw new TypeError(
           `The schemas to keep name ${schema}, which holds no table this login can read in ${database.location}`,
         );
-    const whole = await WholeTableGauges.discover(session);
+    const whole = await WholeTableGauges.discover(session, { signal });
     return new SqlServerSource(
       database,
       tables.map((table) => streamFor(table, whole)),

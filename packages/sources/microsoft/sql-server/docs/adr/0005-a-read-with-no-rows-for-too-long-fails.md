@@ -19,4 +19,4 @@ Airbyte's platform fails a source that sent no message for too long: `maxSeconds
 
 - A stalled read stops the other tables of its connection for up to two hours.
 - The read waits on the clock of the pipeline (ADR 0019 of `elt`), so a read of the SDK takes a `SqlServerRead`.
-- `SqlServerSource.discover` has no clock, so a server that stalls during discovery holds it. The host decides how long it waits for its start.
+- `SqlServerSource.discover` has no clock and no limit of its own. The host gives it a signal that aborts at the limit of the host (ADR 0006).

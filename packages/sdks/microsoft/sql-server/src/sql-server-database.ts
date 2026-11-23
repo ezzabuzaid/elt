@@ -74,7 +74,12 @@ export class SqlServerDatabase {
     return SqlServerConnection.open(this.#config, this.location, clock);
   }
 
-  async open(): Promise<SqlServerSession> {
+  // The signal cancels the queries that open the session, and an aborted
+  // open closes what it opened. Connecting takes no signal: the driver gives
+  // up after 15 s (connectionTimeout of mssql).
+  async open(options?: {
+    readonly signal?: AbortSignal;
+  }): Promise<SqlServerSession> {
     const pool = new sql.ConnectionPool(this.#config);
     try {
       await pool.connect();
@@ -86,6 +91,8 @@ export class SqlServerDatabase {
         pool.request(),
         this.location,
         `SELECT CAST(SERVERPROPERTY('EngineEdition') AS int), CAST(SERVERPROPERTY('ProductMajorVersion') AS int), CAST(snapshot_isolation_state AS int) FROM sys.databases WHERE database_id = DB_ID()`,
+        [],
+        options?.signal,
       );
       const version = cellNumber(major, 'ProductMajorVersion');
       // Azure SQL Database (5) and Managed Instance (8) report version 12

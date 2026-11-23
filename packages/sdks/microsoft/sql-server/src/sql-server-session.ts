@@ -138,12 +138,16 @@ export class SqlServerSession implements AsyncDisposable {
   }
 
   // Every user table, with the columns, primary key and Change Tracking the
-  // login can read.
-  async tables(): Promise<SqlServerTable[]> {
+  // login can read. The signal cancels the queries.
+  async tables(options?: {
+    readonly signal?: AbortSignal;
+  }): Promise<SqlServerTable[]> {
+    const read = (text: string) =>
+      query(this.#pool.request(), this.#location, text, [], options?.signal);
     const [tables, columns, keys] = await Promise.all([
-      query(this.#pool.request(), this.#location, tablesQuery),
-      query(this.#pool.request(), this.#location, columnsQuery),
-      query(this.#pool.request(), this.#location, primaryKeysQuery),
+      read(tablesQuery),
+      read(columnsQuery),
+      read(primaryKeysQuery),
     ]);
     const columnsOf = groupBy(columns);
     const keysOf = groupBy(keys);

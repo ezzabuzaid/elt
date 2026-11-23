@@ -23,10 +23,14 @@ export class WholeTableGauges {
     this.hint = hint;
   }
 
-  // Tries to read the last writes once, as a watch would.
-  static async discover(session: SqlServerSession): Promise<WholeTableGauges> {
+  // Tries to read the last writes once, as a watch would. The signal cancels
+  // the read.
+  static async discover(
+    session: SqlServerSession,
+    { signal }: { readonly signal: AbortSignal | undefined },
+  ): Promise<WholeTableGauges> {
     try {
-      await session.lastWrites();
+      await session.lastWrites({ signal });
       return new WholeTableGauges(
         ['statistics', 'rowCounts', 'lastWrites'],
         '',
