@@ -620,7 +620,7 @@ test(
         required: ['id', 'version', 'body'],
       },
       primaryKey: ['id'],
-      supportedSyncModes: ['full_refresh'],
+      supportedSyncModes: ['full_refresh', 'incremental'],
       emitsDeletes: true,
     });
     const warehouse = new SqlServerDestination({ login: database.login });
