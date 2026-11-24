@@ -24,7 +24,7 @@ const content = {
   text: {
     type: 'text',
     description:
-      'The text of the chunk: a slice of the input, with no white space at its start or end.',
+      'The text of the chunk: the slice of the input from start to end, with its white space.',
   },
   tokens: {
     type: 'integer',
@@ -189,7 +189,7 @@ export class Chunking extends TableRule<string, typeof content, typeof place> {
     to: number,
     level: number,
   ): Piece[] | Unfit {
-    const tokens = this.#count(text.slice(from, to));
+    const tokens = this.#tokenizer.count(text.slice(from, to));
     if (tokens <= this.#maxTokens) return [{ from, to }];
     const ends = boundaries[level];
     // Past the grapheme boundary, the piece is one grapheme.
@@ -208,8 +208,10 @@ export class Chunking extends TableRule<string, typeof content, typeof place> {
 
   // The chunks of the pieces in order: a piece joins the chunk while the chunk
   // fits. The next chunk starts with the last whole pieces of the chunk, up to
-  // overlapTokens, that start after its text starts, so each chunk starts
-  // after the start of the chunk before it.
+  // overlapTokens, that fit with the next piece. The first piece of the chunk
+  // never fits with it, so each chunk starts after the start of the chunk
+  // before it. A chunk ends where the next piece starts, so the chunks tile
+  // the text (ADR 0007).
   #pack(text: string, pieces: readonly Piece[]): Chunk[] {
     const chunks: Chunk[] = [];
     const offsets = new Offsets(text);
@@ -218,22 +220,14 @@ export class Chunking extends TableRule<string, typeof content, typeof place> {
     for (const { from, to } of pieces) {
       const [start] = starts;
       if (start !== undefined && !this.#fits(text.slice(start, to))) {
-        const visible = start + leadingSpace(text.slice(start, from));
-        chunks.push(...this.#chunk(text, visible, from, offsets));
-        starts = this.#overlap(
-          text,
-          starts.filter((piece) => piece > visible),
-          from,
-          to,
-        );
+        chunks.push(this.#chunk(text, start, from, offsets));
+        starts = this.#overlap(text, starts, from, to);
       }
       starts.push(from);
     }
     const [start] = starts;
-    if (start !== undefined) {
-      const visible = start + leadingSpace(text.slice(start));
-      chunks.push(...this.#chunk(text, visible, text.length, offsets));
-    }
+    if (start !== undefined)
+      chunks.push(this.#chunk(text, start, text.length, offsets));
     return chunks;
   }
 
@@ -248,7 +242,7 @@ export class Chunking extends TableRule<string, typeof content, typeof place> {
     const kept: number[] = [];
     for (const start of starts.toReversed()) {
       if (
-        this.#count(text.slice(start, from)) > this.#overlapTokens ||
+        this.#tokenizer.count(text.slice(start, from)) > this.#overlapTokens ||
         !this.#fits(text.slice(start, to))
       )
         break;
@@ -257,37 +251,23 @@ export class Chunking extends TableRule<string, typeof content, typeof place> {
     return kept;
   }
 
-  // The chunk of text from start, its first code point that is not white
-  // space, to end, with no white space at its end; none when it holds only
-  // white space.
-  #chunk(text: string, start: number, end: number, offsets: Offsets): Chunk[] {
-    const trimmed = text.slice(start, end).trimEnd();
-    if (trimmed === '') return [];
+  // The chunk of text from start to end, in UTF-16 units, with all its white
+  // space. A chunk of only white space between two others is a chunk too, so
+  // no part of the text is left out (ADR 0007).
+  #chunk(text: string, start: number, end: number, offsets: Offsets): Chunk {
+    const slice = text.slice(start, end);
     const point = offsets.at(start);
-    return [
-      {
-        text: trimmed,
-        tokens: this.#tokenizer.count(trimmed),
-        start: point,
-        end: point + [...trimmed].length,
-      },
-    ];
+    return {
+      text: slice,
+      tokens: this.#tokenizer.count(slice),
+      start: point,
+      end: point + [...slice].length,
+    };
   }
 
   #fits(text: string): boolean {
-    return this.#count(text) <= this.#maxTokens;
+    return this.#tokenizer.count(text) <= this.#maxTokens;
   }
-
-  // The tokens of a text as its chunk holds it, with no white space at its
-  // start or end.
-  #count(text: string): number {
-    return this.#tokenizer.count(text.trim());
-  }
-}
-
-// How many UTF-16 units of white space a text starts with.
-function leadingSpace(text: string): number {
-  return text.length - text.trimStart().length;
 }
 
 // The offset in code points of a place in UTF-16 units of a text, for places

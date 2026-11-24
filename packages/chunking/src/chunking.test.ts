@@ -142,6 +142,27 @@ function graphemeEdges(text: string): Set<number> {
   return edges;
 }
 
+// The text of the parts merged by their offsets in code points, as
+// ContextWindow of @zukhruf/retrieval merges a window (its ADR 0008): in the
+// order of start, each part adds its text past the end of the parts before it.
+// A part that starts after that end leaves a gap, which the merge refuses.
+function mergedByOffsets(parts: Awaited<ReturnType<typeof chunksOf>>): string {
+  const merged: string[] = [];
+  for (const part of parts.toSorted(
+    (a, b) => (a.start ?? 0) - (b.start ?? 0),
+  )) {
+    const start = part.start ?? assert.fail('a part with no start');
+    const points = [...(part.text ?? '')];
+    assert.equal(part.end, start + points.length);
+    assert.ok(
+      start <= merged.length,
+      `a gap from ${merged.length} to ${start}`,
+    );
+    merged.push(...points.slice(merged.length - start));
+  }
+  return merged.join('');
+}
+
 // A long text in several scripts: English with an abbreviation and a number,
 // accents written as combining marks, Arabic, Japanese with no spaces, emoji
 // joined with ZWJ and skin tones, a run of family emoji, one word of accents
@@ -219,15 +240,181 @@ test('the rule identity names the package version, the vocabulary and the two si
   );
 });
 
-test('a text that fits is one chunk with no white space at its start or end, with its count of tokens and its offsets in code points', async () => {
+test('a text that fits is one chunk that keeps its white space, with its count of tokens and its offsets in code points', async () => {
   assert.deepEqual(await chunksOf(sizes(800, 400), '\n  😀 Hello world.  \n'), [
     {
-      text: '😀 Hello world.',
-      tokens: countTokens('😀 Hello world.'),
-      start: 3,
-      end: 17,
+      text: '\n  😀 Hello world.  \n',
+      tokens: countTokens('\n  😀 Hello world.  \n'),
+      start: 0,
+      end: 20,
     },
   ]);
+});
+
+test('the parts of a text, merged by their offsets in code points, give back the text with all its white space, for prose, code, CRLF line breaks and astral code points', async () => {
+  const texts = {
+    prose: [
+      '  The red fox runs over the green hill.  The tan dog sleeps under the oak tree.',
+      '',
+      'A boat sails on the calm blue sea.\tA bird sings in the tall pine tree.   ',
+      '',
+      '',
+      'A child reads a short book by the fire.',
+      '',
+    ].join('\n'),
+    code: [
+      'export function add(a: number, b: number): number {',
+      '\tconst sum = a + b;',
+      '',
+      '    return sum;',
+      '}',
+      '',
+      'export const answer = add(40, 2);  ',
+      '',
+      'export function twice(value: number): number {',
+      '\treturn add(value, value);',
+      '}',
+      '',
+    ].join('\n'),
+    crlf: [
+      'The old man walks to the market slowly.',
+      'The young girl paints the garden gate.  ',
+      '',
+      'The baker sells fresh bread every morning.',
+      'A cat waits by the warm stove for milk.',
+      '',
+    ].join('\r\n'),
+    astral:
+      ' The 𝒜𝒷𝒸 letters and the family 👪 wave 👋🏽 at the boat 🛶.  𝟙𝟚𝟛 flags 🏳️‍🌈 fly.\n\n  😀😀😀 The end. ',
+  };
+
+  for (const [kind, text] of Object.entries(texts)) {
+    const parts = await chunksOf(sizes(20, 6), text);
+
+    assert.ok(parts.length > 1, `${kind}: ${parts.length} parts`);
+    const points = [...text];
+    for (const { text: part, start, end } of parts)
+      assert.equal(points.slice(start, end).join(''), part, kind);
+    assert.equal(mergedByOffsets(parts), text, kind);
+  }
+});
+
+test('every part counts at most maxTokens tokens with its white space, and its count of tokens is the count of the text it stores', async () => {
+  const sentence =
+    'The long grey ship sailed slowly past the old stone harbour wall.';
+  const space = '\n \n\t \n';
+  // A paragraph of the second text fits only without its white space.
+  assert.ok(
+    countTokens(`${sentence}${space}`) > countTokens(sentence),
+    'the sizes of the text are as the test needs',
+  );
+  const texts = [
+    {
+      // White space between the words counts tokens too.
+      text: `\t \n${Array.from({ length: 30 }, (_, word) => `word${word}`).join(' \n\t \n ')} \n\t `,
+      maxTokens: 12,
+      overlapTokens: 4,
+    },
+    {
+      text: [sentence, sentence, sentence].join(space),
+      maxTokens: countTokens(sentence),
+      overlapTokens: 0,
+    },
+  ];
+
+  for (const { text, maxTokens, overlapTokens } of texts) {
+    const parts = await chunksOf(sizes(maxTokens, overlapTokens), text);
+
+    assert.ok(parts.length > 2, `${parts.length} parts`);
+    for (const { text: part, tokens } of parts) {
+      assert.equal(tokens, countTokens(part ?? ''), JSON.stringify(part));
+      assert.ok((tokens ?? Infinity) <= maxTokens, JSON.stringify(part));
+    }
+  }
+});
+
+test('the first part starts at offset 0 and the last part ends at the length of the text in code points, white space included', async () => {
+  const text =
+    '\n\n   Hello there.  General Kenobi.  You are a bold one. 😀\n\t ';
+
+  const parts = await chunksOf(sizes(6, 0), text);
+
+  assert.ok(parts.length > 2, `${parts.length} parts`);
+  // An astral code point in the last part makes its end in UTF-16 units one
+  // more than in code points.
+  assert.ok(parts.at(-1)?.text?.includes('😀'), 'the sizes are as needed');
+  assert.equal(parts[0]?.start, 0);
+  assert.equal(parts.at(-1)?.end, [...text].length);
+});
+
+test('a run of white space that does not fit beside the text around it is a part of its own, so the parts leave no gap', async () => {
+  const text = `Alpha.${' \n'.repeat(40)}Omega.`;
+
+  const parts = await chunksOf(sizes(4, 0), text);
+
+  assert.ok(
+    parts.slice(1, -1).some(({ text: part }) => part?.trim() === ''),
+    JSON.stringify(parts.map(({ text: part }) => part)),
+  );
+  assert.equal(mergedByOffsets(parts), text);
+});
+
+test('a document whose text is only white space gets no output and no part, also when its white space counts more than maxTokens', async () => {
+  await using scratch = await new TemporaryFiles().directory('chunking-');
+  const { source, run, rows } = documentChunks(
+    scratch.path,
+    () =>
+      new Chunking({
+        tokenizer: cl100k,
+        maxTokens: 4,
+        overlapTokens: 0,
+        key: 'id',
+        fields: ['title', 'body'],
+      }),
+  );
+  source.rows = [
+    { id: 'short', title: '  \t', body: '\r\n  ' },
+    { id: 'long', title: null, body: ' \n'.repeat(40) },
+    { id: 'fine', title: null, body: 'One two.' },
+  ];
+
+  await run();
+
+  assert.deepEqual(
+    {
+      outputs: rows('SELECT id, status FROM chunks ORDER BY id'),
+      parts: rows('SELECT id, text FROM chunks_parts ORDER BY id, seq'),
+    },
+    {
+      outputs: [{ id: 'fine', status: 'computed' }],
+      parts: [{ id: 'fine', text: 'One two.' }],
+    },
+  );
+});
+
+test('the overlap counts the white space of its pieces, so a piece that fits overlapTokens only without its white space is not in the next chunk', async () => {
+  const [ship, birds, rain, farmer, wind] = [
+    'The long grey ship sailed slowly past the old stone harbour wall.',
+    'Birds sang.',
+    'Rain fell.',
+    'A tired farmer walked his three brown cows down the muddy lane.',
+    'Wind blew.',
+  ];
+  const overlapTokens = countTokens(`${birds} ${rain}`);
+  assert.ok(
+    countTokens(`${birds} ${rain} `) > overlapTokens,
+    'the sizes of the text are as the test needs',
+  );
+
+  const chunks = await chunksOf(
+    sizes(countTokens(`${birds} ${rain} ${farmer} `), overlapTokens),
+    [ship, birds, rain, farmer, wind].join(' '),
+  );
+
+  assert.deepEqual(
+    chunks.map(({ text }) => text),
+    [`${ship} ${birds} ${rain} `, `${rain} ${farmer} ${wind}`],
+  );
 });
 
 test('a longer text is cut at the largest boundary that fits: a paragraph that fits stays whole, then whole lines, then whole sentences', async () => {
@@ -242,23 +429,23 @@ test('a longer text is cut at the largest boundary that fits: a paragraph that f
     'The young girl paints the garden gate.',
     'The baker sells fresh bread every morning.',
   ];
-  // Any two sentences fit, so a smaller boundary would join a sentence to
-  // the chunk before it; no three fit.
+  // Any two sentences fit with the white space after them, so a smaller
+  // boundary would join a sentence to the chunk before it; no three fit.
   const maxTokens = Math.max(
     ...[
-      `${a1}\n\n${b1}`,
-      `${b1}\n${b2}`,
-      `${d1}\n${d2}`,
-      `${d2} ${d3}`,
-      `${e1} ${e2}`,
+      `${a1}\n\n${b1}\n`,
+      `${b1}\n${b2}\n\n`,
+      `${d1}\n${d2} `,
+      `${d2} ${d3}\n\n`,
+      `${e1} ${e2} `,
     ].map((text) => countTokens(text)),
   );
   assert.ok(
     [
-      `${a1}\n\n${b1}\n${b2}`,
-      `${b1}\n${b2}\n\n${d1}`,
-      `${d1}\n${d2} ${d3}`,
-      `${d2} ${d3}\n\n${e1}`,
+      `${a1}\n\n${b1}\n${b2}\n\n`,
+      `${b1}\n${b2}\n\n${d1}\n`,
+      `${d1}\n${d2} ${d3}\n\n`,
+      `${d2} ${d3}\n\n${e1} `,
       `${e1} ${e2} ${e3}`,
     ].every((text) => countTokens(text) > maxTokens),
     'the sizes of the text are as the test needs',
@@ -273,7 +460,14 @@ test('a longer text is cut at the largest boundary that fits: a paragraph that f
 
   assert.deepEqual(
     chunks.map(({ text }) => text),
-    [a1, `${b1}\n${b2}`, d1, `${d2} ${d3}`, `${e1} ${e2}`, e3],
+    [
+      `${a1}\n\n`,
+      `${b1}\n${b2}\n\n`,
+      `${d1}\n`,
+      `${d2} ${d3}\n\n`,
+      `${e1} ${e2} `,
+      e3,
+    ],
   );
 });
 
@@ -285,14 +479,14 @@ test('each chunk after the first starts with the last whole pieces of the chunk 
     'A tired farmer walked his three brown cows down the muddy lane.',
     'Wind blew.',
   ];
-  const maxTokens = countTokens(`${birds} ${rain} ${farmer}`);
-  const overlapTokens = countTokens(`${birds} ${rain}`);
+  const maxTokens = countTokens(`${birds} ${rain} ${farmer} `);
+  const overlapTokens = countTokens(`${birds} ${rain} `);
   assert.ok(
     overlapTokens <= maxTokens / 2 &&
-      countTokens(`${ship} ${birds} ${rain}`) <= maxTokens &&
-      countTokens(`${ship} ${birds} ${rain} ${farmer}`) > maxTokens &&
+      countTokens(`${ship} ${birds} ${rain} `) <= maxTokens &&
+      countTokens(`${ship} ${birds} ${rain} ${farmer} `) > maxTokens &&
       countTokens(`${birds} ${rain} ${farmer} ${wind}`) > maxTokens &&
-      countTokens(farmer) > overlapTokens,
+      countTokens(`${farmer} `) > overlapTokens,
     'the sizes of the text are as the test needs',
   );
 
@@ -305,11 +499,36 @@ test('each chunk after the first starts with the last whole pieces of the chunk 
   // sentence alone counts more than overlapTokens, so the third has none.
   assert.deepEqual(
     chunks.map(({ text }) => text),
-    [`${ship} ${birds} ${rain}`, `${birds} ${rain} ${farmer}`, wind],
+    [`${ship} ${birds} ${rain} `, `${birds} ${rain} ${farmer} `, wind],
   );
 });
 
-test('in a long text in several scripts, no chunk counts more than maxTokens, a cut is never inside a grapheme, the offsets slice the text by code points, the overlap counts at most overlapTokens, each chunk starts after the one before, no text is lost, and the same text gives the same chunks', async () => {
+test('the overlap keeps a piece only when it fits with the next piece and the white space of both, so no chunk counts more than maxTokens', async () => {
+  const [last, next] = ['word\n \n', 'Birds sang  Rain\n \n'];
+  const maxTokens = 7;
+  const overlapTokens = 2;
+  assert.ok(
+    countTokens(last) <= overlapTokens &&
+      countTokens(`${last}${next}`) > maxTokens &&
+      countTokens(`${last}${next}`.trim()) <= maxTokens,
+    'the sizes of the text are as the test needs',
+  );
+
+  const chunks = await chunksOf(
+    sizes(maxTokens, overlapTokens),
+    `x y\n \n${last}${next}bb`,
+  );
+
+  assert.deepEqual(
+    chunks.map(({ text, tokens }) => ({ text, tokens })),
+    [
+      { text: `x y\n \n${last}`, tokens: countTokens(`x y\n \n${last}`) },
+      { text: `${next}bb`, tokens: countTokens(`${next}bb`) },
+    ],
+  );
+});
+
+test('in a long text in several scripts, no chunk counts more than maxTokens, a cut is never inside a grapheme, the offsets slice the text by code points, the overlap counts at most overlapTokens, each chunk starts after the one before and at most at its end, and the same text gives the same chunks', async () => {
   const maxTokens = 40;
   const overlapTokens = 20;
   const points = [...longText];
@@ -322,28 +541,24 @@ test('in a long text in several scripts, no chunk counts more than maxTokens, a 
     assert.equal(tokens, countTokens(text ?? ''));
     assert.ok((tokens ?? Infinity) <= maxTokens, `${tokens} tokens: ${text}`);
     assert.equal(points.slice(start, end).join(''), text);
-    assert.equal(text, text?.trim());
     assert.ok(edges.has(start ?? -1) && edges.has(end ?? -1), `${text}`);
   }
-  const [first] = chunks;
-  assert.equal(first?.start, points.length - [...longText.trimStart()].length);
-  assert.equal(chunks.at(-1)?.end, [...longText.trimEnd()].length);
+  assert.equal(chunks[0]?.start, 0);
+  assert.equal(chunks.at(-1)?.end, points.length);
   let overlaps = 0;
   for (const [index, next] of chunks.slice(1).entries()) {
     const previous = chunks[index];
     assert.ok((next.start ?? 0) > (previous?.start ?? Infinity));
+    assert.ok(
+      (next.start ?? Infinity) <= (previous?.end ?? 0),
+      'text between two chunks is lost',
+    );
     const shared = points.slice(next.start, previous?.end).join('');
-    if ((next.start ?? 0) < (previous?.end ?? 0)) {
+    if (shared !== '') {
       overlaps += 1;
       assert.ok(
-        countTokens(shared.trim()) <= overlapTokens,
+        countTokens(shared) <= overlapTokens,
         `the overlap ${JSON.stringify(shared)} counts more than ${overlapTokens}`,
-      );
-    } else {
-      assert.equal(
-        points.slice(previous?.end, next.start).join('').trim(),
-        '',
-        'text between two chunks is lost',
       );
     }
   }

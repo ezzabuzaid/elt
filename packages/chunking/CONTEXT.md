@@ -5,7 +5,7 @@ An embedding model has a limit of tokens for each text, and one vector of a long
 ## Language
 
 **Chunk**:
-A part of a text that `Chunking` gives: a slice of the text, with no white space at the start or the end, that counts at most `maxTokens` tokens.
+A part of a text that `Chunking` gives: a slice of the text, with all its white space, that counts at most `maxTokens` tokens. The chunks of a text tile it.
 _Avoid_: Node (LlamaIndex), split (Haystack), passage (datahub's staff search makes a passage from a record, not from a cut), segment (a segment is what `Intl.Segmenter` gives)
 
 **Token**:
@@ -39,6 +39,10 @@ _Avoid_: Character (a JavaScript character is a UTF-16 unit), code point
 **Overlap**:
 The last whole pieces of a chunk, up to `overlapTokens` tokens, that the next chunk starts with, so that a sentence at a cut is in both chunks.
 _Avoid_: Stride, window
+
+**Tile**:
+The chunks of a text tile it when they cover each code point of the text: the first chunk starts at offset 0, the last ends at the length of the text, and no chunk starts after the end of the chunk before it. Chunks can overlap. The passage contract of `@zukhruf/retrieval` requires it.
+_Avoid_: Cover, partition (the chunks of a partition do not overlap)
 
 **Offset**:
 The count of code points before a place in the text that `read()` gives. `start` is the offset of the first code point of a chunk; `end` is the offset after its last one.

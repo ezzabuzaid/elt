@@ -277,38 +277,38 @@ console.log({ embedded: model.embedded });
 Output:
 
 ```
-┌─────────┬────────────────┬─────┬────────────┬────────┬───────┬─────┬────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ (index) │ name           │ seq │ part_hash  │ tokens │ start │ end │ vector     │ text                                                                                                                                                  │
-├─────────┼────────────────┼─────┼────────────┼────────┼───────┼─────┼────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 0       │ 'note.txt'     │ 0   │ '5498f288' │ 6      │ 0     │ 31  │ 'computed' │ 'Call the cooperative on Monday.'                                                                                                                     │
-│ 1       │ 'proposal.txt' │ 0   │ 'd03f071f' │ 28     │ 0     │ 121 │ 'computed' │ 'Proposal: a cold store for the north farm\n\nThe farm loses a fifth of its fruit each summer, because the barn is too warm.'                         │
-│ 2       │ 'proposal.txt' │ 1   │ '535a06d5' │ 32     │ 43    │ 189 │ 'computed' │ 'The farm loses a fifth of its fruit each summer, because the barn is too warm. A cold store keeps the fruit at four degrees until the trucks come.'  │
-│ 3       │ 'proposal.txt' │ 2   │ '063ddb6f' │ 25     │ 122   │ 239 │ 'computed' │ 'A cold store keeps the fruit at four degrees until the trucks come. Each truck takes the fruit to the market in town.'                               │
-│ 4       │ 'proposal.txt' │ 3   │ 'a6747a85' │ 31     │ 241   │ 388 │ 'computed' │ 'The store needs a slab of concrete, insulated panels and one compressor. The compressor runs on the solar roof in the day and on the grid at night.' │
-│ 5       │ 'proposal.txt' │ 4   │ '2ae261ce' │ 25     │ 390   │ 508 │ 'computed' │ 'The work takes six weeks. The farm pays half, and the cooperative pays the other half from its fund for new buildings.'                              │
-└─────────┴────────────────┴─────┴────────────┴────────┴───────┴─────┴────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────┬────────────────┬─────┬────────────┬────────┬───────┬─────┬────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ (index) │ name           │ seq │ part_hash  │ tokens │ start │ end │ vector     │ text                                                                                                                                                        │
+├─────────┼────────────────┼─────┼────────────┼────────┼───────┼─────┼────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 0       │ 'note.txt'     │ 0   │ '5498f288' │ 6      │ 0     │ 31  │ 'computed' │ 'Call the cooperative on Monday.'                                                                                                                           │
+│ 1       │ 'proposal.txt' │ 0   │ '99e9df0a' │ 29     │ 0     │ 122 │ 'computed' │ 'Proposal: a cold store for the north farm\n\nThe farm loses a fifth of its fruit each summer, because the barn is too warm. '                              │
+│ 2       │ 'proposal.txt' │ 1   │ '61fc9236' │ 33     │ 43    │ 190 │ 'computed' │ 'The farm loses a fifth of its fruit each summer, because the barn is too warm. A cold store keeps the fruit at four degrees until the trucks come. '       │
+│ 3       │ 'proposal.txt' │ 2   │ '65aa9bc3' │ 25     │ 122   │ 241 │ 'computed' │ 'A cold store keeps the fruit at four degrees until the trucks come. Each truck takes the fruit to the market in town.\n\n'                                 │
+│ 4       │ 'proposal.txt' │ 3   │ 'c2a7823b' │ 32     │ 240   │ 390 │ 'computed' │ '\nThe store needs a slab of concrete, insulated panels and one compressor. The compressor runs on the solar roof in the day and on the grid at night.\n\n' │
+│ 5       │ 'proposal.txt' │ 4   │ '2ae261ce' │ 25     │ 390   │ 508 │ 'computed' │ 'The work takes six weeks. The farm pays half, and the cooperative pays the other half from its fund for new buildings.'                                    │
+└─────────┴────────────────┴─────┴────────────┴────────┴───────┴─────┴────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 [Object: null prototype] {
-  rule: '@eltjs/chunking@0.10.5 cl100k_base 40/20'
+  rule: '@eltjs/chunking@0.12.0 cl100k_base 40/20'
 }
 { embedded: 6 }
-┌─────────┬────────────────┬─────┬────────────┬────────┬───────┬─────┬────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│ (index) │ name           │ seq │ part_hash  │ tokens │ start │ end │ vector     │ text                                                                                                                                                  │
-├─────────┼────────────────┼─────┼────────────┼────────┼───────┼─────┼────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
-│ 0       │ 'note.txt'     │ 0   │ '5498f288' │ 6      │ 0     │ 31  │ 'computed' │ 'Call the cooperative on Monday.'                                                                                                                     │
-│ 1       │ 'proposal.txt' │ 0   │ '7bb598fc' │ 28     │ 0     │ 118 │ 'computed' │ 'Offer: a cold store for the north farm\n\nThe farm loses a fifth of its fruit each summer, because the barn is too warm.'                            │
-│ 2       │ 'proposal.txt' │ 1   │ '535a06d5' │ 32     │ 40    │ 186 │ 'computed' │ 'The farm loses a fifth of its fruit each summer, because the barn is too warm. A cold store keeps the fruit at four degrees until the trucks come.'  │
-│ 3       │ 'proposal.txt' │ 2   │ '063ddb6f' │ 25     │ 119   │ 236 │ 'computed' │ 'A cold store keeps the fruit at four degrees until the trucks come. Each truck takes the fruit to the market in town.'                               │
-│ 4       │ 'proposal.txt' │ 3   │ 'a6747a85' │ 31     │ 238   │ 385 │ 'computed' │ 'The store needs a slab of concrete, insulated panels and one compressor. The compressor runs on the solar roof in the day and on the grid at night.' │
-│ 5       │ 'proposal.txt' │ 4   │ '2ae261ce' │ 25     │ 387   │ 505 │ 'computed' │ 'The work takes six weeks. The farm pays half, and the cooperative pays the other half from its fund for new buildings.'                              │
-└─────────┴────────────────┴─────┴────────────┴────────┴───────┴─────┴────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─────────┬────────────────┬─────┬────────────┬────────┬───────┬─────┬────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ (index) │ name           │ seq │ part_hash  │ tokens │ start │ end │ vector     │ text                                                                                                                                                        │
+├─────────┼────────────────┼─────┼────────────┼────────┼───────┼─────┼────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ 0       │ 'note.txt'     │ 0   │ '5498f288' │ 6      │ 0     │ 31  │ 'computed' │ 'Call the cooperative on Monday.'                                                                                                                           │
+│ 1       │ 'proposal.txt' │ 0   │ 'bbf0f61c' │ 29     │ 0     │ 119 │ 'computed' │ 'Offer: a cold store for the north farm\n\nThe farm loses a fifth of its fruit each summer, because the barn is too warm. '                                 │
+│ 2       │ 'proposal.txt' │ 1   │ '61fc9236' │ 33     │ 40    │ 187 │ 'computed' │ 'The farm loses a fifth of its fruit each summer, because the barn is too warm. A cold store keeps the fruit at four degrees until the trucks come. '       │
+│ 3       │ 'proposal.txt' │ 2   │ '65aa9bc3' │ 25     │ 119   │ 238 │ 'computed' │ 'A cold store keeps the fruit at four degrees until the trucks come. Each truck takes the fruit to the market in town.\n\n'                                 │
+│ 4       │ 'proposal.txt' │ 3   │ 'c2a7823b' │ 32     │ 237   │ 387 │ 'computed' │ '\nThe store needs a slab of concrete, insulated panels and one compressor. The compressor runs on the solar roof in the day and on the grid at night.\n\n' │
+│ 5       │ 'proposal.txt' │ 4   │ '2ae261ce' │ 25     │ 387   │ 505 │ 'computed' │ 'The work takes six weeks. The farm pays half, and the cooperative pays the other half from its fund for new buildings.'                                    │
+└─────────┴────────────────┴─────┴────────────┴────────┴───────┴─────┴────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 [Object: null prototype] {
-  rule: '@eltjs/chunking@0.10.5 cl100k_base 40/20'
+  rule: '@eltjs/chunking@0.12.0 cl100k_base 40/20'
 }
 {
   embedded: [
     'Offer: a cold store for the north farm\n' +
       '\n' +
-      'The farm loses a fifth of its fruit each summer, because the barn is too warm.'
+      'The farm loses a fifth of its fruit each summer, because the barn is too warm. '
   ]
 }
 ```
@@ -317,7 +317,7 @@ Output:
 
 `DocumentText` keeps the text of each stored file. `Chunking` reads it through the view, and gives one output row for each document in `document_chunks`, and one part for each chunk in `document_chunks_parts` ([ADR 0026 of elt](../../../elt/docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md)).
 
-The proposal counts more than 40 tokens. Its title and its first sentence fit in one chunk. The second paragraph counts more than 40 tokens, so the rule cuts it at its sentences, and the chunk with seq 1 starts with the last sentence of the chunk before it, which counts at most 20 tokens. The third and fourth paragraphs fit, so each is one chunk. No chunk counts more than 40 tokens of `cl100k_base`. The note fits, so it is one chunk.
+The proposal counts more than 40 tokens. Its title and its first sentence fit in one chunk. The second paragraph counts more than 40 tokens, so the rule cuts it at its sentences, and the chunk with seq 1 starts with the last sentence of the chunk before it, which counts at most 20 tokens. The third and fourth paragraphs fit, so each is one chunk; the chunk with seq 3 starts with the last line break of the chunk before it, as its overlap. Each chunk keeps its white space, so the chunks tile the proposal: the chunk with seq 0 starts at 0, each chunk starts at or before the end of the chunk before it, and the chunk with seq 4 ends at the end of the proposal ([ADR 0007](../adr/0007-the-chunks-of-a-text-tile-it.md)). No chunk counts more than 40 tokens of `cl100k_base`, white space included. The note fits, so it is one chunk.
 
 The view `document_chunk_texts` gives each chunk with its part hash as `id`, so `Embedding` keys each vector by the text of its chunk ([ADR 0027 of elt](../../../elt/docs/adr/0027-a-dataset-reads-the-parts-of-a-computed-dataset-through-a-view.md)). After the edit of the title, only the first chunk has a new text and a new part hash. The other chunks of the proposal keep their part hash and their vector, and only their `start` and `end` move by 3, the difference between `Proposal` and `Offer`. The model gets one text in the second run.
 

@@ -32,6 +32,7 @@ Each of the three counts offsets in Python string indexes, that is, in code poin
 
 - A reader in SQL finds the text of a chunk in its document with `substr(content, start + 1, end - start)` in SQLite and `substring(content from start + 1 for end - start)` in Postgres. SQL Server counts code points in `SUBSTRING` only with a UTF-8 or supplementary-character (`_SC`) collation; with another collation, a character outside the Basic Multilingual Plane counts as two.
 - A reader in JavaScript converts with `[...text].slice(start, end).join('')`.
+- Since [ADR 0007](./0007-the-chunks-of-a-text-tile-it.md), the offsets of the chunks of a text tile it: the first `start` is 0, the last `end` is the length of the text in code points, and no chunk starts after the end of the chunk before it.
 - A chunk that only moved is written again in the parts table with its new offsets. Its row in the dataset of vectors does not change.
 
 Sources: #4737.
