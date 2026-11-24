@@ -1821,6 +1821,60 @@ test(
 );
 
 test(
+  'the change checks of a watch, 35 seconds apart in real time, read on the server sessions that the first check logged in to',
+  { timeout: 180_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    // Three sync strategies, so each check reads the database version, the
+    // statistics and the row counts.
+    await admin.request().batch(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.tracked (id int PRIMARY KEY);
+    ALTER TABLE dbo.tracked ENABLE CHANGE_TRACKING;
+    CREATE TABLE dbo.stamped (id int PRIMARY KEY, stamp rowversion);
+    CREATE TABLE dbo.plain (id int PRIMARY KEY);`);
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
+      'GRANT VIEW CHANGE TRACKING ON dbo.tracked TO {user};',
+    );
+    const loggedIn = async () =>
+      (
+        await admin
+          .request()
+          .input('login', reader.login)
+          .query<{ session: string }>(
+            `SELECT CONCAT(session_id, ' ', CONVERT(varchar(27), login_time, 126)) AS session FROM sys.dm_exec_sessions WHERE login_name = @login ORDER BY session`,
+          )
+      ).recordset.map(({ session }) => session);
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(reader.connectionString),
+    );
+    await using warehouse = await postgresServer.database();
+    await using watch = watcher(t, source, warehouse.connectionString);
+    await watch.first();
+    // A check that finds no change makes no pass, so the sessions of the
+    // login are those of the checks once the pass's own have ended.
+    await watch.check();
+    await sleep(2000);
+    const first = await loggedIn();
+
+    await sleep(35_000);
+    await watch.check();
+    await sleep(2000);
+
+    assert.ok(first.length > 0);
+    assert.deepEqual(await loggedIn(), first);
+  },
+);
+
+test(
   'a server that cannot be reached at the first check of a watch fails every stream as system, and the next check opens it again and wakes every stream',
   { timeout: 120_000 },
   async (t) => {

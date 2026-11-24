@@ -57,11 +57,15 @@ export class SqlServerDatabase {
     const instance = config.options?.instanceName;
     this.location = `${config.server}${instance ? `\\${instance}` : ''}:${config.port ?? 1433}/${config.database}`;
     this.name = config.database;
-    // A read streams a whole table, so no time limit fits every table.
+    // A read streams a whole table, so no time limit fits every table. The
+    // pool keeps an idle connection for 5 minutes, so a session that runs a
+    // query every 30 seconds, as a watch checks, logs in only once. A probe
+    // saw Azure SQL's gateway keep a session idle for 10 minutes and end one
+    // idle for 20 (ADR 0001).
     this.#config = {
       ...config,
       requestTimeout: 0,
-      pool: { min: 0, max: 4 },
+      pool: { min: 0, max: 4, idleTimeoutMillis: 5 * 60_000 },
       beforeConnect: markBusyLogin,
     };
     Object.freeze(this);

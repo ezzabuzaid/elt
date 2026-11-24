@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { inspect } from 'node:util';
 
 import {
@@ -606,6 +607,34 @@ test('the database version moves when a rowversion or a tracked table changes, a
       BigInt(String(tracked.changeTracking)),
   );
   assert.ok(BigInt(updated.rowversion) > BigInt(tracked.rowversion));
+});
+
+test('a session that reads 35 seconds after its last read, longer than a watch waits between checks, reads on the server session that it logged in to first', async () => {
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await using reader = await readOnlyLogin(scratch, admin, '');
+  const loggedIn = async () =>
+    (
+      await admin
+        .request()
+        .query<{ session: string }>(
+          `SELECT CONCAT(session_id, ' ', CONVERT(varchar(27), login_time, 126)) AS session FROM sys.dm_exec_sessions WHERE QUOTENAME(login_name) = '${reader.user}' ORDER BY session`,
+        )
+    ).recordset.map(({ session }) => session);
+  await using session = await new SqlServerDatabase(reader.login).open();
+  await session.version();
+  const first = await loggedIn();
+
+  await sleep(35_000);
+  await session.version();
+
+  assert.equal(first.length, 1);
+  assert.deepEqual(await loggedIn(), first);
 });
 
 test('discovery lists user tables but not views, each with its key in key order, its rowversion, its Change Tracking and its descriptions', async () => {
