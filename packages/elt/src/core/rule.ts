@@ -3,6 +3,20 @@ import type { Vector } from '@zukhruf/vectors';
 // One row a copy loaded, as its destination reads it back, by column.
 export type LoadedRow = Readonly<Record<string, unknown>>;
 
+// The text of fields of a loaded row, joined with line breaks, as a rule
+// reads its input; a field with no text is left out, and a row with none has
+// no text (null).
+export function rowText(
+  row: LoadedRow,
+  fields: readonly string[],
+): string | null {
+  const text = fields
+    .map((field) => row[field])
+    .filter((value) => typeof value === 'string' && value.trim() !== '')
+    .join('\n');
+  return text === '' ? null : text;
+}
+
 // What a rule made of one input: a value, nothing to store (a photo with no
 // text), its own failure, which the output row records, or the input was gone
 // before the rule read it (a stop ended the refresh), so no row is written.

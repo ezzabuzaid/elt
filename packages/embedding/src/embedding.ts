@@ -9,6 +9,7 @@ import {
   type RuleResult,
   type RuleValues,
   errorMessage,
+  rowText,
 } from '@eltjs/elt';
 
 type Columns = { readonly vector: Extract<RuleColumn, { type: 'vector' }> };
@@ -81,11 +82,8 @@ export class Embedding extends Rule<string, Columns> {
   ): { readonly key: string; readonly input: string } | null {
     const key = row[this.key.name];
     if (typeof key !== 'string' && typeof key !== 'number') return null;
-    const text = this.#fields
-      .map((field) => row[field])
-      .filter((value) => typeof value === 'string' && value.trim() !== '')
-      .join('\n');
-    return text === '' ? null : { key: String(key), input: text };
+    const text = rowText(row, this.#fields);
+    return text === null ? null : { key: String(key), input: text };
   }
 
   // The model and the dimensions make every vector, so they name them all:

@@ -1317,6 +1317,27 @@ const pipeline = new Pipeline({
 - The pipeline refreshes the derived datasets in the order of the list. A view that comes after a computed dataset can read the view of that dataset.
 - A run does not refresh after an abort, or after an error that no sync history recorded. A stop that comes after the passes only stops the refresh. The next refresh continues the work.
 
+## Declare a composite dataset
+
+A `CompositeDataset` is one declaration that makes many derived datasets, its members, for one job. For example, the `Vectorizer` of [`@eltjs/vectorizer`](../vectorizer/README.md) makes the chunks, the keyword index, the passages and the vectors of a table. A class that extends `CompositeDataset` gives:
+
+| Member                  | Gives                                                                                                 |
+| ----------------------- | ----------------------------------------------------------------------------------------------------- |
+| `name`                  | the name of the composite, which a failure gives                                                      |
+| `members`               | one or more derived datasets, in the order they refresh in. A member reads only the members before it |
+| `validate(connections)` | optional: refuses, with no I/O, a declaration that the copies of the pipeline cannot feed             |
+
+The pipeline takes a composite in `derived`, beside other derived datasets:
+
+- `pipeline.derived` gives the members of each composite in its place.
+- The name of the composite and the name of each member must be distinct from all other names of `derived`. Else the run or the watch rejects with a `TypeError` before it reads.
+- The pipeline validates the composite, and then each member.
+- The members refresh in order. A dataset after the composite finds each member in `earlier`, so a view that reads a member waits while the member waits.
+- A composite fails as one dataset. The first member that fails stops the members after it, and the refresh after the next pass tries the composite again from its first member. Each member keeps its own row of `derived_status`. The error names the member: a watch yields `{ kind: 'refresh', dataset: <composite>, error }` where `error` is the `DerivedDatasetError` of the member, and a run rejects with the `DerivedDatasetError` of the composite, whose `cause` is that of the member.
+- A member cannot be a composite.
+
+See [ADR 0034](./docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md).
+
 ## Write a rule
 
 A computed dataset gives each input to its rule. A rule is a class that extends `Rule<Input, Columns>`, where `Columns` is the type of its `output`:
@@ -1366,6 +1387,8 @@ Two rules exist:
 | ----------------------------------------------- | ------------------ | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `DocumentText({ parser, files, column })`       | `@eltjs/elt`       | the ref in `column`, which the `FileStorage` `files` opens | `content`, the text that a `DocumentParser` reads. The rule identity is the parser of the format of the file                                         |
 | `Embedding({ model, dimensions, key, fields })` | `@eltjs/embedding` | the text of `fields`, with a line break between them       | `vector`, a vector column of `dimensions`, from an AI SDK embedding model. The rule identity is the provider, the id of the model and the dimensions |
+
+`rowText(row, fields)` gives the text of `fields` of a loaded row, with a line break between them, as `Embedding` and `Chunking` read it. A field that has no text, or only white space, is not in it. A row with no text in any field gives `null`. A rule of your own can read its input with it.
 
 `DocumentText` asks for its parser at each refresh, so a parser that the host changed, for example a new speech model, applies from the next refresh.
 
@@ -1494,6 +1517,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md): a rule reads a stored file through its storage.
 - [ADR 0032](./docs/adr/0032-a-deletion-older-than-the-stored-row-deletes-nothing.md): a deletion older than the stored row deletes nothing.
 - [ADR 0033](./docs/adr/0033-a-host-loads-the-rows-it-holds-through-an-iterable-source.md): a host loads the rows that it holds through an `IterableSource`.
+- [ADR 0034](./docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md): a composite dataset refreshes its members in order as one dataset.
 
 ## Development
 
@@ -1546,8 +1570,9 @@ The files of derived data:
 ```
 src/core/
   derived-dataset.ts    DerivedDataset: the port of each kind
+  composite-dataset.ts  CompositeDataset: many derived datasets of one declaration
   derived-refreshes.ts  the refreshes of a watch, one at a time
-  rule.ts               Rule, RuleResult, LoadedRow, RuleColumn
+  rule.ts               Rule, RuleResult, LoadedRow, RuleColumn, rowText
   computed-refresh.ts   refreshComputed: what is due, and the pool of rule calls
   view-refresh.ts       refreshView: when a view waits
   derived-status.ts     DerivedStatus: the states of derived_status

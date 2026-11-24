@@ -1,0 +1,6 @@
+{
+  "name": "vectorizer",
+  "sourceRoot": "packages/vectorizer/src",
+  "projectType": "library",
+  "tags": ["layer:island"]
+}

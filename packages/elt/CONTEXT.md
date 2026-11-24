@@ -184,6 +184,14 @@ _Avoid_: Reader view (a copy makes a reader view over its own table), materializ
 A derived dataset that a rule computes on write: one output for each key, as a dbt model that is materialized as a table.
 _Avoid_: Cache, index, materialized view
 
+**Composite dataset**:
+One declaration that makes many derived datasets, its members, for one job, for example a vectorizer. The pipeline refreshes the members in order, and a composite fails as one dataset: the first member that fails stops the members after it.
+_Avoid_: Group, pipeline (a pipeline holds the copies too), derived dataset (a composite has no refresh of its own)
+
+**Member**:
+One derived dataset of a composite dataset. It has its own name, its own relations and its own row of `derived_status`.
+_Avoid_: Child, step (a step of a connection is a copy), part (a part is a row of a table rule)
+
 **Refresh**:
 The pipeline brings one derived dataset in step with the commits. Each commit of a copy asks for one, so a refresh can run while a copy loads, and it reads only what committed. A refresh makes again only what changed.
 _Avoid_: Rebuild, recompute, sync, update

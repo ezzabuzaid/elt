@@ -210,6 +210,9 @@
       "path": "./packages/embedding"
     },
     {
+      "path": "./packages/vectorizer"
+    },
+    {
       "path": "./packages/sdks/macos/app-database"
     },
     {

@@ -7,6 +7,11 @@ import {
 } from '../state/sync-history.ts';
 import type { ChangeSignal } from './change-signal.ts';
 import type { PipelineClock } from './clock.ts';
+import {
+  CompositeDataset,
+  type DeclaredDataset,
+  declaredMembers,
+} from './composite-dataset.ts';
 import { Connection } from './connection.ts';
 import {
   type Copy,
@@ -106,8 +111,10 @@ export class WatchError extends AggregateError {
 export class Pipeline<Target extends DestinationTarget> {
   readonly connections: readonly Connection<Target>[];
   readonly history: SyncHistory<Target>;
-  // In declared order, which is the order they refresh in.
+  // In declared order, which is the order they refresh in, with the members
+  // of each composite in its place.
   readonly derived: readonly DerivedDataset<Target>[];
+  readonly #declared: readonly DeclaredDataset<Target>[];
   readonly #clock: PipelineClock;
 
   constructor({
@@ -119,7 +126,7 @@ export class Pipeline<Target extends DestinationTarget> {
     connections: readonly Connection<Target>[];
     history: SyncHistory<NoInfer<Target>>;
     // A pipeline that keeps no derived data declares none.
-    derived?: readonly DerivedDataset<NoInfer<Target>>[];
+    derived?: readonly DeclaredDataset<NoInfer<Target>>[];
     // Each wait and each read of the time of the pipeline, its sources and
     // its destination (ADR 0019).
     clock: PipelineClock;
@@ -130,7 +137,8 @@ export class Pipeline<Target extends DestinationTarget> {
       );
     this.connections = Object.freeze([...connections]);
     this.history = history;
-    this.derived = Object.freeze([...(derived ?? [])]);
+    this.#declared = Object.freeze([...(derived ?? [])]);
+    this.derived = Object.freeze(this.#declared.flatMap(declaredMembers));
     this.#clock = clock;
     Object.freeze(this);
   }
@@ -172,7 +180,7 @@ export class Pipeline<Target extends DestinationTarget> {
     const signal = options?.signal;
     await this.#declare();
     const refreshes = new DerivedRefreshes(
-      this.derived,
+      this.#declared,
       this.connections,
       this.#clock,
       signal,
@@ -231,7 +239,7 @@ export class Pipeline<Target extends DestinationTarget> {
     const watching = AbortSignal.any([signal, controller.signal]);
     const stopped: unknown[] = [];
     const refreshes = new DerivedRefreshes(
-      this.derived,
+      this.#declared,
       this.connections,
       this.#clock,
       watching,
@@ -696,7 +704,11 @@ export class Pipeline<Target extends DestinationTarget> {
         );
         throw error;
       }
-    for (const dataset of this.derived) dataset.validate(this.connections);
+    for (const dataset of this.#declared) {
+      dataset.validate(this.connections);
+      if (dataset instanceof CompositeDataset)
+        for (const member of dataset.members) member.validate(this.connections);
+    }
   }
 
   // The time of an event the history records, on the pipeline's clock.
@@ -713,7 +725,13 @@ export class Pipeline<Target extends DestinationTarget> {
       .filter((id) => id !== undefined);
     if (new Set(ids).size !== ids.length)
       throw new TypeError('Pipeline copy IDs must be distinct');
-    const derived = this.derived.map(({ name }) => name);
+    // A composite's own name and each of its members' names, since a
+    // failure names the composite and each member keeps its own relations.
+    const derived = this.#declared.flatMap((dataset) =>
+      dataset instanceof CompositeDataset
+        ? [dataset.name, ...dataset.members.map(({ name }) => name)]
+        : [dataset.name],
+    );
     if (new Set(derived).size !== derived.length)
       throw new TypeError('Pipeline derived dataset names must be distinct');
   }

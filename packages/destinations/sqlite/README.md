@@ -275,6 +275,15 @@ A computed dataset whose rule is a `TableRule` keeps two tables. `raw_<name>` ha
 - `raw_<name>_parts` has the columns `committed_in` and `_elt_row_hash` after the place columns. Its external schema is the key, `seq`, `part_hash`, the content columns and the place columns.
 - A column of the rule, in `output` or in `place`, cannot have the name of the key, `seq`, `part_hash`, an engine column, `committed_in`, `_elt_row_hash` or `replaced_in`, and a name cannot be in both `output` and `place`, in any ASCII case. The constructor of `ComputedDataset` refuses such a rule with a `TypeError` that names the column and the dataset. A pipeline whose copy makes `<name>_parts` or `raw_<name>_parts` in the same file is refused before it reads.
 
+## Write a kind of derived dataset in another package
+
+A package can declare its own kind of derived dataset for a SQLite file, for example the keyword index of [`@eltjs/vectorizer`](../../vectorizer/README.md). elt-sqlite gives it the parts that its own kinds use:
+
+- `openDestination(path)` opens the file to write, as each writer of the file does.
+- `new SQLiteDerivedStatus(database, dataset, kind, clock)` writes the row of the dataset in `derived_status`. `kind` is `'view'` or `'computed'`. Call `refreshing(counts)`, `current(counts)`, `waiting()` or `failed(error)`, as `View` and `ComputedDataset` do.
+- `rawTable(name)` gives the name of the raw table of the relation `name` under the [naming rule](#names), for example `raw_docs_chunks_parts` for the parts of the computed dataset `docs_chunks`.
+- `quote(name)` quotes a name for SQL: in double quotes, with each double quote inside doubled.
+
 ## When something fails
 
 - **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the refresh after the next pass tries the input again.

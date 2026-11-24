@@ -431,6 +431,7 @@ Pass a crawled page's response to `new WebArticle([new MarkdownExtraction(), new
 packages/elt/                     Core contracts, pipelines, and the checkpoint protocol
 packages/destinations/sqlite/     SQLite destination and checkpoint store (elt-sqlite)
 packages/destinations/postgresql/ Postgres destination and checkpoint store (elt-postgresql)
+packages/vectorizer/              One declaration that writes the passage contract of @zukhruf/retrieval (vectorizer)
 packages/google-auth/  Google OAuth grants, consent, refresh, and grant storage
 packages/sdks/apple/      SDKs, one per Apple store (sdk-apple-<name>): accounts, biome,
                           books, call-history, clock, contacts, eventkit, knowledge, mail,
@@ -489,6 +490,7 @@ Each package owns its docs: a README, a glossary in `CONTEXT.md`, its decisions 
 - [elt](packages/elt/README.md): sync modes, keys and cursors, checkpoints, snapshot streams, stored files, watching, failures, the sync history and derived datasets.
 - [elt-sqlite](packages/destinations/sqlite/README.md): the SQLite destination, its checkpoints and sync history, `View` and `ComputedDataset`, with a recipe that searches the text of stored files.
 - [elt-postgresql](packages/destinations/postgresql/README.md): the Postgres destination, its reader views, positions and readings, checkpoints and sync history with its readers, `View` and `ComputedDataset`.
+- [Vectorizer](packages/vectorizer/README.md): the passages, vectors and keyword index that `@zukhruf/retrieval` reads, from one declaration.
 - Each source package has its own README, with its streams, access, limitations and live checks.
 - [EventKit Reminders notes](docs/eventkit-reminders.md): native API findings and implementation decisions.
 - [Source-authoring guide](.agents/skills/add-elt-source/SKILL.md): repository conventions for implementing sources.

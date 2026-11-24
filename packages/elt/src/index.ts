@@ -25,6 +25,10 @@ export {
   type Load,
 } from './core/destination.ts';
 export {
+  CompositeDataset,
+  type DeclaredDataset,
+} from './core/composite-dataset.ts';
+export {
   type DatasetFailure,
   DerivedDataset,
   DerivedDatasetError,
@@ -41,6 +45,7 @@ export {
   type RuleColumns,
   type RuleResult,
   type RuleValues,
+  rowText,
 } from './core/rule.ts';
 export { TableRule, type TableRuleResult } from './core/table-rule.ts';
 export {

@@ -5,6 +5,8 @@ export { SQLiteCheckpointStore } from './sqlite-checkpoint-store.ts';
 export { SQLiteColumn } from './sqlite-column.ts';
 export { SQLiteColumns } from './sqlite-columns.ts';
 export { SQLiteDestination } from './sqlite-destination.ts';
+export { SQLiteDerivedStatus } from './sqlite-derived-status.ts';
+export { quote, rawTable } from './sqlite-identifiers.ts';
 export { asOfDefinitions } from './sqlite-as-of-definitions.ts';
 export {
   type SQLiteReading,

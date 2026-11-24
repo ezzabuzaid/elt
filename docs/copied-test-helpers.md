@@ -95,3 +95,16 @@ The stand-in is an executable that replaces the codex CLI in a test, because the
 - `apps/proactive`: four places, in `src/engine/automations.test.ts`, `src/rules/careem-calories/careem-calories.test.ts` and `src/rules/planning-meetings/planning-meetings.test.ts` (two). Each wrote its own script. Now each test calls `CodexStandIn.create(folder, reply)` from `src/testing/codex-stand-in.ts`: `reply` is the test's function from the prompt to the reply (`null` makes the run fail), and `calls()` gives the argv and the prompt of each run, so the test asserts them itself.
 
 `tsconfig.lib.json` of the app excludes `src/testing/**`, so `dist` holds no test code.
+
+## Letter embedding model
+
+`LetterModel` is a real `EmbeddingModelV4` of the AI SDK whose vector of a text counts each letter a to z, because a model server cannot run in a test. A test sets the answer for a text (`answers`), and a call that never answers until its signal aborts (`hangs`).
+
+### Copied, one place in each package
+
+| Package               | File                    | What differs                                                                                                         |
+| --------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
+| `packages/embedding`  | `src/embedding.test.ts` | The source: it also refuses calls (`refusing`), answers a status for a call (`answer`) and keeps each call (`calls`) |
+| `packages/vectorizer` | `src/sqlite.test.ts`    | Only `answers`, `hangs` and `embedded`; `modelId` is `letters` when absent                                           |
+
+The recipes of `packages/chunking` and `packages/destinations/sqlserver` have their own letter model, since a recipe is a full program that imports no test file.
