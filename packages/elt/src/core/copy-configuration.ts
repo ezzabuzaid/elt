@@ -66,7 +66,6 @@ export class CopyConfiguration {
     this.fileReads = Object.freeze([...fileReads]);
     this.syncMode = syncMode;
     this.destinationSyncMode = destinationSyncMode;
-    this.cursorField = cursorField;
     const key =
       deduplicating && from.primaryKey.length > 0
         ? from.primaryKey
@@ -76,6 +75,13 @@ export class CopyConfiguration {
     this.dedupPolicy = deduplicating
       ? (dedupPolicy ?? (from.sourceDefinedCursor ? 'replace' : 'cursor_newer'))
       : dedupPolicy;
+    // As Airbyte, a copy that compares a cursor and selects none compares the
+    // stream's default cursor field.
+    this.cursorField =
+      cursorField ??
+      (syncMode === 'incremental' || this.dedupPolicy === 'cursor_newer'
+        ? from.defaultCursorField?.[0]
+        : undefined);
     Object.freeze(this);
   }
 

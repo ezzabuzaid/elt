@@ -53,3 +53,26 @@ source.changed(source.streams.tasks); // tells a watch that the rows changed
 - A snapshot of a large set holds a key and a hash for each row in the checkpoint: about 55 bytes a row, 301,407 bytes for 5,500 rows (probe P8). A scan in parts (`continues`) is not exposed yet.
 - A `rowVersion` that misses a change keeps the old content of the row, with no error.
 - The probes of 2026-11-24 ran with a `Source` subclass of the same shape: P2 (an unchanged push writes no row on SQLite, Postgres and SQL Server 2025), P3 (a closed-world delete in both modes) and P4 (a throw ends `failed`, an abort ends `cancelled`, and nothing is deleted). The tests of `IterableSource` in elt-sqlite, elt-postgresql and elt-sqlserver run them on the class itself.
+
+## Amendment 2026-11-24: the changes kind
+
+The `changes` kind is the second member of the union (#5402 D5, ruled by Ezz on 2026-11-24, "They stand"). A stream has `snapshot` or `changes`, never both, and only `changes` has `cursorField` and `ordered`:
+
+```ts
+tasks: {
+  description: 'The tasks that changed after a version.',
+  jsonSchema, // declares cursorField, and no property deleted
+  primaryKey: ['name'],
+  cursorField: 'version',
+  ordered: true, // optional: the host gives the changes in version order
+  changes: ({ since, signal }) => log.after(since), // rows, and { deleted: key, version }
+},
+```
+
+- **The built `Stream` has a cursor field.** It supports `full_refresh` and `incremental`, declares `emitsDeletes`, and does not declare `sourceDefinedCursor`. With `sourceDefinedCursor`, a copy refuses `cursorField`, and without a cursor field it refuses `cursor_newer` (probe P7). The `Stream` declares `defaultCursorField: [cursorField]`, which this amendment adds to elt's `Stream` (Airbyte's `default_cursor_field`, a path of one property). An incremental or `cursor_newer` copy that gives no `cursorField` compares it, so the host names `cursorField` once. A stream with `sourceDefinedCursor` refuses a `defaultCursorField`. `IterableSource.validateExtraction` refuses each copy that does not deduplicate with `cursor_newer` on the declared `cursorField`, before the run reads. Thus a copy cannot compare another field.
+- **A tombstone is a deletion at its version.** `{ deleted: key, version }` becomes a `DELETE` with `cursor` = `version` (ADR 0032). A tombstone older than the stored row deletes nothing, and a row older than the stored row changes nothing. Because a tombstone is the change that holds `deleted`, the constructor refuses a `jsonSchema` that declares a property `deleted`.
+- **State is the version.** The state is `{ since }`, and the next pass gives `since` to `changes`. Without `ordered`, a pass saves one state at its end, with the greatest version that it gave (D9). A pass whose checkpoint did not save gives the same `since` again; the replay changes no row (probe P7a).
+- **`ordered: true` is checked in `IterableSource`.** Core saves a state that goes back (probe P7c). An ordered pass fails the stream at a version below the version before it, with a message that names both versions. It saves when the version rises, with the version before, not after each row: `since` means "the changes after this version", so a state saved after the first of two changes at version 5 would skip the second one at the next pass. Changes that share a version thus save together. dlt keeps the same boundary rows for the same reason: its `incremental` starts at `start_value` inclusively and removes the rows of that value that it already loaded.
+- **Versions compare as the destinations compare them** (`FieldFormat.ordering`): numbers by value, `int64` text as integers, and other text by byte order. The type of `since` and of the `version` of a tombstone is the type of the cursor field: the declaration is a union with one member for each property whose values are text or numbers, keyed by `cursorField`. `changes` is a method, so a declaration typed for its own cursor field is also a declaration of any schema.
+
+Consequence: a host with a version gives only its changes, and a host without one gives a snapshot (D5: a delta push with no version cannot resume).

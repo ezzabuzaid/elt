@@ -13,6 +13,9 @@ export class Stream {
   readonly supportsFileTransfer?: true;
   // Incremental progress is opaque source state, so copies select no cursorField.
   readonly sourceDefinedCursor?: true;
+  // The field that a copy compares when it selects no cursorField, as
+  // Airbyte's default_cursor_field: a path of one top-level property.
+  readonly defaultCursorField?: readonly [string];
   // Incremental reads may emit DELETE messages keyed by primaryKey.
   readonly emitsDeletes?: true;
   // The source reads the stream once per value of these primaryKey fields and
@@ -30,6 +33,7 @@ export class Stream {
     supportedSyncModes,
     supportsFileTransfer,
     sourceDefinedCursor,
+    defaultCursorField,
     emitsDeletes,
     partitionKey,
     expiresBy,
@@ -40,6 +44,7 @@ export class Stream {
     supportedSyncModes: readonly SyncMode[];
     supportsFileTransfer?: true;
     sourceDefinedCursor?: true;
+    defaultCursorField?: readonly [string];
     emitsDeletes?: true;
     partitionKey?: readonly string[];
     expiresBy?: string;
@@ -75,6 +80,14 @@ export class Stream {
         'A stream that emits deletions requires a primaryKey',
       );
     this.sourceDefinedCursor = sourceDefinedCursor;
+    if (defaultCursorField !== undefined) {
+      // A source-defined cursor has no field for a copy to compare.
+      if (sourceDefinedCursor)
+        throw new TypeError(
+          'A stream with sourceDefinedCursor has no defaultCursorField',
+        );
+      this.defaultCursorField = Object.freeze([...defaultCursorField]);
+    }
     this.emitsDeletes = emitsDeletes;
     this.jsonSchema = structuredClone(jsonSchema);
     // Snapshot nested metadata too, so changes in a source cannot rewrite a pipeline.

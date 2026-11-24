@@ -212,6 +212,7 @@ Rules for keys and cursors:
 - A load that does not deduplicate refuses `primaryKey` and `dedupPolicy`.
 - `cursor_newer` needs `cursorField`. `replace` works with no cursor.
 - A stream with `sourceDefinedCursor` has no cursor field. Its copies do not give `cursorField`. Its deduplicating loads use `replace`, and they refuse `cursor_newer`.
+- A stream can declare `defaultCursorField: [field]`, as Airbyte's `default_cursor_field`. An incremental copy, or a `cursor_newer` copy, that gives no `cursorField` then compares that field. A stream with `sourceDefinedCursor` cannot declare it.
 - An incremental copy of any other stream needs `cursorField`. A full refresh with `append` or `overwrite` refuses `cursorField`.
 - The fields must be scalar properties at the top level, with one JSON Schema type that is not null.
 - A key can be text, a finite number, a safe integer or a boolean. A cursor can be text or a number.
@@ -588,6 +589,116 @@ third [ { name: 'fix-git', difficulty: 'hard', committed_in: 2 } ]
 - **`rowVersion`** names a column whose value changes each time the host changes the row, such as a version counter. An incremental copy then compares that value in place of the hash of the row (dlt `row_version_column_name`). **Hazard:** a row whose content changed but whose version did not change keeps its old content. The column must be in `jsonSchema`; the constructor refuses another name with a `TypeError`. A full refresh reads every row and does not use it.
 - **Watch.** `source.changed(stream)` tells a watch that the host's rows of the stream changed; the next check, at most one second later, starts a pass. A host whose rows are in a store that it can watch also gives `changeSignal: { gauge: (clock) => gauge, interval, timeout }`. The watch gets a new gauge for each watch, and `changed()` works beside it with the same interval.
 - **Coverage** of each pass is `{ description, selection: {} }`, with the `description` of the stream. `currentAsOf` is null, unless the stream gives `currentAsOf: () => Promise<Date | null>`. `configErrors` lists the error classes of the host that the user must fix; the failure type of other errors is `system`.
+
+### Changes since a version
+
+A host that keeps a version for each change, such as an `updated_at` or a sequence number, gives only the changes after the version that elt saved. Its stream has `changes` in place of `snapshot`, and names its `cursorField`. A change is a row, or a tombstone `{ deleted: key, version }` for a row that the host deleted. dlt does the same with `incremental("updated_at")` and `merge` with a `hard_delete` column.
+
+This example runs two passes over the change log of a host. The second pass gives one changed task and a tombstone for the other.
+
+```ts
+import { DatabaseSync } from 'node:sqlite';
+
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
+import {
+  SQLiteCheckpointStore,
+  SQLiteDestination,
+  SQLiteSyncHistory,
+} from '@eltjs/elt-sqlite';
+
+// The change log of the host: each change has the version that the host gave
+// it. A real host reads it from its own store.
+let log: (
+  | { name: string; text: string; version: number }
+  | { deleted: { name: string }; version: number }
+)[] = [
+  { name: 'fix-git', text: 'Recover the lost commit.', version: 1 },
+  { name: 'build-pmars', text: 'Build pMARS from source.', version: 2 },
+];
+
+const source = new IterableSource({
+  identity: 'tasks',
+  streams: {
+    tasks: {
+      description: 'The tasks that changed after a version.',
+      jsonSchema: {
+        type: 'object',
+        description: 'A task.',
+        properties: {
+          name: { type: 'string', description: 'Name of the task.' },
+          text: { type: 'string', description: 'What the task asks.' },
+          version: { type: 'integer', description: 'Version of the task.' },
+        },
+        required: ['name', 'text', 'version'],
+      },
+      primaryKey: ['name'],
+      cursorField: 'version',
+      ordered: true,
+      changes: ({ since }) => {
+        console.log('since', since);
+        return log.filter(({ version }) => since === null || version > since);
+      },
+    },
+  },
+});
+const sqlite = new SQLiteDestination({ path: './tasks.sqlite' });
+const pipeline = new Pipeline({
+  history: new SQLiteSyncHistory(),
+  clock: globalThis,
+  connections: [
+    new Connection({
+      name: 'tasks',
+      source,
+      destination: sqlite,
+      checkpoints: new SQLiteCheckpointStore({ path: './state.sqlite' }),
+      steps: [
+        new Copy(source.streams.tasks, sqlite.table('tasks'), {
+          id: 'tasks',
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+        }),
+      ],
+    }),
+  ],
+});
+
+const rows = () =>
+  new DatabaseSync('./tasks.sqlite', { readOnly: true })
+    .prepare('SELECT name, version FROM raw_tasks ORDER BY name')
+    .all()
+    .map((row) => ({ ...row }));
+
+await pipeline.run();
+console.log('first', rows());
+
+// The host changes one task and deletes the other.
+log = [
+  ...log,
+  { name: 'fix-git', text: 'Recover the two lost commits.', version: 3 },
+  { deleted: { name: 'build-pmars' }, version: 4 },
+];
+await pipeline.run();
+console.log('second', rows());
+```
+
+Output:
+
+```
+since null
+first [
+  { name: 'build-pmars', version: 2 },
+  { name: 'fix-git', version: 1 }
+]
+since 2
+second [ { name: 'fix-git', version: 3 } ]
+```
+
+- **The host names `cursorField` once.** `source.streams.tasks` supports `full_refresh` and `incremental`, emits deletions, and declares `defaultCursorField: ['version']`, so a copy that selects no `cursorField` compares `version`. Each copy deduplicates with `cursor_newer` on that field. A copy with another `cursorField` or `dedupPolicy` fails the run before a read, with a `TypeError`: `Stream tasks gives changes by version; a copy of it deduplicates with dedupPolicy cursor_newer on cursorField version`.
+- **`since`.** Each pass calls `changes({ since, signal })` one time. `since` is the greatest version that the copy saved, or `null` before the first save and in a full refresh. A pass whose rows committed but whose checkpoint did not save gives the same `since` again, so the host gives the same changes again. The replay changes no row.
+- **Old changes lose.** A row with a version below the version of the stored row changes nothing, and a tombstone with a version below it deletes nothing ([Deletions](#deletions), [ADR 0032](./docs/adr/0032-a-deletion-older-than-the-stored-row-deletes-nothing.md)). On a tie, the stored row stays.
+- **When a pass saves.** Without `ordered`, a pass saves one checkpoint at its end, with the greatest version that it gave. With `ordered: true`, the host promises versions in order, and the pass saves each time the version rises, so a pass that fails halfway keeps what it loaded. Changes that share a version save together: a pass that stops between two changes at version 5 gives `since` 4 again. A version below the version before it fails the stream: `Stream tasks gives ordered changes, but version 7 came after version 9`.
+- **A tombstone holds `deleted`**, so the `jsonSchema` of a changes stream cannot declare a property `deleted`; the constructor refuses it with a `TypeError`.
+- **Versions** are text or numbers, in the order that the destinations compare them: numbers by value, `int64` text as integers, other text by byte order. `since` and the `version` of a tombstone have the type of the cursor field: a number for `version` above. A nullable or boolean field cannot be the `cursorField`.
 
 ## Partitioned streams
 

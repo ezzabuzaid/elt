@@ -10,7 +10,9 @@ import {
   Connection,
   Copy,
   Gauge,
+  type IterableRow,
   IterableSource,
+  type IterableTombstone,
   Pipeline,
   PipelineError,
 } from '@eltjs/elt';
@@ -1045,3 +1047,605 @@ test('the constructor refuses a stream with no primaryKey', () => {
     },
   );
 });
+
+type Versioned = { name: string; text: string; version: number };
+
+const versionedSchema = {
+  type: 'object',
+  description: 'A task at a version.',
+  properties: {
+    name: { type: 'string', description: 'Name of the task.' },
+    text: { type: 'string', description: 'What the task asks.' },
+    version: {
+      type: 'integer',
+      description: 'The version the host gave the task.',
+    },
+  },
+  required: ['name', 'text', 'version'],
+} as const;
+
+// The rows of a changes stream's table, with the commit that wrote each one.
+function versioned(path: string) {
+  using database = open(path, { readOnly: true });
+  return database
+    .prepare(
+      'SELECT name, text, version, committed_in FROM raw_tasks ORDER BY name',
+    )
+    .all()
+    .map(({ name, text, version, committed_in }) => ({
+      name,
+      text,
+      version,
+      committed_in,
+    }));
+}
+
+// The rows of a changes stream's table without their commits.
+const versionedContent = (path: string) =>
+  versioned(path).map(({ name, text, version }) => ({ name, text, version }));
+
+// The messages of the failures of a run that failed.
+function failureMessages(error: unknown): string[] {
+  assert.ok(error instanceof PipelineError, String(error));
+  return error.results.flatMap(({ failures }) =>
+    failures.map(({ error }) =>
+      Error.isError(error) ? error.message : String(error),
+    ),
+  );
+}
+
+test('a changes pass whose checkpoint save fails is read again from the greatest version saved before it, and the replay loads the same rows', async () => {
+  // Not in version order: the pass saves its greatest version, not its last.
+  let changes: Versioned[] = [
+    { name: 'b', text: 'b v2', version: 2 },
+    { name: 'a', text: 'a v1', version: 1 },
+  ];
+  const asked: unknown[] = [];
+  const source = new IterableSource({
+    identity: 'tasks',
+    streams: {
+      tasks: {
+        description: 'The tasks that the test gives.',
+        jsonSchema: versionedSchema,
+        primaryKey: ['name'],
+        cursorField: 'version',
+        changes: ({ since }) => {
+          asked.push(since);
+          return changes;
+        },
+      },
+    },
+  });
+  await using scratch = await new TemporaryFiles().directory('elt-iterable-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const checkpoints = join(scratch.path, 'state.sqlite');
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'tasks',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({ path: checkpoints }),
+        steps: [
+          new Copy(source.streams.tasks, destination.table('tasks'), {
+            id: 'tasks',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+  });
+  await pipeline.run();
+  changes = [{ name: 'c', text: 'c v5', version: 5 }];
+  {
+    // No operation of the store refuses a save; a full disk does.
+    using database = open(checkpoints);
+    database.exec(
+      `CREATE TRIGGER refuse_insert BEFORE INSERT ON checkpoints BEGIN SELECT RAISE(ABORT, 'disk full'); END;
+       CREATE TRIGGER refuse_update BEFORE UPDATE ON checkpoints BEGIN SELECT RAISE(ABORT, 'disk full'); END;`,
+    );
+  }
+  const failure = await pipeline.run().then(
+    () => assert.fail('the run should report the unsaved checkpoint'),
+    (error: unknown) => error,
+  );
+  const afterFailure = versioned(destination.path);
+  {
+    using database = open(checkpoints);
+    database.exec('DROP TRIGGER refuse_insert; DROP TRIGGER refuse_update;');
+  }
+
+  await pipeline.run();
+
+  assert.ok(failure instanceof PipelineError, String(failure));
+  assert.match(
+    String(failure.cause),
+    /was not saved after the destination committed/,
+  );
+  assert.deepEqual(asked, [null, 2, 2]);
+  assert.deepEqual(versionedContent(destination.path), [
+    { name: 'a', text: 'a v1', version: 1 },
+    { name: 'b', text: 'b v2', version: 2 },
+    { name: 'c', text: 'c v5', version: 5 },
+  ]);
+  assert.deepEqual(versioned(destination.path), afterFailure);
+});
+
+test('a row may leave out a property that the schema does not require, and the property loads as null', async () => {
+  const notesSchema = {
+    type: 'object',
+    description: 'A note.',
+    properties: {
+      name: { type: 'string', description: 'Name of the note.' },
+      text: { type: ['string', 'null'], description: 'What the note says.' },
+    },
+    required: ['name'],
+  } as const;
+  const rows: IterableRow<typeof notesSchema>[] = [
+    { name: 'a' },
+    { name: 'b', text: 'b' },
+  ];
+  // The type check proves this line, not the run.
+  // @ts-expect-error -- the schema requires name
+  void ({ text: 'c' } satisfies IterableRow<typeof notesSchema>);
+  const source = new IterableSource({
+    identity: 'notes',
+    streams: {
+      notes: {
+        description: 'The notes that the test gives.',
+        jsonSchema: notesSchema,
+        primaryKey: ['name'],
+        snapshot: () => rows,
+      },
+    },
+  });
+  await using scratch = await new TemporaryFiles().directory('elt-iterable-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'notes',
+        source,
+        destination,
+        steps: [
+          new Copy(source.streams.notes, destination.table('notes'), {
+            syncMode: 'full_refresh',
+            destinationSyncMode: 'overwrite_dedup',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  await pipeline.run();
+
+  assert.deepEqual(contentOf(destination.path, 'notes'), [
+    { name: 'a', text: null },
+    { name: 'b', text: 'b' },
+  ]);
+});
+
+test('a tombstone older than the stored row deletes nothing, and a newer tombstone deletes its row', async () => {
+  let changes: (Versioned | IterableTombstone<number>)[] = [
+    { name: 'a', text: 'a v5', version: 5 },
+    { name: 'b', text: 'b v2', version: 2 },
+    { name: 'c', text: 'c v9', version: 9 },
+  ];
+  const source = new IterableSource({
+    identity: 'tasks',
+    streams: {
+      tasks: {
+        description: 'The tasks that the test gives.',
+        jsonSchema: versionedSchema,
+        primaryKey: ['name'],
+        cursorField: 'version',
+        changes: () => changes,
+      },
+    },
+  });
+  await using scratch = await new TemporaryFiles().directory('elt-iterable-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'tasks',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.streams.tasks, destination.table('tasks'), {
+            id: 'tasks',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+  });
+  await pipeline.run();
+  // Each tombstone is older than the saved version 9: only its own version
+  // tells whether it is newer than the stored row.
+  changes = [
+    { deleted: { name: 'a' }, version: 3 },
+    { deleted: { name: 'b' }, version: 4 },
+  ];
+
+  await pipeline.run();
+
+  assert.deepEqual(versionedContent(destination.path), [
+    { name: 'a', text: 'a v5', version: 5 },
+    { name: 'c', text: 'c v9', version: 9 },
+  ]);
+});
+
+test('a row given again at an older version than the stored row changes nothing', async () => {
+  let changes: Versioned[] = [{ name: 'a', text: 'a v5', version: 5 }];
+  const source = new IterableSource({
+    identity: 'tasks',
+    streams: {
+      tasks: {
+        description: 'The tasks that the test gives.',
+        jsonSchema: versionedSchema,
+        primaryKey: ['name'],
+        cursorField: 'version',
+        changes: () => changes,
+      },
+    },
+  });
+  await using scratch = await new TemporaryFiles().directory('elt-iterable-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'tasks',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.streams.tasks, destination.table('tasks'), {
+            id: 'tasks',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+  });
+  await pipeline.run();
+  const first = versioned(destination.path);
+  changes = [{ name: 'a', text: 'a v1, given late', version: 1 }];
+
+  await pipeline.run();
+
+  assert.deepEqual(versioned(destination.path), first);
+  assert.deepEqual(versionedContent(destination.path), [
+    { name: 'a', text: 'a v5', version: 5 },
+  ]);
+});
+
+test('an ordered stream that gives a version below the one before fails, naming both versions, and the next pass asks for the changes after the last version whose changes all loaded', async () => {
+  let changes: (Versioned | IterableTombstone<number>)[] = [
+    { name: 'a', text: 'a v1', version: 1 },
+    { name: 'b', text: 'b v2', version: 2 },
+    { name: 'c', text: 'c v9', version: 9 },
+    { name: 'd', text: 'd v7', version: 7 },
+  ];
+  const asked: unknown[] = [];
+  const source = new IterableSource({
+    identity: 'tasks',
+    streams: {
+      tasks: {
+        description: 'The tasks that the test gives.',
+        jsonSchema: versionedSchema,
+        primaryKey: ['name'],
+        cursorField: 'version',
+        ordered: true,
+        changes: ({ since }) => {
+          asked.push(since);
+          return changes;
+        },
+      },
+    },
+  });
+  await using scratch = await new TemporaryFiles().directory('elt-iterable-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'tasks',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.streams.tasks, destination.table('tasks'), {
+            id: 'tasks',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('a version out of order should fail the stream'),
+    (error: unknown) => error,
+  );
+  const afterFailure = versionedContent(destination.path);
+  changes = [];
+  await pipeline.run();
+
+  assert.deepEqual(failureMessages(error), [
+    'Stream tasks gives ordered changes, but version 7 came after version 9',
+  ]);
+  assert.deepEqual(afterFailure, [
+    { name: 'a', text: 'a v1', version: 1 },
+    { name: 'b', text: 'b v2', version: 2 },
+  ]);
+  assert.deepEqual(asked, [null, 2]);
+});
+
+test('an ordered stream that gives a tombstone below the version before fails, naming both versions', async () => {
+  const changes: (Versioned | IterableTombstone<number>)[] = [
+    { name: 'a', text: 'a v4', version: 4 },
+    { deleted: { name: 'a' }, version: 3 },
+  ];
+  const source = new IterableSource({
+    identity: 'tasks',
+    streams: {
+      tasks: {
+        description: 'The tasks that the test gives.',
+        jsonSchema: versionedSchema,
+        primaryKey: ['name'],
+        cursorField: 'version',
+        ordered: true,
+        changes: () => changes,
+      },
+    },
+  });
+  await using scratch = await new TemporaryFiles().directory('elt-iterable-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'tasks',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.streams.tasks, destination.table('tasks'), {
+            id: 'tasks',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('a tombstone out of order should fail the stream'),
+    (error: unknown) => error,
+  );
+
+  assert.deepEqual(failureMessages(error), [
+    'Stream tasks gives ordered changes, but version 3 came after version 4',
+  ]);
+});
+
+test('an ordered stream saves the rows that share a version together, so a pass that stops after them resumes before that version', async () => {
+  let failing = true;
+  const asked: unknown[] = [];
+  const source = new IterableSource({
+    identity: 'tasks',
+    streams: {
+      tasks: {
+        description: 'The tasks that the test gives.',
+        jsonSchema: versionedSchema,
+        primaryKey: ['name'],
+        cursorField: 'version',
+        ordered: true,
+        async *changes({ since }) {
+          asked.push(since);
+          const log = [
+            { name: 'a', text: 'a v4', version: 4 },
+            { name: 'b', text: 'b v5', version: 5 },
+            { name: 'c', text: 'c v5', version: 5 },
+          ];
+          yield* log.filter(({ version }) => since === null || version > since);
+          if (failing) throw new Error('the host stopped halfway');
+        },
+      },
+    },
+  });
+  await using scratch = await new TemporaryFiles().directory('elt-iterable-');
+  const destination = new SQLiteDestination({
+    path: join(scratch.path, 'd.sqlite'),
+  });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'tasks',
+        source,
+        destination,
+        checkpoints: new SQLiteCheckpointStore({
+          path: join(scratch.path, 'state.sqlite'),
+        }),
+        steps: [
+          new Copy(source.streams.tasks, destination.table('tasks'), {
+            id: 'tasks',
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField: 'version',
+          }),
+        ],
+      }),
+    ],
+  });
+  await pipeline.run().then(
+    () => assert.fail('the host should fail the first pass'),
+    (error: unknown) => error,
+  );
+  failing = false;
+
+  await pipeline.run();
+
+  assert.deepEqual(asked, [null, 4]);
+  assert.deepEqual(versionedContent(destination.path), [
+    { name: 'a', text: 'a v4', version: 4 },
+    { name: 'b', text: 'b v5', version: 5 },
+    { name: 'c', text: 'c v5', version: 5 },
+  ]);
+});
+
+for (const selection of [
+  { cursorField: 'text', dedupPolicy: 'cursor_newer' },
+  { cursorField: 'version', dedupPolicy: 'replace' },
+] as const)
+  test(`a copy of a changes stream with cursorField ${selection.cursorField} and dedupPolicy ${selection.dedupPolicy} is refused before the pipeline reads`, async () => {
+    let read = false;
+    const source = new IterableSource({
+      identity: 'tasks',
+      streams: {
+        tasks: {
+          description: 'The tasks that the test gives.',
+          jsonSchema: versionedSchema,
+          primaryKey: ['name'],
+          cursorField: 'version',
+          changes: () => {
+            read = true;
+            return [];
+          },
+        },
+      },
+    });
+    await using scratch = await new TemporaryFiles().directory('elt-iterable-');
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'd.sqlite'),
+    });
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'tasks',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
+          }),
+          steps: [
+            new Copy(source.streams.tasks, destination.table('tasks'), {
+              id: 'tasks',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append_dedup',
+              ...selection,
+            }),
+          ],
+        }),
+      ],
+    });
+
+    await assert.rejects(pipeline.run(), {
+      name: 'TypeError',
+      message:
+        'Stream tasks gives changes by version; a copy of it deduplicates with dedupPolicy cursor_newer on cursorField version',
+    });
+    assert.equal(read, false);
+  });
+
+for (const mode of [
+  { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
+  { syncMode: 'full_refresh', destinationSyncMode: 'overwrite_dedup' },
+] as const)
+  test(`a ${mode.syncMode} copy of a changes stream that selects no cursorField compares the declared cursor field`, async () => {
+    // A later text of a, at an older version.
+    const changes: Versioned[] = [
+      { name: 'a', text: 'a v5', version: 5 },
+      { name: 'a', text: 'a v1', version: 1 },
+      { name: 'b', text: 'b v2', version: 2 },
+    ];
+    const source = new IterableSource({
+      identity: 'tasks',
+      streams: {
+        tasks: {
+          description: 'The tasks that the test gives.',
+          jsonSchema: versionedSchema,
+          primaryKey: ['name'],
+          cursorField: 'version',
+          changes: () => changes,
+        },
+      },
+    });
+    await using scratch = await new TemporaryFiles().directory('elt-iterable-');
+    const destination = new SQLiteDestination({
+      path: join(scratch.path, 'd.sqlite'),
+    });
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'tasks',
+          source,
+          destination,
+          checkpoints: new SQLiteCheckpointStore({
+            path: join(scratch.path, 'state.sqlite'),
+          }),
+          steps: [
+            new Copy(source.streams.tasks, destination.table('tasks'), {
+              id: 'tasks',
+              ...mode,
+            }),
+          ],
+        }),
+      ],
+    });
+
+    await pipeline.run();
+
+    assert.deepEqual(versionedContent(destination.path), [
+      { name: 'a', text: 'a v5', version: 5 },
+      { name: 'b', text: 'b v2', version: 2 },
+    ]);
+  });

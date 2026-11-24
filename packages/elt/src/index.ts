@@ -114,11 +114,15 @@ export {
   type SnapshotDiffOptions,
 } from './core/snapshot.ts';
 export {
+  type ChangesStreamDeclaration,
   type IterableChangeSignal,
+  type IterableChangesContext,
   type IterableReadContext,
   type IterableRow,
   IterableSource,
   type IterableStreamDeclaration,
+  type IterableTombstone,
+  type IterableVersion,
   type SnapshotStreamDeclaration,
 } from './core/iterable-source.ts';
 export type { DatasetIndex, VectorMetric } from './core/dataset-index.ts';

@@ -3758,3 +3758,27 @@ test('a reading reads the asked position when the store reads it exactly, else t
   });
   assert.deepEqual(open, { expired: 'There is no position of the file yet' });
 });
+
+test('a stream with a source-defined cursor refuses a defaultCursorField', () => {
+  assert.throws(
+    () =>
+      new Stream({
+        name: 'tasks',
+        jsonSchema: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Name of the task.' },
+            version: { type: 'integer', description: 'Version of the task.' },
+          },
+        },
+        primaryKey: ['name'],
+        supportedSyncModes: ['incremental'],
+        sourceDefinedCursor: true,
+        defaultCursorField: ['version'],
+      }),
+    {
+      name: 'TypeError',
+      message: 'A stream with sourceDefinedCursor has no defaultCursorField',
+    },
+  );
+});
