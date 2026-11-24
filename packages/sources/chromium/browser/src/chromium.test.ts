@@ -1138,10 +1138,13 @@ test('a Chromium watch loads only the streams of the store that changed, while t
   };
   const visiting: Promise<void>[] = [];
 
-  for await (const { outcomes } of chromium.watch(
+  for await (const event of chromium.watch(
     // A pass that never comes ends the watch, so the assertion fails.
     AbortSignal.any([controller.signal, t.signal]),
   )) {
+    if (event.kind !== 'pass') continue;
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     // A check that changes nothing makes no pass.
     if (woken.length === 1) visiting.push(visit());

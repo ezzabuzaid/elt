@@ -121,10 +121,11 @@ console.log(`sync button, at ${seconds()} s: ${result?.count} records`);
 // A watch: it starts a pass at once, then each time a URL is due.
 const stop = new AbortController();
 let passes = 0;
-for await (const pass of pipeline.watch({ signal: stop.signal })) {
+for await (const event of pipeline.watch({ signal: stop.signal })) {
+  if (event.kind !== 'pass') continue;
   passes++;
   console.log(
-    `watch pass ${passes}, at ${seconds()} s: ${pass.outcomes[0]?.count} records`,
+    `watch pass ${passes}, at ${seconds()} s: ${event.outcomes[0]?.count} records`,
   );
   if (passes === 2) stop.abort();
 }

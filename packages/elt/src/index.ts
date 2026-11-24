@@ -25,8 +25,10 @@ export {
   type Load,
 } from './core/destination.ts';
 export {
+  type DatasetFailure,
   DerivedDataset,
   DerivedDatasetError,
+  DerivedDatasetsError,
   type RefreshTrigger,
 } from './core/derived-dataset.ts';
 export { type DerivedCounts, DerivedStatus } from './core/derived-status.ts';
@@ -71,6 +73,7 @@ export {
   Pipeline,
   PipelineError,
   WatchError,
+  type WatchEvent,
 } from './core/pipeline.ts';
 export {
   type NumberedStore,

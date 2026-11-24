@@ -3342,10 +3342,12 @@ test(
       streams.includes(stream),
     );
 
-    for await (const { outcomes } of run.watch({
+    for await (const event of run.watch({
       // A pass that never comes ends the watch, so the assertion fails.
       signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
+      if (event.kind !== 'pass') continue;
+      const { outcomes } = event;
       // The copies of a pass end in any order.
       woken.push(outcomes.map(({ copy }) => copy.from.name).sort());
       if (woken.length === 1)

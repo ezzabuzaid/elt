@@ -16,6 +16,7 @@ import {
   Copy,
   type CopyConfiguration,
   DerivedDatasetError,
+  DerivedDatasetsError,
   Gauge,
   Pipeline,
   PipelineError,
@@ -331,6 +332,96 @@ test('derived_status says that a view waits while its input has not loaded, that
   );
 });
 
+test('a run refreshes the views beside two views that SQLite refuses, and then rejects with both dataset failures, in declared order', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-view-');
+  const path = join(scratch.path, 'data.sqlite');
+  const source = new Records(['r1', 'r2']);
+  const destination = new SQLiteDestination({ path });
+  const view = (name: string, sql: string) =>
+    new View({
+      into: destination,
+      name,
+      description: `The view ${name}.`,
+      columns: { n: 'A number.' },
+      sql,
+    });
+  const pipeline = new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'records',
+        source,
+        destination,
+        steps: [new Copy(source.records, destination.table('records'))],
+      }),
+    ],
+    derived: [
+      view('before_count', 'SELECT count(*) AS n FROM records'),
+      view('broken', 'SELECT count(*) AS n FROM recordz'),
+      view('between_count', 'SELECT count(*) AS n FROM records'),
+      view('also_broken', 'SELECT count(*) AS n FROM extras'),
+      view('after_count', 'SELECT count(*) AS n FROM records'),
+    ],
+  });
+
+  const error = await pipeline.run().then(
+    () => assert.fail('the run reported nothing'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof DerivedDatasetsError, String(error));
+  assert.deepEqual(
+    {
+      failures: error.errors.map(({ dataset, message, cause }) => ({
+        dataset,
+        message,
+        cause: Error.isError(cause) ? cause.message : cause,
+      })),
+      first: error.cause === error.errors[0],
+      status: shell(
+        path,
+        'SELECT dataset, state, error FROM derived_status ORDER BY dataset',
+      ).rows,
+      counts: shell(
+        path,
+        'SELECT (SELECT n FROM before_count) AS first, (SELECT n FROM between_count) AS middle, (SELECT n FROM after_count) AS last',
+      ).rows,
+    },
+    {
+      failures: [
+        {
+          dataset: 'broken',
+          message: 'Derived dataset broken failed: no such table: recordz',
+          cause: 'no such table: recordz',
+        },
+        {
+          dataset: 'also_broken',
+          message: 'Derived dataset also_broken failed: no such table: extras',
+          cause: 'no such table: extras',
+        },
+      ],
+      first: true,
+      status: [
+        { dataset: 'after_count', state: 'current', error: null },
+        {
+          dataset: 'also_broken',
+          state: 'failed',
+          error: 'no such table: extras',
+        },
+        { dataset: 'before_count', state: 'current', error: null },
+        { dataset: 'between_count', state: 'current', error: null },
+        {
+          dataset: 'broken',
+          state: 'failed',
+          error: 'no such table: recordz',
+        },
+      ],
+      counts: [{ first: 2, middle: 2, last: 2 }],
+    },
+  );
+});
+
 test('a view that reads a view still waiting for its copy waits too, and both appear with the run that loads the copy', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
@@ -498,7 +589,7 @@ test('a view redeclared over a table its copy has not loaded yet leaves no view 
   );
 });
 
-test('a view that reads a view declared after it fails the run with the error of SQLite', async () => {
+test('a view that reads a view declared after it is published by the refresh after the passes, once the later view is there', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-view-');
   const path = join(scratch.path, 'data.sqlite');
   const source = new Records(['r1', 'r2']);
@@ -532,15 +623,14 @@ test('a view that reads a view declared after it fails the run with the error of
     ],
   });
 
-  const error = await pipeline.run().then(
-    () => assert.fail('the run reported nothing'),
-    (error: unknown) => error,
-  );
+  // The refresh that the commit of the copy asks for fails record_load,
+  // since record_count is not there yet; the refresh after the pass tries it
+  // again once record_count is there.
+  await pipeline.run();
 
-  assert.ok(!(error instanceof PipelineError), String(error));
-  assert.ok(Error.isError(error));
-  assert.match(error.message, /no such table: (main\.)?record_count/);
-  assert.equal(views(path).includes('record_load'), false);
+  assert.deepEqual(shell(path, 'SELECT many FROM record_load').rows, [
+    { many: 1 },
+  ]);
 });
 
 test('under a watch, a view that reads a view still waiting for its copy waits too, and the later checks of the watch do not reject it', async () => {

@@ -4187,9 +4187,11 @@ test('each watch pass is recorded under its own connection when it completes', a
 
   const controller = new AbortController();
   const passes: string[] = [];
-  for await (const { connection } of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, t.signal]),
   })) {
+    if (event.kind !== 'pass') continue;
+    const { connection } = event;
     passes.push(connection.name);
     if (passes.length === 4) controller.abort();
   }
@@ -4263,10 +4265,12 @@ test('stream_status keeps each stream own latest outcome when a watch pass reads
 
   const controller = new AbortController();
   let passes = 0;
-  for await (const _pass of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, t.signal]),
-  }))
+  })) {
+    if (event.kind !== 'pass') continue;
     if (++passes === 2) controller.abort();
+  }
 
   assert.deepEqual(
     [...(await sql`SELECT connector, status FROM marts.sync_status`)],

@@ -1857,6 +1857,7 @@ test(
     for (let next = passes.next(); ;) {
       const pass = await next;
       if (pass.done) break;
+      assert.equal(pass.value.kind, 'pass');
       const { outcomes } = pass.value;
       batches.push(outcomes[0]?.count ?? -1);
       // Pull the next pass before the clock moves, so a spurious pass shows.

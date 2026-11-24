@@ -40,6 +40,10 @@ _Avoid_: Sync, execution
 One call of `pipeline.watch()`: a pass each time that a source tells of a change, until the signal aborts.
 _Avoid_: Subscription, daemon, poll
 
+**Watch event**:
+What a watch gives to its host, of one of two kinds: a pass (`kind: 'pass'`), or a dataset failure (`kind: 'refresh'`). The type is `WatchEvent`, and a host narrows it on `kind`.
+_Avoid_: Message, notification, update
+
 **Clock**:
 The source of the time and the timers of a pipeline. The caller gives it to the pipeline: an app gives `globalThis`, and a test gives a fake clock that the test moves. The pipeline gives it to its sources and its destination on each call.
 _Avoid_: Timer (a timer is one wait that the clock starts), scheduler, time provider
@@ -181,7 +185,7 @@ What the refreshes of one derived dataset left, which readers see in `derived_st
 _Avoid_: Health, freshness (freshness is how current a stream is)
 
 **Dataset failure**:
-A failure of a derived dataset itself, for example SQL that its store refuses. It rejects the run, or it stops the watch.
+A failure of a derived dataset itself, for example SQL that its store refuses. It fails only its dataset: the derived status shows `failed`, the other datasets still refresh, and the refresh after the next pass tries it again. A watch gives it as a `DatasetFailure` when the dataset starts to fail. A run rejects with it at its end, as itself: a `DerivedDatasetError`, or a `DerivedDatasetsError` when more than one dataset failed.
 _Avoid_: Crash, error (a rule failure is also an error)
 
 **Rule**:

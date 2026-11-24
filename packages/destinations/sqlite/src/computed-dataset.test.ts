@@ -1163,7 +1163,7 @@ function modelImport(directory: string, model: Rule<string, RuleColumns>) {
   };
 }
 
-test('a rule call that fails stops the calls after it: the call beside it lands its row, no later file reaches the model, and the run rejects with the failure', async () => {
+test('a rule call that fails stops the calls after it in its refresh: the call beside it lands its row, the refresh after the pass tries the failed file again beside the next one, the last file never reaches the model, and the run rejects with the failure', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const model = new Model(2);
   const answers = modelImport(scratch.path, model);
@@ -1188,13 +1188,17 @@ test('a rule call that fails stops the calls after it: the call beside it lands 
     },
     {
       message: 'Derived dataset answers failed: the model refused a.txt',
-      calls: [['a.txt'], ['b.txt']],
-      rows: [{ ref: 'b.txt', status: 'computed', answer: 'B.TXT' }],
+      // The refresh for the commit, then the refresh after the pass.
+      calls: [['a.txt'], ['b.txt'], ['a.txt'], ['c.txt']],
+      rows: [
+        { ref: 'b.txt', status: 'computed', answer: 'B.TXT' },
+        { ref: 'c.txt', status: 'computed', answer: 'C.TXT' },
+      ],
     },
   );
 });
 
-test('a refresh that its watch stops while the model answers stays refreshing in derived_status, with no error, as a stop is not the dataset’s failure', async (t) => {
+test('a refresh that its watch stops while the model answers stays refreshing in derived_status, with no error, and the watch yields no dataset failure, as a stop is not the dataset’s failure', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const model = new Model(1);
   const answers = modelImport(scratch.path, model);
@@ -1203,10 +1207,12 @@ test('a refresh that its watch stops while the model answers stays refreshing in
   const status = `SELECT state, error, pending FROM derived_status WHERE dataset = 'answers'`;
   const controller = new AbortController();
   const watching = answers.pipeline.watch({ signal: controller.signal });
+  const kinds: string[] = [];
 
   let held;
   try {
-    await watching.next();
+    const first = await watching.next();
+    if (!first.done) kinds.push(first.value.kind);
     held = await waitFor(
       () => {
         assert.deepEqual(model.calls, [['a.txt']]);
@@ -1216,14 +1222,46 @@ test('a refresh that its watch stops while the model answers stays refreshing in
     );
   } finally {
     controller.abort();
-    await watching.return(undefined);
+    kinds.push(...(await Array.fromAsync(watching, ({ kind }) => kind)));
   }
 
   assert.deepEqual(
-    { held, stopped: answers.read(status) },
+    { held, stopped: answers.read(status), kinds },
     {
       held: [{ state: 'refreshing', error: null, pending: 1 }],
       stopped: [{ state: 'refreshing', error: null, pending: 1 }],
+      kinds: ['pass'],
+    },
+  );
+});
+
+test('a computed dataset whose rule cannot read an input row fails in derived_status with the error, and the run rejects with that dataset failure', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  // A rule with a bug in how it reads a loaded row.
+  class Misread extends Model {
+    override read(): never {
+      throw new Error('the rule cannot read the row');
+    }
+  }
+  const answers = modelImport(scratch.path, new Misread(1));
+  answers.source.rows = [{ id: '0', ref: 'a.txt' }];
+
+  const error = await answers.pipeline.run().then(
+    () => assert.fail('the run reported no failure'),
+    (error: unknown) => error,
+  );
+
+  assert.ok(error instanceof DerivedDatasetError, String(error));
+  assert.deepEqual(
+    {
+      message: error.message,
+      status: answers.read(
+        `SELECT state, error FROM derived_status WHERE dataset = 'answers'`,
+      ),
+    },
+    {
+      message: 'Derived dataset answers failed: the rule cannot read the row',
+      status: [{ state: 'failed', error: 'the rule cannot read the row' }],
     },
   );
 });

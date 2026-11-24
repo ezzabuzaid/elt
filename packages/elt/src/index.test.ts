@@ -36,6 +36,7 @@ import {
   PipelineError,
   type ReadMessage,
   type RecordedPass,
+  type RefreshTrigger,
   Source,
   type SourceMessage,
   type SourceReadOptions,
@@ -1168,9 +1169,10 @@ test('a watch opens one read context per batch and holds none while idle', async
   const controller = new AbortController();
   const held: number[] = [];
 
-  for await (const _ of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, t.signal]),
   })) {
+    if (event.kind !== 'pass') continue;
     held.push(source.opened.length - source.closed.length);
     if (held.length === 2) controller.abort();
   }
@@ -2385,9 +2387,11 @@ test('a connection whose change signals break the contract stops alone and is re
   const passes: string[] = [];
 
   const error = await (async () => {
-    for await (const { connection, outcomes } of pipeline.watch({
+    for await (const event of pipeline.watch({
       signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
+      if (event.kind !== 'pass') continue;
+      const { connection, outcomes } = event;
       passes.push(
         `${connection.name}:${outcomes.map(({ copy }) => copy.from.name).join(',')}`,
       );
@@ -2464,9 +2468,11 @@ test('a watch keeps loading the streams of its other change signals after one ch
   const controller = new AbortController();
   const passes: string[][] = [];
 
-  for await (const { outcomes } of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, t.signal]),
   })) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     passes.push(outcomes.map(({ copy }) => copy.from.name));
     if (passes.length === 1) {
       leftFails = true;
@@ -2508,9 +2514,11 @@ test('a change signal that fails for a system reason is recorded one time for ea
   const deadline = t.signal;
   const passes: string[][] = [];
 
-  for await (const { outcomes } of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, deadline]),
   })) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     passes.push(outcomes.map(({ copy }) => copy.from.name));
     // Two runs of failures: after the first the store answers again with the
     // same version, and after the second with a new version.
@@ -2718,9 +2726,11 @@ test('a change signal that fails for a config reason is not read again in that w
   const deadline = t.signal;
   const passes: string[][] = [];
 
-  for await (const { outcomes } of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, deadline]),
   })) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     passes.push(outcomes.map(({ copy }) => copy.from.name));
     if (passes.length === 1) {
       locked = true;
@@ -2763,9 +2773,10 @@ test('each interval has its own checks: a change signal with a long interval is 
   // A wait that never ends fails the test at this deadline.
   const deadline = t.signal;
 
-  for await (const _ of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, deadline]),
   })) {
+    if (event.kind !== 'pass') continue;
     await untilAborted(quickChecks.wait(), deadline);
     controller.abort();
   }
@@ -2807,9 +2818,11 @@ test('the first pass of a watch waits for the first check of every change signal
   });
   const passes: string[][] = [];
 
-  for await (const { outcomes } of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: t.signal,
   })) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     passes.push(outcomes.map(({ copy }) => copy.from.name));
     break;
   }
@@ -2836,10 +2849,12 @@ test('the pipeline disposes each gauge of the change signals one time when the w
   });
   const controller = new AbortController();
 
-  for await (const _ of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, t.signal]),
-  }))
+  })) {
+    if (event.kind !== 'pass') continue;
     controller.abort();
+  }
 
   assert.deepEqual(
     { shared: shared.disposals, own: own.disposals },
@@ -2932,10 +2947,13 @@ test('change signals that name an unselected stream, miss a selected stream or g
   const passes: string[] = [];
 
   const error = await (async () => {
-    for await (const { connection } of pipeline.watch({
+    for await (const event of pipeline.watch({
       signal: t.signal,
-    }))
+    })) {
+      if (event.kind !== 'pass') continue;
+      const { connection } = event;
       passes.push(connection.name);
+    }
   })().then(
     () => assert.fail('the broken declarations must be reported'),
     (error: unknown) => error,
@@ -2993,9 +3011,10 @@ test('an upkeep runs when the watch starts and then at each interval, and runs n
   // A wait that never ends fails the test at this deadline.
   const deadline = t.signal;
 
-  for await (const _ of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, deadline]),
   })) {
+    if (event.kind !== 'pass') continue;
     await untilAborted(thrice.wait(), deadline);
     controller.abort();
   }
@@ -3044,9 +3063,10 @@ test('an upkeep that fails for a system reason is recorded one time for each run
   // A wait that never ends fails the test at this deadline.
   const deadline = t.signal;
 
-  for await (const _ of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, deadline]),
   })) {
+    if (event.kind !== 'pass') continue;
     // Two runs of failures, each ended by a run that succeeds.
     for (const run of ['first', 'second']) {
       failedRuns.length = 0;
@@ -3137,9 +3157,10 @@ test('an upkeep that fails for a config reason runs no more in that watch, while
   // A wait that never ends fails the test at this deadline.
   const deadline = t.signal;
 
-  for await (const _ of pipeline.watch({
+  for await (const event of pipeline.watch({
     signal: AbortSignal.any([controller.signal, deadline]),
   })) {
+    if (event.kind !== 'pass') continue;
     await untilAborted(checked.wait(), deadline);
     controller.abort();
   }
@@ -3177,9 +3198,11 @@ test(
     const controller = new AbortController();
     const passes: string[] = [];
 
-    for await (const { connection } of pipeline.watch({
+    for await (const event of pipeline.watch({
       signal: controller.signal,
     })) {
+      if (event.kind !== 'pass') continue;
+      const { connection } = event;
       passes.push(connection.name);
       controller.abort();
     }
@@ -3213,40 +3236,268 @@ test('a stopping watch waits for the gauges of its change signals to finish stop
   });
   const controller = new AbortController();
 
-  for await (const _ of pipeline.watch({ signal: controller.signal }))
+  for await (const event of pipeline.watch({ signal: controller.signal })) {
+    if (event.kind !== 'pass') continue;
     controller.abort();
+  }
 
   assert.equal(stopped, true);
 });
 
-test('under a watch, a derived dataset whose refresh fails stops the watch, which rejects with that failure', async (t) => {
+test(
+  'under a watch, a dataset that fails while the watch waits for a change is yielded with no pass after it, and the watch goes on to the pass of the next change',
+  { timeout: 10_000 },
+  async (t) => {
+    const refused = new Error('the store refused the derived SQL');
+    class Refused extends DerivedDataset<NamedTarget> {
+      readonly name = 'refused';
+      override async refresh(): Promise<void> {
+        throw refused;
+      }
+    }
+    let version = 0;
+    // A store that changes only when the test changes it, so no pass comes
+    // after the first one until then.
+    class Changing extends ContextSource {
+      override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+        return [
+          {
+            gauge: new Upstream(() => version),
+            streams,
+            interval: 5,
+            timeout: 5,
+          },
+        ];
+      }
+    }
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new MemoryHistory(),
+      connections: [leftOnly('watching', new Changing())],
+      derived: [new Refused()],
+    });
+    const controller = new AbortController();
+    const events: string[] = [];
+
+    const ended = await untilAborted(
+      (async () => {
+        for await (const event of pipeline.watch({
+          signal: controller.signal,
+        })) {
+          events.push(
+            event.kind === 'pass'
+              ? `pass ${event.connection.name}`
+              : `refresh ${event.dataset}: ${event.error === refused ? 'refused' : String(event.error)}`,
+          );
+          if (events.length === 2) version = 1;
+          if (events.length === 3) controller.abort();
+        }
+      })().then(
+        () => 'ended',
+        (error: unknown) => error,
+      ),
+      t.signal,
+    );
+
+    assert.equal(ended, 'ended');
+    assert.deepEqual(
+      { first: events.slice(0, 2).toSorted(), then: events.slice(2) },
+      {
+        first: ['pass watching', 'refresh refused: refused'],
+        then: ['pass watching'],
+      },
+    );
+  },
+);
+
+test(
+  'a stop that ends a refresh is no dataset failure: a watch yields none and ends, and a run resolves as its passes did',
+  { timeout: 10_000 },
+  async (t) => {
+    // The refresh after a pass reads until its signal aborts, as a store read
+    // does, and then throws the reason; a refresh for a commit ends at once.
+    class Reading extends DerivedDataset<NamedTarget> {
+      readonly name = 'reading';
+      started = new Latch();
+      override async refresh({
+        signal,
+        trigger,
+      }: {
+        readonly signal?: AbortSignal;
+        readonly trigger: RefreshTrigger;
+      }): Promise<void> {
+        if (trigger.kind === 'commit') return;
+        this.started.open();
+        await untilAborted(new Promise(() => {}), signal);
+      }
+    }
+    const reading = new Reading();
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new MemoryHistory(),
+      connections: [leftOnly('reading', new Watching())],
+      derived: [reading],
+    });
+    const watched = new AbortController();
+    const kinds: string[] = [];
+
+    const watch = untilAborted(
+      (async () => {
+        for await (const event of pipeline.watch({ signal: watched.signal })) {
+          kinds.push(event.kind);
+          await reading.started.wait();
+          watched.abort();
+        }
+      })(),
+      t.signal,
+    );
+    await watch;
+    reading.started = new Latch();
+    const stopped = new AbortController();
+    const run = pipeline.run({ signal: stopped.signal });
+    await untilAborted(reading.started.wait(), t.signal);
+    stopped.abort();
+
+    assert.deepEqual(kinds, ['pass']);
+    assert.deepEqual(
+      (await run).map(({ count }) => count),
+      [1],
+    );
+  },
+);
+
+test(
+  'under a watch, a dataset that keeps failing is tried again by the refresh after the pass, not at each commit, and is yielded once',
+  { timeout: 10_000 },
+  async (t) => {
+    const tries: string[] = [];
+    class Refused extends DerivedDataset<NamedTarget> {
+      readonly name = 'refused';
+      override async refresh({
+        trigger,
+      }: {
+        readonly trigger: RefreshTrigger;
+      }): Promise<void> {
+        tries.push(trigger.kind);
+        throw new Error('the store refused the derived SQL');
+      }
+    }
+    class After extends DerivedDataset<NamedTarget> {
+      readonly name = 'after';
+      refreshes = 0;
+      override async refresh(): Promise<void> {
+        this.refreshes += 1;
+      }
+    }
+    const after = new After();
+    // One pass of three commits, each held until the refresh that it asked
+    // for reached the dataset after the failed one, as a long crawl commits.
+    class Committing extends Watching {
+      protected override async *extract(
+        configuration: CopyConfiguration,
+      ): AsyncIterable<SourceMessage> {
+        const stream = configuration.stream.name;
+        for (const at of [1, 2, 3]) {
+          yield record(stream, `${stream}-${at}`);
+          yield checkpoint(stream, at);
+          await waitFor(() => assert.ok(after.refreshes >= at), {
+            signal: t.signal,
+            interval: 1,
+          });
+        }
+      }
+    }
+    const source = new Committing();
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new MemoryHistory(),
+      connections: [
+        new Connection({
+          name: 'committing',
+          source,
+          destination: new DrainingDestination(),
+          checkpoints: new MemoryCheckpoints([]),
+          steps: [
+            new Copy(source.left, new NamedTarget('left'), {
+              id: 'left',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append',
+            }),
+          ],
+        }),
+      ],
+      derived: [new Refused(), after],
+    });
+    const controller = new AbortController();
+
+    const watch = untilAborted(
+      Array.fromAsync(
+        pipeline.watch({ signal: controller.signal }),
+        ({ kind }) => kind,
+      ),
+      t.signal,
+    );
+    await waitFor(() => assert.ok(tries.includes('pass')), {
+      signal: t.signal,
+      interval: 1,
+    });
+    controller.abort();
+    const events = await watch;
+
+    assert.deepEqual(tries, ['commit', 'pass']);
+    assert.deepEqual(events.toSorted(), ['pass', 'refresh']);
+  },
+);
+
+test('a run whose copy failed and whose dataset failed rejects with the dataset failure, after every dataset refreshed', async () => {
   const refused = new Error('the store refused the derived SQL');
+  const refreshed: string[] = [];
   class Refused extends DerivedDataset<NamedTarget> {
     readonly name = 'refused';
     override async refresh(): Promise<void> {
+      refreshed.push(this.name);
       throw refused;
     }
   }
+  class After extends DerivedDataset<NamedTarget> {
+    readonly name = 'after';
+    override async refresh(): Promise<void> {
+      refreshed.push(this.name);
+    }
+  }
+  const history = new MemoryHistory();
   const pipeline = new Pipeline({
     clock: globalThis,
-    history: new MemoryHistory(),
-    connections: [leftOnly('watching', new Watching())],
-    derived: [new Refused()],
+    history,
+    connections: [
+      leftOnly(
+        'failing',
+        new ContextSource({ left: [new Error('the store is gone')] }),
+      ),
+    ],
+    derived: [new Refused(), new After()],
   });
 
-  const outcome = await untilAborted(
-    Array.fromAsync(
-      pipeline.watch({ signal: new AbortController().signal }),
-    ).then(
-      () => 'ended without the failure',
-      (error: unknown) => error,
-    ),
-    t.signal,
+  const error = await pipeline.run().then(
+    () => assert.fail('the run reported nothing'),
+    (error: unknown) => error,
   );
 
-  assert.ok(outcome instanceof DerivedDatasetError, String(outcome));
-  assert.equal(outcome.dataset, 'refused');
-  assert.equal(outcome.cause, refused);
+  assert.ok(error instanceof DerivedDatasetError, String(error));
+  assert.deepEqual(
+    {
+      dataset: error.dataset,
+      cause: error.cause,
+      refreshed,
+      recorded: history.log.at(-1),
+    },
+    {
+      dataset: 'refused',
+      cause: refused,
+      refreshed: ['refused', 'after'],
+      recorded: 'finish failing failed',
+    },
+  );
 });
 
 test('a stopped watch ends only once the derived refresh it started has ended', async () => {
@@ -3268,7 +3519,8 @@ test('a stopped watch ends only once the derived refresh it started has ended', 
   });
   const controller = new AbortController();
 
-  for await (const _ of pipeline.watch({ signal: controller.signal })) {
+  for await (const event of pipeline.watch({ signal: controller.signal })) {
+    if (event.kind !== 'pass') continue;
     await started.wait();
     controller.abort();
   }
@@ -3371,9 +3623,10 @@ test("breaking a watch's loop ends the pass another connection is running, recor
   });
 
   const consumed = (async () => {
-    for await (const _ of pipeline.watch({
+    for await (const event of pipeline.watch({
       signal: new AbortController().signal,
     })) {
+      if (event.kind !== 'pass') continue;
       await reading.promise;
       break;
     }

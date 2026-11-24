@@ -2257,6 +2257,7 @@ test(
       ]);
 
       assert.ok(!first.done);
+      assert.equal(first.value.kind, 'pass');
       assert.deepEqual(
         first.value.outcomes.map(({ copy }) => copy.from.name),
         streams.map(({ name }) => name),

@@ -1461,7 +1461,9 @@ test('an Activity watch wakes only the streams whose segments or database change
     // A pass that never comes ends the watch, so the assertion fails.
     signal: AbortSignal.any([controller.signal, t.signal]),
   });
-  for await (const { outcomes } of watch) {
+  for await (const event of watch) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
       // Biome appends in place: the file keeps its size.

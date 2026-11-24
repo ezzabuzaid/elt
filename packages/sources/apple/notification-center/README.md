@@ -50,7 +50,8 @@ const pipeline = new Pipeline({
 });
 
 const controller = new AbortController();
-for await (const pass of pipeline.watch({ signal: controller.signal })) {
+for await (const event of pipeline.watch({ signal: controller.signal })) {
+  if (event.kind !== 'pass') continue;
   // Each pass loaded the notifications that arrived since the last one.
 }
 // Call controller.abort() to stop the watch.

@@ -14,7 +14,11 @@ import {
   type CopyResult,
   describeFailures,
 } from './copy.ts';
-import type { DerivedDataset } from './derived-dataset.ts';
+import {
+  type DatasetFailure,
+  type DerivedDataset,
+  DerivedDatasetsError,
+} from './derived-dataset.ts';
 import { DerivedRefreshes } from './derived-refreshes.ts';
 import { interleave } from './interleave.ts';
 import {
@@ -63,9 +67,14 @@ type Asked<Target extends DestinationTarget> =
 
 // One connection's read over the copies it selected, and what each loaded.
 export type Pass<Target extends DestinationTarget> = {
+  readonly kind: 'pass';
   readonly connection: Connection<Target>;
   readonly outcomes: readonly CopyOutcome<Target>[];
 };
+
+// What a watch gives: a pass, or a dataset failure.
+export type WatchEvent<Target extends DestinationTarget> =
+  Pass<Target> | DatasetFailure;
 
 // A run that did not load completely, as its sync history recorded. Like
 // Airbyte, every copy still ran; results holds each one's committed counts and
@@ -149,10 +158,14 @@ export class Pipeline<Target extends DestinationTarget> {
   // stop that comes after the passes ended only stops the derived data
   // catching up: the run ends as its passes did, and the next refresh goes on.
   // While the passes read, each commit asks for a refresh in the background,
-  // so derived data follows a long pass. A background refresh's failure
-  // stops no pass, and rejects the run once the passes ended, as the failure
-  // of a micro-batch fails a Spark query; otherwise the run refreshes once
-  // more after the passes, and that refresh's failure rejects it.
+  // so derived data follows a long pass. After the passes, the run refreshes
+  // every dataset once more, also when copies or datasets failed. A dataset
+  // failure fails only its dataset: it stops no pass and no other dataset,
+  // and the refresh after the passes tries it again (ADR 0031). Then a
+  // dataset whose last refresh failed rejects the run as itself, since no
+  // sync history recorded it: its DerivedDatasetError, or a
+  // DerivedDatasetsError when more than one failed. Else a copy that did not
+  // load completely rejects it with a PipelineError.
   async run(options?: {
     readonly signal?: AbortSignal;
   }): Promise<CopyResult<Target>[]> {
@@ -163,7 +176,6 @@ export class Pipeline<Target extends DestinationTarget> {
       this.connections,
       this.#clock,
       signal,
-      () => {},
     );
     let passes: PromiseSettledResult<Pass<Target>>[];
     try {
@@ -187,11 +199,12 @@ export class Pipeline<Target extends DestinationTarget> {
       pass.status === 'fulfilled' ? pass.value.outcomes : [],
     );
     if (results.some(({ cancelled }) => cancelled)) throw signal?.reason;
-    // Derived data follows what the copies committed, also when some copies
-    // failed; a dataset's own failure rejects the run as itself, since no
-    // history recorded it.
-    if (refreshes.failure !== undefined) throw refreshes.failure.error;
     await refreshes.refresh();
+    const [first, second, ...rest] = refreshes.failing;
+    if (first !== undefined)
+      throw second === undefined
+        ? first
+        : new DerivedDatasetsError([first, second, ...rest]);
     if (results.some(({ failures }) => failures.length > 0))
       throw new PipelineError(results);
     return results.map(({ failures: _, cancelled: __, ...result }) => result);
@@ -203,13 +216,15 @@ export class Pipeline<Target extends DestinationTarget> {
   // break the contract stops alone, and its failure is recorded; the rest keep
   // watching. Once every connection stopped, or signal aborts, the recorded
   // failures are thrown together as a WatchError. An error the sync history
-  // could not record, or a derived dataset's own failure, stops every
-  // connection and rejects as itself.
+  // could not record stops every connection and rejects as itself. A dataset
+  // failure stops nothing: the watch gives it beside the passes once, when
+  // the dataset starts to fail, the other datasets still refresh, and the
+  // refresh after the next pass tries it again (ADR 0031).
   async *watch({
     signal,
   }: {
     signal: AbortSignal;
-  }): AsyncGenerator<Pass<Target>> {
+  }): AsyncGenerator<WatchEvent<Target>> {
     await this.#declare();
     if (signal.aborted) return;
     const controller = new AbortController();
@@ -220,9 +235,6 @@ export class Pipeline<Target extends DestinationTarget> {
       this.connections,
       this.#clock,
       watching,
-      // With no reason: the passes it stops were not refused by this failure,
-      // and no sync history records a dataset's failure (ADR 0004).
-      () => controller.abort(),
     );
     const passes = interleave(
       this.connections
@@ -234,23 +246,34 @@ export class Pipeline<Target extends DestinationTarget> {
         ),
       Number.POSITIVE_INFINITY,
     );
+    // A dataset can fail while no pass comes, so its failure is merged with
+    // the passes; once every connection stopped, the stop ends the failures.
+    const events = interleave<WatchEvent<Target>>(
+      [
+        (async function* () {
+          yield* passes;
+          controller.abort();
+        })(),
+        refreshes.failures(watching),
+      ],
+      Number.POSITIVE_INFINITY,
+    );
     // Advanced by hand: yield* would forward a consumer's early return to the
     // merged loops before the abort that lets idle ones finish.
     try {
       for (
-        let next = await passes.next();
+        let next = await events.next();
         !next.done;
-        next = await passes.next()
+        next = await events.next()
       ) {
-        refreshes.request('pass');
+        if (next.value.kind === 'pass') refreshes.request('pass');
         yield next.value;
       }
     } finally {
       controller.abort();
-      await passes.return(undefined);
+      await events.return(undefined);
       await refreshes.settled();
     }
-    if (refreshes.failure !== undefined) throw refreshes.failure.error;
     if (stopped.length > 0)
       throw new WatchError(stopped, stopped.map(errorMessage).join('; '));
   }
@@ -605,7 +628,11 @@ export class Pipeline<Target extends DestinationTarget> {
           this.#now(),
         );
         passChannels.finish.publish(new PassFinished(connection, outcomes));
-        return Object.freeze({ connection, outcomes: Object.freeze(outcomes) });
+        return Object.freeze({
+          kind: 'pass',
+          connection,
+          outcomes: Object.freeze(outcomes),
+        });
       },
     );
   }

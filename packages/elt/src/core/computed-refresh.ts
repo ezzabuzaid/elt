@@ -185,7 +185,7 @@ export type PreparedOutputs<Row> = {
 
 type Refresh<Input, Compute, Row> = {
   readonly rule: Compute;
-  readonly inputs: ReadonlyMap<string, Input> | null;
+  readonly inputs: () => Promise<ReadonlyMap<string, Input> | null>;
   readonly prepare: (
     keys: ReadonlySet<string>,
   ) => Promise<PreparedOutputs<Row>>;
@@ -208,12 +208,13 @@ type TableRuleRefresh<Input> = Refresh<
 // others; then the rule makes each row whose input or rule changed, and a
 // refresh after the passes also tries failed rows again. The passes try each
 // input at most once, so a failing rule is asked once a pass. A rule's
-// failure on one input is that row's; it never fails the load. inputs is
-// null while a relation that the dataset reads is gone: the dataset waits
-// with what it made, as a view waits. A value that does not fit its column,
-// such as a vector of other dimensions, fails its row. The kind of the rule
-// sets what a computed row holds: the values of a Rule, or the parts of a
-// TableRule, each with its part hash.
+// failure on one input is that row's; it never fails the load. inputs reads
+// the inputs, or gives null while a relation that the dataset reads is gone:
+// the dataset waits with what it made, as a view waits. Each other failure,
+// also one of inputs, is the dataset's own, which its status records. A
+// value that does not fit its column, such as a vector of other dimensions,
+// fails its row. The kind of the rule sets what a computed row holds: the
+// values of a Rule, or the parts of a TableRule, each with its part hash.
 export async function refreshComputed<Input>(
   refresh: RuleRefresh<Input>,
 ): Promise<void>;
@@ -223,12 +224,13 @@ export async function refreshComputed<Input>(
 export async function refreshComputed<Input>(
   refresh: RuleRefresh<Input> | TableRuleRefresh<Input>,
 ): Promise<void> {
-  const { inputs, status, signal } = refresh;
-  if (inputs === null) {
-    await status.waiting();
-    return;
-  }
+  const { status, signal } = refresh;
   try {
+    const inputs = await refresh.inputs();
+    if (inputs === null) {
+      await status.waiting();
+      return;
+    }
     if (ofTableRule(refresh)) {
       const { rule } = refresh;
       await update(refresh, inputs, (head, result) =>

@@ -972,7 +972,7 @@ test(
 
     const woken: { streams: number; synced: boolean }[] = [];
     const syncing: Promise<void>[] = [];
-    for await (const { outcomes } of new Pipeline({
+    for await (const event of new Pipeline({
       clock: fast,
       history: new PostgresSyncHistory({ url: database.connectionString }),
       connections: [
@@ -997,6 +997,8 @@ test(
       // A pass that never comes ends the watch, so the assertion fails.
       signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
+      if (event.kind !== 'pass') continue;
+      const { outcomes } = event;
       woken.push({ streams: outcomes.length, synced });
       if (woken.length === 1) syncing.push(sync(probes()));
       else controller.abort();

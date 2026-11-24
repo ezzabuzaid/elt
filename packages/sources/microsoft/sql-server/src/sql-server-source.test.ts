@@ -21,12 +21,14 @@ import {
   Pipeline,
   type PipelineClock,
   PipelineError,
+  type WatchEvent,
   passChannels,
 } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
   PostgresSyncHistory,
+  type PostgresTable,
 } from '@eltjs/elt-postgresql';
 import {
   SqlServerDatabase,
@@ -146,14 +148,9 @@ function watchSqlServer(
 }
 
 // The streams of the next pass of a watch, by name.
-function loadedBy(
-  result: IteratorResult<{
-    readonly outcomes: readonly {
-      readonly copy: { readonly from: { readonly name: string } };
-    }[];
-  }>,
-): string[] {
+function loadedBy(result: IteratorResult<WatchEvent<PostgresTable>>): string[] {
   assert.ok(!result.done, 'the watch ended before its pass');
+  assert.equal(result.value.kind, 'pass');
   return result.value.outcomes.map(({ copy }) => copy.from.name).sort();
 }
 

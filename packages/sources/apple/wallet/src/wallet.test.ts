@@ -1496,6 +1496,7 @@ test('a Wallet watch loads each commit while passd keeps its store open, and sto
   ]) {
     const pass = await passed(watching.next());
     assert.ok(!pass.done);
+    assert.equal(pass.value.kind, 'pass');
     batches.push(counts(pass.value.outcomes));
     change();
   }

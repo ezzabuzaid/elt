@@ -1189,6 +1189,7 @@ test('a change to the version of a site wakes the streams of a watch', async (t:
     const woken = await untilAborted(next, t.signal);
 
     assert.ok(!woken.done);
+    assert.equal(woken.value.kind, 'pass');
     assert.deepEqual(
       Object.fromEntries(
         woken.value.outcomes.map(({ copy, count }) => [copy.from.name, count]),

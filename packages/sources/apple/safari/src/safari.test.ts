@@ -2322,13 +2322,15 @@ test('a Safari watch wakes only the streams of the store that changed, while Saf
   const controller = new AbortController();
   const woken: string[][] = [];
 
-  for await (const { outcomes } of watchSafari(
+  for await (const event of watchSafari(
     source,
     streams,
     join(scratch.path, 'import'),
     // A pass that never comes ends the watch, so the assertion fails.
     AbortSignal.any([controller.signal, t.signal]),
   )) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
       history
@@ -3113,13 +3115,15 @@ test('a Safari watch wakes history when a profile History.db appears, and a prop
   const controller = new AbortController();
   const woken: string[][] = [];
 
-  for await (const { outcomes } of watchSafari(
+  for await (const event of watchSafari(
     source,
     [source.historyVisits, source.bookmarks],
     join(scratch.path, 'import'),
     // A pass that never comes ends the watch, so the assertion fails.
     AbortSignal.any([controller.signal, t.signal]),
   )) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1) {
       const profile = join(location.container, 'Profiles', 'SERVER-NEW');

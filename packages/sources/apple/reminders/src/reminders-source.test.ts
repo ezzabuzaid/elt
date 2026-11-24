@@ -1389,6 +1389,7 @@ test(
     try {
       const subscribed = await watching.next();
       assert.ok(!subscribed.done);
+      assert.equal(subscribed.value.kind, 'pass');
       assert.deepEqual(
         subscribed.value.outcomes.map(({ copy }) => copy.from.name),
         ['reminders'],
@@ -1401,6 +1402,7 @@ test(
 
       const started = await stopped.next();
       assert.ok(!started.done);
+      assert.equal(started.value.kind, 'pass');
       assert.deepEqual(
         started.value.outcomes.map(({ copy }) => copy.from.name),
         ['reminders'],

@@ -266,7 +266,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
       clock,
     );
     const refresh = {
-      inputs: await this.#inputs(load.connection),
+      inputs: () => this.#inputs(load.connection),
       prepare: (keys: ReadonlySet<string>) =>
         this.#prepare(load, status, keys, signal),
       status,

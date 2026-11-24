@@ -906,6 +906,7 @@ test('watching the Accounts store reports each commit to it', async (t) => {
   const woken = async () => {
     const pass = await watch.next();
     assert.ok(!pass.done, 'the watch ended before its pass');
+    assert.equal(pass.value.kind, 'pass');
     return pass.value.outcomes.map(({ copy }) => copy.from.name);
   };
   assert.deepEqual(await woken(), ['accounts', 'accountProperties']);

@@ -2072,6 +2072,7 @@ test(
       const failedAt = clock.now;
       assert.ok(
         !failed.done &&
+          failed.value.kind === 'pass' &&
           failed.value.outcomes.some(({ failures }) => failures.length > 0),
       );
       body = 'fixed';
@@ -2145,6 +2146,7 @@ test(
       const failed = await watch.next();
       assert.ok(
         !failed.done &&
+          failed.value.kind === 'pass' &&
           failed.value.outcomes.some(({ failures }) => failures.length > 0),
       );
       requests.splice(0);
@@ -2239,6 +2241,7 @@ test(
       const failedAt = clock.now;
       assert.ok(
         !failed.done &&
+          failed.value.kind === 'pass' &&
           failed.value.outcomes.some(({ failures }) => failures.length > 0),
       );
 
@@ -3070,6 +3073,7 @@ test(
       const again = await watch.next();
 
       assert.ok(!again.done);
+      assert.equal(again.value.kind, 'pass');
       assert.deepEqual(
         again.value.outcomes
           .map(({ copy }) => copy.from.name)

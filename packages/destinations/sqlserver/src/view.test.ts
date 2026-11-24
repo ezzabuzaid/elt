@@ -487,7 +487,7 @@ test('a view redeclared over a table its copy has not loaded yet leaves no view 
   );
 });
 
-test('a view that reads a view declared after it fails the run with the error of SQL Server', async () => {
+test('a view that reads a view declared after it is published by the refresh after the passes, once the later view is there', async () => {
   await using database = await scratch();
   const { pipeline } = recordsPipeline(
     database.login,
@@ -504,12 +504,15 @@ test('a view that reads a view declared after it fails the run with the error of
     ],
   );
 
-  const error = await rejection(pipeline.run());
+  // The refresh that the commit of the copy asks for fails record_load,
+  // since record_count is not there yet; the refresh after the pass tries it
+  // again once record_count is there.
+  await pipeline.run();
 
-  assert.ok(!(error instanceof PipelineError), String(error));
-  assert.ok(Error.isError(error));
-  assert.match(error.message, /Invalid object name 'record_count'/);
-  assert.equal((await views(database)).includes('record_load'), false);
+  assert.deepEqual(
+    plain(await database.admin.query('SELECT many FROM marts.record_load')),
+    [{ many: true }],
+  );
 });
 
 test('a changed declaration alters the view in place, and a view that someone made over all its columns shows the new one and keeps its description', async () => {

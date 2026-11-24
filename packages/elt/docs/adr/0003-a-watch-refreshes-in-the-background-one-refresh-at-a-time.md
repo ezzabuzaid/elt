@@ -1,5 +1,7 @@
 # A watch refreshes in the background, one refresh at a time
 
+Superseded in part on 2026-11-23 (datahub #5453) by [ADR 0031](./0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md): a dataset failure no longer stops the watch. It fails only its dataset, the watch gives it as a `DatasetFailure` beside its passes, and the refresh after the next pass tries it again.
+
 A refresh can be slow. For example, the text of many images needs one OCR read for each image. The host before this change first waited for each refresh in its watch loop. That stopped every connection: the watch makes the next pass only after the host took the last one. One slow file then held all new rows back. This is head-of-line blocking.
 
 Thus a watch refreshes its derived datasets in the background. After each pass, the watch asks for a refresh, and it gives the pass to the host at once. One refresh runs at a time. A pass that commits while a refresh runs asks for one more refresh after it, and more passes in that time ask for no more than that one. A build watcher keeps one rebuild in its queue in the same way. A dataset failure stops the watch. A refresh that the stop of the watch ended is not a failure.

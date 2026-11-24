@@ -276,10 +276,12 @@ test(
       const passes: { stream: string; count: number; failures: unknown[] }[][] =
         [];
 
-      for await (const { outcomes } of run.watch({
+      for await (const event of run.watch({
         // A pass that never comes ends the watch, so the assertion fails.
         signal: AbortSignal.any([controller.signal, t.signal]),
       })) {
+        if (event.kind !== 'pass') continue;
+        const { outcomes } = event;
         // The copies of one pass finish in any order.
         passes.push(
           outcomes
@@ -637,9 +639,11 @@ test('a Clock watch follows selected database and preference changes and cancels
   const controller = new AbortController();
   const batches: { streams: string[]; count: number; deleted: number }[] = [];
   try {
-    for await (const { outcomes } of run.watch({
+    for await (const event of run.watch({
       signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
+      if (event.kind !== 'pass') continue;
+      const { outcomes } = event;
       batches.push({
         streams: outcomes.map(({ copy }) => copy.from.name).sort(),
         count: outcomes.reduce((sum, { count }) => sum + count, 0),
@@ -696,9 +700,11 @@ test('a Clock watch goes on when a preference file is removed, and loads it agai
     cities: unknown[];
   }[] = [];
   try {
-    for await (const { outcomes } of run.watch({
+    for await (const event of run.watch({
       signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
+      if (event.kind !== 'pass') continue;
+      const { outcomes } = event;
       const failures = outcomes.flatMap(({ failures }) => failures);
       errors.push(...failures.map(({ error }) => error));
       batches.push({

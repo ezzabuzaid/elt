@@ -736,9 +736,11 @@ test('a watch loads each write of the sidebar, and fails as config when it goes 
     failures: string[];
   }[] = [];
   try {
-    for await (const { outcomes } of pipeline.watch({
+    for await (const event of pipeline.watch({
       signal: AbortSignal.any([controller.signal, t.signal]),
     })) {
+      if (event.kind !== 'pass') continue;
+      const { outcomes } = event;
       batches.push({
         streams: outcomes.map(({ copy }) => copy.from.name).sort(),
         count: outcomes.reduce((sum, { count }) => sum + count, 0),

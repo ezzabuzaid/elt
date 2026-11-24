@@ -1,5 +1,7 @@
 # A rule failure stays on its output
 
+Superseded in part on 2026-11-23 (datahub #5453) by [ADR 0031](./0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md): a dataset failure no longer stops the watch. The dataset records it in `derived_status`, the watch gives it as a `DatasetFailure`, and the run still rejects with the dataset failure after every other dataset refreshed: its `DerivedDatasetError`, or a `DerivedDatasetsError` when more than one failed.
+
 A rule can fail on one input. For example, a stored PDF can be damaged. On 2026-10-27, a sync of Context Compiler read the text of 3,938 Mail files, and PDFKit failed on one of them. A run must not fail for one damaged file: then each sync fails, and no other file gets its text.
 
 Thus a rule failure is the output of that input. The computed dataset keeps it in the row of the key, with the status `failed` and the reason. The load and the run continue. The next refresh tries that input again. pgai keeps the failures of its vectorizer in the same way, in the table `ai.vectorizer_errors`.

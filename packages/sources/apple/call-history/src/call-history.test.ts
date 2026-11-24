@@ -921,7 +921,12 @@ test(
     controller.abort();
 
     assert.deepEqual(
-      [first, second].map((pass) => pass.done || counts(pass.value.outcomes)),
+      [first, second].map(
+        (pass) =>
+          pass.done ||
+          pass.value.kind !== 'pass' ||
+          counts(pass.value.outcomes),
+      ),
       [
         {
           calls: { count: 5, deleted: 0 },

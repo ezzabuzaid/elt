@@ -194,7 +194,7 @@ export class ComputedDataset<Input> extends DerivedDataset<SQLiteTable> {
       clock,
     );
     const refresh = {
-      inputs: this.#inputs(connections),
+      inputs: async () => this.#inputs(connections),
       prepare: async (keys: ReadonlySet<string>) =>
         this.#prepare(load, status, keys),
       status,

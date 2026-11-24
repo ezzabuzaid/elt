@@ -710,9 +710,13 @@ Use the same pipeline for continuous copies:
 ```ts
 const controller = new AbortController();
 
-for await (const { connection, outcomes } of pipeline.watch({
-  signal: controller.signal,
-})) {
+for await (const event of pipeline.watch({ signal: controller.signal })) {
+  if (event.kind === 'refresh') {
+    // A derived dataset started to fail. The watch goes on.
+    console.warn(`Derived dataset ${event.dataset} failed`, event.error);
+    continue;
+  }
+  const { connection, outcomes } = event;
   // This pass's copies have already extracted, loaded, and saved their checkpoints.
 }
 
@@ -734,7 +738,8 @@ Passes and checks:
 - At each check, a stream is current as of that check when it has no pending change, no pass reads it, and its last copy loaded completely. When its source tells that its upstream was last current at an earlier time, the stream is current as of that earlier time.
 - The pipeline gives each check to `checked()` of its sync history. `checked()` records the first check of a connection at once, and after that at most one time each minute. Only then does it ask the source. Thus `current_as_of` keeps moving while nothing changes, and it stops where the upstream stopped.
 - A stream whose change failed to load stays current only as of the time before that change. Thus a failed refresh shows as a `current_as_of` that gets older. A Debezium heartbeat and a Beam watermark on an idle partition show in the same way that a source is caught up.
-- Each pass yields a `Pass`, `{ connection, outcomes }`, after its load and its checkpoints are durable. Each outcome has the committed `count` and `deleted` and its `failures`, which is empty when the copy loaded completely. The counts are accepted observations, also deduplication no-ops and keys that were not there.
+- The watch yields a `WatchEvent`: a `Pass` or a `DatasetFailure`. A loop narrows on `kind`.
+- Each pass yields a `Pass`, `{ kind: 'pass', connection, outcomes }`, after its load and its checkpoints are durable. Each outcome has the committed `count` and `deleted` and its `failures`, which is empty when the copy loaded completely. The counts are accepted observations, also deduplication no-ops and keys that were not there.
 - A pass that did not load completely does not end the watch, as Airbyte keeps the schedule of a connection after a failed sync. The caller sees its failures, and the failed partitions keep their checkpoints. See [ADR 0010](./docs/adr/0010-a-watch-keeps-watching-after-an-incomplete-pass.md).
 
 Retries:
@@ -763,6 +768,7 @@ When a watch stops:
 - When each connection stopped, or the signal aborts, the watch throws the errors of the stopped connections together as a `WatchError`. A `WatchError` is an `AggregateError`. Its message joins entries `Connection <name>: <message>`, and each error has the error that stopped the connection as its `cause`.
 - A `WatchError` holds only failures that the sync history recorded. An error that the sync history throws itself, such as a write that fails or an error of the host code in a history wrapper, is recorded nowhere. It stops each connection at once, and the watch rejects with that error itself.
 - When the history cannot record a failure, the watch rejects with a `SuppressedError`. Its `error` is the error of the history, and its `suppressed` is the failure.
+- A dataset failure does not stop the watch. The watch yields it as a `DatasetFailure`. See [When a derived dataset fails](#when-a-derived-dataset-fails).
 - The pipeline does not reconcile on a schedule, and it does not disable a connection.
 
 Stop:
@@ -1068,8 +1074,9 @@ const pipeline = new Pipeline({
 ## When the pipeline refreshes
 
 - **Each commit** of a copy asks for a refresh in the background, in a run and in a watch. Thus a long pass shows its derived data while it reads, from what its checkpoints committed. One refresh runs at a time. A commit while a refresh runs asks for one more refresh after it. No pass waits for a refresh. See [ADR 0017](./docs/adr/0017-each-commit-asks-for-a-refresh.md).
-- **A run** waits for the refresh that runs after its passes, and then refreshes each derived dataset one more time, also when some copies failed. A background refresh that failed rejects the run after its passes, in place of that last refresh; else the last refresh gives the run its dataset failure. Then the run rejects with `PipelineError`. See [ADR 0002](./docs/adr/0002-a-run-refreshes-its-derived-data-also-when-copies-failed.md).
-- **A watch** also asks for a refresh after each pass. A dataset failure stops the watch. See [ADR 0003](./docs/adr/0003-a-watch-refreshes-in-the-background-one-refresh-at-a-time.md).
+- **A run** waits for the refresh that runs after its passes, and then refreshes each derived dataset one more time, also when some copies or datasets failed. Then a dataset whose last refresh failed rejects the run, as itself; else a copy that did not load completely rejects it with `PipelineError`. See [ADR 0002](./docs/adr/0002-a-run-refreshes-its-derived-data-also-when-copies-failed.md).
+- **A watch** also asks for a refresh after each pass. See [ADR 0003](./docs/adr/0003-a-watch-refreshes-in-the-background-one-refresh-at-a-time.md).
+- **A failed dataset** waits for the refresh after the next pass. A refresh for a commit does not try it again. Thus a dataset that always fails is tried once for each pass. See [ADR 0031](./docs/adr/0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md).
 - The pipeline refreshes the derived datasets in the order of the list. A view that comes after a computed dataset can read the view of that dataset.
 - A run does not refresh after an abort, or after an error that no sync history recorded. A stop that comes after the passes only stops the refresh. The next refresh continues the work.
 
@@ -1165,7 +1172,11 @@ The `ComputedDataset` of elt-sqlite takes a `Rule` or a `TableRule` in `compute`
 ## When a derived dataset fails
 
 - **A rule failure** is the output of its input: the status `failed` and the reason. The load and the run continue, and the next refresh tries the input again. See [ADR 0004](./docs/adr/0004-a-rule-failure-stays-on-its-output.md).
-- **A dataset failure**, for example SQL that SQLite refuses, rejects the run, or it stops the watch, with a `DerivedDatasetError`. Its `dataset` names the dataset, and its `cause` is the error of the store. The passes that a stopped watch ended are `cancelled` in the sync history, and their records do not name the failure.
+- **A dataset failure**, for example SQL that SQLite refuses, fails only its dataset. The dataset records `failed` and the error in `derived_status`. The other datasets still refresh in the order of the list, and the passes go on. A dataset that reads the failed one reads what the failed one made last. No sync history records a dataset failure. See [ADR 0031](./docs/adr/0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md).
+  - A watch yields a `DatasetFailure`, `{ kind: 'refresh', dataset, error }`, when the dataset starts to fail. `dataset` is its name, and `error` is its own error, for example the error of the store. While the dataset keeps failing, the watch yields no more failures for it. After a refresh of it ends with no failure, a new failure is yielded again.
+  - A run rejects after its last refresh when the last refresh of a dataset failed. When one dataset failed, the run rejects with its `DerivedDatasetError`: its `dataset` names the dataset, and its `cause` is the error of the store. When more than one failed, the run rejects with a `DerivedDatasetsError`, an `AggregateError` whose `errors` holds the `DerivedDatasetError` of each, in the order of the list. A dataset failure comes before a `PipelineError`: no sync history records it, so the run rejects with it also when copies failed. The sync history still records the copies that failed.
+  - A view that reads a view declared after it fails its first refresh, while the later view is not there yet. The refresh after the passes tries it again, and then the later view is there.
+  - A refresh that the stop of a run or a watch ended is not a failure.
 - **A copy that failed** keeps its last committed rows. The derived data of those rows stays as it was.
 
 ## Positions of a destination

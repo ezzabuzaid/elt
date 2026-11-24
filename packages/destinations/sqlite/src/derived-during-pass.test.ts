@@ -15,7 +15,6 @@ import {
   Copy,
   type CopyConfiguration,
   DerivedDataset,
-  DerivedDatasetError,
   Gauge,
   type LoadedRow,
   Pipeline,
@@ -29,6 +28,7 @@ import {
   SQLiteCheckpointStore,
   SQLiteDestination,
   SQLiteSyncHistory,
+  View,
 } from './index.ts';
 
 // The upstream of a test source, which the test fills before it reads: a
@@ -386,61 +386,6 @@ test('a row that a refresh during a stopped pass failed is tried again by the re
   ]);
 });
 
-test('a dataset that fails during a watch names itself, and the sync history does not blame the copy that it stopped', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-derived-');
-  const source = new Notes();
-  const path = join(scratch.path, 'data.sqlite');
-  const destination = new SQLiteDestination({ path });
-  class Refused extends DerivedDataset<ReturnType<typeof destination.table>> {
-    readonly name = 'refused_dataset';
-    override async refresh(): Promise<void> {
-      // The pass is still running; its source can end once the stop comes.
-      source.rest.open();
-      throw new Error('no such column: nope');
-    }
-  }
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SQLiteSyncHistory(),
-    connections: [
-      new Connection({
-        name: 'notes',
-        source,
-        destination,
-        checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
-        }),
-        steps: [
-          new Copy(source.notes, destination.table('notes'), {
-            id: 'notes',
-            syncMode: 'incremental',
-            destinationSyncMode: 'append_dedup',
-          }),
-        ],
-      }),
-    ],
-    derived: [new Refused()],
-  });
-
-  const failure = await Array.fromAsync(
-    pipeline.watch({ signal: new AbortController().signal }),
-  ).then(
-    () => assert.fail('the failed dataset should stop the watch'),
-    (error: unknown) => error,
-  );
-
-  using database = open(path, { readOnly: true });
-  const attempts = database
-    .prepare('SELECT status, error FROM sync_attempts')
-    .all();
-  assert.ok(failure instanceof DerivedDatasetError, String(failure));
-  assert.equal(failure.dataset, 'refused_dataset');
-  assert.match(failure.message, /refused_dataset.*no such column: nope/);
-  assert.equal(attempts.length, 1);
-  assert.equal(attempts[0]?.status, 'cancelled');
-  assert.doesNotMatch(String(attempts[0]?.error), /no such column/);
-});
-
 // A gauge that a test moves, as an upstream that changed.
 class Dial extends Gauge<number> {
   turns = 0;
@@ -615,6 +560,148 @@ test('a target dropped by hand does not stop a watch: its dataset waits with its
     await passes.catch(() => {});
   }
 });
+
+test(
+  'under a watch, a view that SQLite refuses is yielded once and fails only itself: the views before and after it refresh, the passes go on, and once its table exists the refresh after the next pass makes it current',
+  { timeout: 30_000 },
+  async (t) => {
+    await using scratch = await new TemporaryFiles().directory('elt-derived-');
+    const path = join(scratch.path, 'data.sqlite');
+    const destination = new SQLiteDestination({ path });
+    const records = new Rows('records', ['r1']);
+    const view = (name: string, sql: string) =>
+      new View({
+        into: destination,
+        name,
+        description: `The view ${name}.`,
+        columns: { n: 'A number.' },
+        sql,
+      });
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new SQLiteSyncHistory(),
+      connections: [
+        new Connection({
+          name: 'records',
+          source: records,
+          destination,
+          steps: [new Copy(records.table, destination.table('records'))],
+        }),
+      ],
+      derived: [
+        view('before_count', 'SELECT count(*) AS n FROM records'),
+        // No copy makes extras: SQLite refuses the view until a person does.
+        view('broken', 'SELECT count(*) AS n FROM extras'),
+        view('reads_broken', 'SELECT n FROM broken'),
+        view('after_count', 'SELECT count(*) AS n FROM records'),
+      ],
+    });
+    const read = (sql: string) => {
+      using database = open(path, { readOnly: true });
+      return database.prepare(sql).all();
+    };
+    const statuses = () =>
+      read(
+        'SELECT dataset, state, error FROM derived_status ORDER BY dataset',
+      ).map(({ dataset, state, error }) => [dataset, state, error]);
+    const counts = () =>
+      read(
+        'SELECT (SELECT n FROM before_count) AS before, (SELECT n FROM after_count) AS after',
+      ).map(({ before, after }) => [before, after]);
+    const controller = new AbortController();
+    const events: unknown[] = [];
+    const watching = (async () => {
+      for await (const event of pipeline.watch({ signal: controller.signal }))
+        events.push(
+          event.kind === 'pass'
+            ? 'pass'
+            : {
+                dataset: event.dataset,
+                error: Error.isError(event.error)
+                  ? event.error.message
+                  : event.error,
+              },
+        );
+    })();
+    try {
+      const refused = { dataset: 'broken', error: 'no such table: extras' };
+      await waitFor(
+        () => {
+          assert.deepEqual(statuses(), [
+            ['after_count', 'current', null],
+            ['before_count', 'current', null],
+            ['broken', 'failed', 'no such table: extras'],
+            ['reads_broken', 'waiting', null],
+          ]);
+          assert.deepEqual(events.toSorted(), ['pass', refused].toSorted());
+        },
+        { signal: t.signal, interval: 10 },
+      );
+      // Two more passes, each with a refresh that tries broken again.
+      for (const rows of [
+        ['r1', 'r2'],
+        ['r1', 'r2', 'r3'],
+      ]) {
+        const passes = events.filter((event) => event === 'pass').length;
+        records.rows = rows;
+        records.dial.turns += 1;
+        await waitFor(
+          () => {
+            assert.equal(
+              events.filter((event) => event === 'pass').length,
+              passes + 1,
+            );
+            assert.deepEqual(counts(), [[rows.length, rows.length]]);
+          },
+          { signal: t.signal, interval: 10 },
+        );
+      }
+      const failing = statuses();
+      {
+        // A person's hand: the fix of what SQLite refused.
+        using database = open(path);
+        database.exec('CREATE TABLE extras (id TEXT)');
+      }
+      records.dial.turns += 1;
+      await waitFor(
+        () =>
+          assert.deepEqual(statuses(), [
+            ['after_count', 'current', null],
+            ['before_count', 'current', null],
+            ['broken', 'current', null],
+            ['reads_broken', 'current', null],
+          ]),
+        { signal: t.signal, interval: 10 },
+      );
+
+      assert.deepEqual(failing, [
+        ['after_count', 'current', null],
+        ['before_count', 'current', null],
+        ['broken', 'failed', 'no such table: extras'],
+        ['reads_broken', 'waiting', null],
+      ]);
+      assert.deepEqual(
+        read('SELECT n FROM reads_broken').map(({ n }) => n),
+        [0],
+      );
+      assert.deepEqual(
+        events.filter((event) => event !== 'pass'),
+        [refused],
+      );
+      assert.equal(events.filter((event) => event === 'pass').length, 4);
+      // No sync history records a dataset failure, so no pass is blamed.
+      assert.deepEqual(
+        read('SELECT DISTINCT status, error FROM sync_attempts').map(
+          ({ status, error }) => [status, error],
+        ),
+        [['succeeded', null]],
+      );
+    } finally {
+      controller.abort();
+      await watching;
+    }
+  },
+);
 
 // A process of a host: it reloads one table of 1000 rows into a file, each row
 // marked with its load. With DIE set it says so in the middle of the rows and

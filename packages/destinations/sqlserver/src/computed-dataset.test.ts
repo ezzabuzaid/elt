@@ -1,16 +1,19 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
+import { waitFor } from '@zukhruf/testing/async';
 import { SqlServer } from '@zukhruf/testing/sqlserver';
 import { Vector } from '@zukhruf/vectors';
 import { fromSql } from '@zukhruf/vectors/sqlserver';
 
 import {
   Catalog,
+  type ChangeSignal,
   Connection,
   Copy,
   type CopyConfiguration,
   DerivedDatasetError,
+  Gauge,
   type LoadedRow,
   Pipeline,
   PipelineError,
@@ -100,8 +103,8 @@ class Records extends Source {
     return null;
   }
 
-  // No test watches: each runs the pipeline itself.
-  override changeSignals() {
+  // Only WatchedRecords is watched: each other test runs the pipeline itself.
+  override changeSignals(_streams: readonly Stream[]): ChangeSignal[] {
     return [];
   }
 
@@ -625,6 +628,179 @@ test('a declared vector index reaches SQL Server as CREATE VECTOR INDEX with its
       error:
         "Derived dataset measures failed: Table '_warehouse.raw_measures' must have a clustered primary key on a single 4 byte INT column to create a vector index.",
       status: [{ state: 'failed' }],
+    },
+  );
+});
+
+// A gauge that a test turns, as a store whose version changed.
+class Dial extends Gauge<number> {
+  turns = 0;
+  protected async read(): Promise<number> {
+    return this.turns;
+  }
+}
+
+// Records that a watch reads again each time the test turns the dial.
+class WatchedRecords extends Records {
+  readonly dial = new Dial();
+  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
+    return [{ gauge: this.dial, streams, interval: 100, timeout: 5000 }];
+  }
+}
+
+// marts.measures with a vector index between two views over the records, as
+// datahub declares its vector datasets among its other datasets. SQL Server
+// 2025 in Docker has PREVIEW_FEATURES off, so it refuses the index with error
+// 343, as datahub's local warehouse does (#5453).
+function vectorsPipeline(login: SqlServerLogin, source: Records) {
+  const destination = new SqlServerDestination({ login });
+  const target = destination.table('records');
+  const count = (name: string) =>
+    new View({
+      into: destination,
+      name,
+      description: `The view ${name}.`,
+      columns: { n: 'A number.' },
+      sql: 'SELECT count(*) AS n FROM _warehouse.raw_records',
+    });
+  return new Pipeline({
+    clock: globalThis,
+    history: new SqlServerSyncHistory({ login }),
+    connections: [
+      new Connection({
+        name: 'records',
+        source,
+        destination,
+        steps: [new Copy(source.records, target)],
+      }),
+    ],
+    derived: [
+      count('before_count'),
+      new ComputedDataset({
+        into: destination,
+        name: 'measures',
+        description: 'The size, label and vector of each record.',
+        from: [target],
+        compute: new Measure(),
+        indexes: [{ type: 'vector', column: 'vector', metric: 'cosine' }],
+      }),
+      count('after_count'),
+    ],
+  });
+}
+
+const statuses = async (admin: SqlServerConnection) =>
+  plain(
+    await admin.query(
+      'SELECT [dataset], [state], [error] FROM marts.derived_status ORDER BY [dataset]',
+    ),
+  );
+
+const counts = async (admin: SqlServerConnection) =>
+  plain(
+    await admin.query(
+      'SELECT (SELECT n FROM marts.before_count) AS [before], (SELECT n FROM marts.after_count) AS [after]',
+    ),
+  );
+
+// The number of an error of SQL Server.
+const errorNumber = (error: unknown) =>
+  Error.isError(error) && 'number' in error ? error.number : null;
+
+test(
+  'under a watch, a vector index that SQL Server refuses is yielded once and fails only its dataset: the views before and after it refresh and the passes go on',
+  { timeout: 120_000 },
+  async (t) => {
+    await using database = await scratch();
+    const source = new WatchedRecords(['r1']);
+    const pipeline = vectorsPipeline(database.login, source);
+    const controller = new AbortController();
+    const events: unknown[] = [];
+    const watching = (async () => {
+      for await (const event of pipeline.watch({ signal: controller.signal }))
+        events.push(
+          event.kind === 'pass'
+            ? 'pass'
+            : { dataset: event.dataset, number: errorNumber(event.error) },
+        );
+    })();
+    const passes = () => events.filter((event) => event === 'pass').length;
+    try {
+      const failed = await waitFor(
+        async () => {
+          const status = await statuses(database.admin);
+          assert.deepEqual(
+            status.map(({ dataset, state }) => [dataset, state]),
+            [
+              ['marts.after_count', 'current'],
+              ['marts.before_count', 'current'],
+              ['marts.measures', 'failed'],
+            ],
+          );
+          assert.equal(passes(), 1);
+          assert.equal(events.length, 2);
+          return status;
+        },
+        { signal: t.signal, interval: 50 },
+      );
+      // Two more passes, each with a refresh that tries the index again.
+      for (const ids of [
+        ['r1', 'r2'],
+        ['r1', 'r2', 'r3'],
+      ]) {
+        const before = passes();
+        source.ids = ids;
+        source.dial.turns += 1;
+        await waitFor(
+          async () => {
+            assert.equal(passes(), before + 1);
+            assert.deepEqual(await counts(database.admin), [
+              { before: ids.length, after: ids.length },
+            ]);
+          },
+          { signal: t.signal, interval: 50 },
+        );
+      }
+
+      assert.deepEqual(
+        failed.find(({ dataset }) => dataset === 'marts.measures')?.error,
+        "Unknown object type 'VECTOR' used in a CREATE, DROP, or ALTER statement.",
+      );
+      assert.deepEqual(
+        events.filter((event) => event !== 'pass'),
+        [{ dataset: 'measures', number: 343 }],
+      );
+    } finally {
+      controller.abort();
+      await watching;
+    }
+  },
+);
+
+test('a run refreshes the views before and after a vector index that SQL Server refuses, and then rejects with that dataset failure', async () => {
+  await using database = await scratch();
+  const pipeline = vectorsPipeline(database.login, new Records(['r1', 'r2']));
+
+  const failed = await rejection(pipeline.run());
+
+  assert.ok(failed instanceof DerivedDatasetError, String(failed));
+  assert.deepEqual(
+    {
+      failed: { dataset: failed.dataset, number: errorNumber(failed.cause) },
+      status: (await statuses(database.admin)).map(({ dataset, state }) => [
+        dataset,
+        state,
+      ]),
+      counts: await counts(database.admin),
+    },
+    {
+      failed: { dataset: 'measures', number: 343 },
+      status: [
+        ['marts.after_count', 'current'],
+        ['marts.before_count', 'current'],
+        ['marts.measures', 'failed'],
+      ],
+      counts: [{ before: 2, after: 2 }],
     },
   );
 });

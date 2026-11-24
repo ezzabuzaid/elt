@@ -14,6 +14,14 @@ export type RefreshTrigger =
   | { readonly kind: 'commit'; readonly tried: Set<string> }
   | { readonly kind: 'pass'; readonly tried: ReadonlySet<string> };
 
+// A dataset failure that a watch gives beside its passes: the derived dataset
+// that started to fail, and its own error, such as SQL its store refuses.
+export type DatasetFailure = {
+  readonly kind: 'refresh';
+  readonly dataset: string;
+  readonly error: unknown;
+};
+
 // A dataset's own failure, such as SQL its store refuses, named for whoever
 // reads it in a log: the cause alone, such as "no such column: x", does not say
 // which dataset of the pipeline failed.
@@ -26,6 +34,25 @@ export class DerivedDatasetError extends Error {
       cause,
     });
     this.dataset = dataset;
+  }
+}
+
+// The dataset failures of a run in which more than one derived dataset
+// failed, in declared order; cause is the first.
+export class DerivedDatasetsError extends AggregateError {
+  override name = 'DerivedDatasetsError';
+  declare readonly errors: DerivedDatasetError[];
+
+  constructor(
+    errors: readonly [
+      DerivedDatasetError,
+      DerivedDatasetError,
+      ...DerivedDatasetError[],
+    ],
+  ) {
+    super(errors, errors.map(({ message }) => message).join('; '), {
+      cause: errors[0],
+    });
   }
 }
 
@@ -42,8 +69,9 @@ export abstract class DerivedDataset<Target extends DestinationTarget> {
   validate(_connections: readonly Connection<Target>[]): void {}
 
   // Brings the data in step with what the copies committed; safe to repeat.
-  // A failure here is the dataset's own, such as SQL its store refuses; a
-  // rule that fails on one input records that on the input's row instead.
+  // A failure here is the dataset's own, such as SQL its store refuses, which
+  // the dataset records as failed in its derived status; a rule that fails on
+  // one input records that on the input's row instead.
   // earlier holds the derived datasets that this refresh follows, in their
   // declared order, so a dataset that reads one of them can tell an input
   // that is still waiting from one the pipeline never makes. trigger says why

@@ -265,12 +265,16 @@ For either pipeline above, replace its final execution statement with:
 const controller = new AbortController();
 process.once('SIGINT', () => controller.abort());
 
-for await (const _ of pipeline.watch({ signal: controller.signal })) {
-  // The data is already extracted, loaded, and checkpointed here.
+for await (const event of pipeline.watch({ signal: controller.signal })) {
+  if (event.kind === 'refresh') {
+    console.warn(`Derived dataset ${event.dataset} failed`, event.error);
+    continue;
+  }
+  // A pass: the data is already extracted, loaded, and checkpointed here.
 }
 ```
 
-Watching subscribes before the initial sync, then each connection runs a pass over the copies whose streams its source reported changed. Each iteration yields one pass, `{ connection, outcomes }`. Passes of one connection never overlap; passes of different connections run side by side, so a slow source never holds back another. Changes received during a pass or while you handle its results remain pending for that connection's next pass. The loop body is for application work after a sync; it does not need to extract or load anything.
+Watching subscribes before the initial sync, then each connection runs a pass over the copies whose streams its source reported changed. Each iteration yields one pass, `{ kind: 'pass', connection, outcomes }`, or a dataset failure, `{ kind: 'refresh', dataset, error }`, when a derived dataset starts to fail; the other datasets and the passes go on. Passes of one connection never overlap; passes of different connections run side by side, so a slow source never holds back another. Changes received during a pass or while you handle its results remain pending for that connection's next pass. The loop body is for application work after a sync; it does not need to extract or load anything.
 
 Triggers are source-specific. Calendar and Reminders use EventKit notifications, which cover the whole event store: an edit in either app reruns watched copies of both. Notes checks its store's SQLite `data_version` every second, which changes with each commit Notes makes; filesystem notifications miss those commits while Notes keeps the store open. Only Notes syncs iCloud notes, so a Notes watch keeps Notes running: it launches Notes hidden and in the background when it starts, and every 30 seconds relaunches it the same way if it has stopped, whether you quit it or macOS closed it to free disk space. A Notes you have open is left as it is. Notes watching needs the same **Full Disk Access** as reading.
 

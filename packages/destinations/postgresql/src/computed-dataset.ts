@@ -238,7 +238,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
       clock,
     );
     const refresh = {
-      inputs: await this.#inputs(load.sql, connections),
+      inputs: () => this.#inputs(load.sql, connections),
       prepare: (keys: ReadonlySet<string>) =>
         this.#prepare(load, status, keys, signal),
       status,

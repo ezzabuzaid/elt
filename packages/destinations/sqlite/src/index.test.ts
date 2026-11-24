@@ -32,7 +32,6 @@ import {
   Gauge,
   LocalFiles,
   type Partition,
-  type Pass,
   Pipeline,
   PipelineError,
   type Properties,
@@ -44,6 +43,7 @@ import {
   type SyncHistory,
   type Target,
   TargetOwnedError,
+  type WatchEvent,
   diffGroupedSnapshot,
   diffSnapshot,
 } from '@eltjs/elt';
@@ -991,7 +991,9 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   // Changes received while the consumer is handling a result remain pending.
   version = 3;
   changes.emit('check', [source.records]);
-  for await (const { outcomes } of watching) {
+  for await (const event of watching) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     assert.deepEqual(outcomes, [
       { copy, count: 1, deleted: 0, failures: [], cancelled: false },
     ]);
@@ -1019,7 +1021,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   version = Number.NaN;
   changes.emit('check', [source.records]);
   const incomplete = await failed.next();
-  if (incomplete.done) assert.fail('watching ended on a failed batch');
+  if (incomplete.done || incomplete.value.kind !== 'pass')
+    assert.fail('watching ended on a failed batch');
   assert.ok(
     incomplete.value.outcomes.some(({ failures }) => failures.length > 0),
     'the failed batch reports its failure',
@@ -1031,7 +1034,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   version = 4;
   changes.emit('check', [source.records]);
   const recovered = await failed.next();
-  if (recovered.done) assert.fail('watching ended before the retry');
+  if (recovered.done || recovered.value.kind !== 'pass')
+    assert.fail('watching ended before the retry');
   assert.deepEqual(
     recovered.value.outcomes.map(({ failures }) => failures),
     [[]],
@@ -1049,7 +1053,8 @@ test('watch loads and checkpoints before yielding, coalesces edits during a load
   const inFlight = pipeline.watch({ signal: stopping.signal });
   reads.once('read', () => stopping.abort());
   const stopped = await inFlight.next();
-  if (stopped.done) assert.fail('watching ended before yielding its pass');
+  if (stopped.done || stopped.value.kind !== 'pass')
+    assert.fail('watching ended before yielding its pass');
   assert.deepEqual(
     stopped.value.outcomes.map(
       ({ copy, count, deleted, cancelled, failures }) => ({
@@ -7216,7 +7221,7 @@ test('under a watch, a stream whose change signal times out at one check and rea
   const watching = pipeline.watch({ signal: controller.signal });
   try {
     await watching.next();
-    const next: Promise<IteratorResult<Pass<SQLiteTable>, void>> =
+    const next: Promise<IteratorResult<WatchEvent<SQLiteTable>, void>> =
       watching.next();
 
     // Each second on the clock is the interval or the timeout of one check:
@@ -7238,7 +7243,9 @@ test('under a watch, a stream whose change signal times out at one check and rea
     );
 
     assert.deepEqual(
-      reload.value?.outcomes.map(({ copy }) => copy.from.name),
+      reload.value?.kind === 'pass'
+        ? reload.value.outcomes.map(({ copy }) => copy.from.name)
+        : reload.value,
       ['a'],
     );
     const timedOut = 'The operation was aborted due to timeout';
@@ -7694,11 +7701,13 @@ test('a run whose sync history cannot record a pass rejects with the history’s
 
 // Each copy of a watched pass: its stream, and whose its failure is to fix,
 // or null when it loaded completely.
-const outcomes = (pass: IteratorResult<Pass<SQLiteTable>, undefined>) =>
-  pass.value?.outcomes.map(({ copy, failures }) => [
-    copy.from.name,
-    failures[0]?.failureType ?? null,
-  ]);
+const outcomes = (event: IteratorResult<WatchEvent<SQLiteTable>, undefined>) =>
+  event.value?.kind === 'pass'
+    ? event.value.outcomes.map(({ copy, failures }) => [
+        copy.from.name,
+        failures[0]?.failureType ?? null,
+      ])
+    : event.value;
 
 test(
   'under a watch, a stream whose load failed for a system reason loads again about ten seconds later with no change, and a sibling’s change does not pull it in sooner',

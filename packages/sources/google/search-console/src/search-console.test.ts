@@ -2603,7 +2603,8 @@ test(
     const batch = async () => {
       const before = reads(searchConsole).length;
       const next = await watching.next();
-      if (next.done) assert.fail('watching ended');
+      if (next.done || next.value.kind !== 'pass')
+        assert.fail('watching ended');
       const [outcome] = next.value.outcomes;
       return {
         count: outcome?.count,
@@ -3502,7 +3503,8 @@ test(
     const pass = async () => {
       const before = reads(searchConsole).length;
       const next = await watching.next();
-      if (next.done) assert.fail('watching ended');
+      if (next.done || next.value.kind !== 'pass')
+        assert.fail('watching ended');
       return {
         streams: next.value.outcomes.map(({ copy }) => copy.from.name),
         reads: reads(searchConsole).slice(before).toSorted(),
@@ -3608,7 +3610,8 @@ test(
         fetched: searchConsole.fetched.length,
       };
       const next = await watching.next();
-      if (next.done) assert.fail('watching ended');
+      if (next.done || next.value.kind !== 'pass')
+        assert.fail('watching ended');
       return {
         streams: next.value.outcomes.map(({ copy }) => copy.from.name),
         queried: queried().slice(before.queried),
@@ -3696,7 +3699,8 @@ test(
     const pass = async () => {
       const before = reads(searchConsole).length;
       const next = await watching.next();
-      if (next.done) assert.fail('the inspections were not read again');
+      if (next.done || next.value.kind !== 'pass')
+        assert.fail('the inspections were not read again');
       return {
         failed: next.value.outcomes.flatMap(({ failures }) =>
           failures.map(({ failureType }) => failureType),

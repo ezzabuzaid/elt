@@ -1460,13 +1460,15 @@ test('a Books watch loads only the streams of the store that changed, while Book
   const controller = new AbortController();
   const woken: string[][] = [];
 
-  for await (const { outcomes } of watchBooks(
+  for await (const event of watchBooks(
     source,
     streams,
     join(scratch.path, 'import'),
     // A pass that never comes ends the watch, so the assertion fails.
     AbortSignal.any([controller.signal, t.signal]),
   )) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
       annotations.exec(
@@ -1512,13 +1514,15 @@ test(
     const controller = new AbortController();
     const passes: CopyOutcome<SQLiteTable>[][] = [];
 
-    for await (const { outcomes } of watchBooks(
+    for await (const event of watchBooks(
       source,
       [source.annotations, source.assetDetails],
       join(scratch.path, 'import'),
       // A pass that never comes ends the watch, so the assertion fails.
       AbortSignal.any([controller.signal, t.signal]),
     )) {
+      if (event.kind !== 'pass') continue;
+      const { outcomes } = event;
       passes.push([...outcomes]);
       if (passes.length === 1) {
         await rename(denied, location.files.annotations);
@@ -2162,12 +2166,14 @@ test('a Books watch with a missing database loads the other streams, and the rea
   const controller = new AbortController();
   const passes: CopyOutcome<SQLiteTable>[][] = [];
 
-  for await (const { outcomes } of watchBooks(
+  for await (const event of watchBooks(
     source,
     [source.libraryAssets, source.themes],
     join(scratch.path, 'import'),
     AbortSignal.any([controller.signal, t.signal]),
   )) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     passes.push([...outcomes]);
     controller.abort();
   }
@@ -2209,13 +2215,15 @@ test('a Books watch loads the streams of each store and preference file that cha
   const controller = new AbortController();
   const woken: string[][] = [];
 
-  for await (const { outcomes } of watchBooks(
+  for await (const event of watchBooks(
     source,
     streams,
     join(scratch.path, 'import'),
     // A pass that never comes ends the watch, so the assertion fails.
     AbortSignal.any([controller.signal, t.signal]),
   )) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     woken.push(outcomes.map(({ copy }) => copy.from.name));
     if (woken.length === 1)
       await writePlist(location.files.sharedPreferences, {

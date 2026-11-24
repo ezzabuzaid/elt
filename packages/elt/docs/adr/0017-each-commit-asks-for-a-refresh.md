@@ -1,5 +1,7 @@
 # Each commit asks for a refresh
 
+Superseded in part on 2026-11-23 (datahub #5453) by [ADR 0031](./0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md): a background refresh that fails no longer stops the background refreshes, and it does not reject the run by itself. The other datasets still refresh, the refresh after the passes tries the failed one again, and the run rejects with the dataset failure when the last refresh of that dataset failed.
+
 A derived dataset was refreshed only after a pass: after the passes of a run, and after each pass of a watch. A pass can be long. On 2026-10-31, the startup-credits app of Context Compiler crawled two lists and searched one step inside about 150 linked websites. After 15 minutes the source had committed 364 pages at its checkpoints, but `page_kinds` and `program_offers` had no rows, and no alert came: the first pass was longer than 15 minutes (#3487).
 
 The refresh after a pass was not a rule of the data. It was where the host refreshed before ADR 0001 (commit fb4eacd8). Two rules of the destinations make a refresh safe while a copy loads:

@@ -2520,6 +2520,7 @@ test(
     for (let next = passes.next(); ;) {
       const pass = await next;
       if (pass.done) break;
+      assert.equal(pass.value.kind, 'pass');
       const { outcomes } = pass.value;
       batches.push(counts(outcomes));
       // Pull the next pass before the clock moves, so a spurious pass shows.
@@ -2575,10 +2576,12 @@ test('a Slack watch wakes when the app records a download', async (t) => {
   const controller = new AbortController();
   const batches: Record<string, { count: number; deleted: number }>[] = [];
 
-  for await (const { outcomes } of run.watch({
+  for await (const event of run.watch({
     // A batch that never comes ends the watch, so the assertion fails.
     signal: AbortSignal.any([controller.signal, t.signal]),
   })) {
+    if (event.kind !== 'pass') continue;
+    const { outcomes } = event;
     batches.push(counts(outcomes));
     if (batches.length === 1)
       await store.download({
