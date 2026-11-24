@@ -680,6 +680,46 @@ test('a category an app registered twice loads both, told apart by position', as
   );
 });
 
+// usernoted, rebuilding its store, commits an app's categories row before its
+// list: on 2026-11-24 one row stayed NULL for 83 minutes.
+test('an app whose categories usernoted has not written yet loads none, and loads them once usernoted writes them', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
+  const path = join(dir.path, 'db');
+  notificationCenterFixture(path);
+  {
+    using usernoted = new ScratchNotificationCenter(path, { existing: true });
+    usernoted.insert('categories', { app_id: 2, categories: null });
+  }
+  const run = await pipeline(
+    new AppleNotificationCenterSource({ path }),
+    dir.path,
+    globalThis,
+  );
+  const out = join(dir.path, 'out.sqlite');
+
+  await run.run();
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT appId, count(*) AS categories FROM categories GROUP BY appId',
+    ),
+    [{ appId: 1, categories: 2 }],
+  );
+
+  {
+    using usernoted = new ScratchNotificationCenter(path, { existing: true });
+    const list = binaryPlist([{ id: 'payment-due', opt: 0, acts: [] }]);
+    usernoted.exec(
+      `UPDATE categories SET categories = x'${list.toHex()}' WHERE app_id = 2`,
+    );
+  }
+  await run.run();
+  assert.deepEqual(
+    rows(out, 'SELECT position, id FROM categories WHERE appId = 2'),
+    [{ position: 0, id: 'payment-due' }],
+  );
+});
+
 // usernoted's record table declares only rec_id unique: no index keeps uuid
 // unique, so two rows can hold one UUID.
 test('two notifications usernoted stores under one UUID load as two rows', async () => {

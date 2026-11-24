@@ -100,6 +100,10 @@ export class NotificationCenterSnapshot implements Disposable {
       .flatMap((row) => {
         const appId = Number(row.appId);
         const bundleId = required(row.bundleId, 'An app has no identifier');
+        // usernoted commits an app's row before its list (it did so for 83
+        // minutes while it rebuilt its store): the app has no categories yet,
+        // as a null records field gives no records in Airbyte's extractor.
+        if (row.list === null) return [];
         const list = parseBinaryPlist(bytes(row.list));
         if (!Array.isArray(list))
           throw new TypeError(`${bundleId}'s categories are not a list`);
@@ -177,6 +181,7 @@ function localized(value: PlistValue | undefined): string | null {
 }
 
 function bytes(value: unknown): Uint8Array {
+  if (value === null) throw new TypeError('A Notification Center blob is NULL');
   if (!(value instanceof Uint8Array))
     throw new TypeError('A Notification Center blob is not bytes');
   return value;
