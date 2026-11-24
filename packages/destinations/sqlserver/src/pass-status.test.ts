@@ -31,6 +31,8 @@ const sqlServer = new SqlServer({
   image: 'mcr.microsoft.com/mssql/server:2025-latest',
 });
 
+const emulation = await SqlServer.emulation({ environment: process.env });
+
 // A database of its own for one test, which keeps row versions for readers
 // unless the test says otherwise.
 async function scratch({ rowVersions = true } = {}) {
@@ -164,119 +166,142 @@ const broken = (message: string) => async () => {
   throw new Error(message);
 };
 
-test('readPassStatus of a database that no history recorded reads no pass and no streams', async () => {
-  await using database = await scratch();
+test(
+  'readPassStatus of a database that no history recorded reads no pass and no streams',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
 
-  const status = await readPassStatus(database.login);
+    const status = await readPassStatus(database.login);
 
-  assert.deepEqual(status, { pass: null, streams: [] });
-});
+    assert.deepEqual(status, { pass: null, streams: [] });
+  },
+);
 
-test('readPassStatus reads a running pass as running, and its streams as running', async () => {
-  await using database = await scratch();
-  const { login } = database;
-  const wait = latch();
-  const passing = run(
-    login,
-    connection(login, 'notes', { notes: [wait.step, record('notes', 'n1')] }),
-  );
-  await wait.reached;
-
-  let during;
-  try {
-    during = await readPassStatus(login);
-  } finally {
-    wait.release();
-    await passing;
-  }
-
-  assert.equal(during.pass?.state, 'running');
-  assert.equal(during.pass?.completedAt, null);
-  assert.deepEqual(
-    during.streams.map(({ stream, state, error }) => [stream, state, error]),
-    [['notes', 'running', null]],
-  );
-});
-
-test('readPassStatus reads the latest passes of several connections as one pass, and each stream with the errors of its latest attempt, which a later attempt that loads it clears', async () => {
-  await using database = await scratch();
-  const { login, admin } = database;
-  const notes = connection(login, 'notes', { notes: [record('notes', 'n1')] });
-  await assert.rejects(
-    run(
+test(
+  'readPassStatus reads a running pass as running, and its streams as running',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { login } = database;
+    const wait = latch();
+    const passing = run(
       login,
-      notes,
+      connection(login, 'notes', { notes: [wait.step, record('notes', 'n1')] }),
+    );
+    await wait.reached;
+
+    let during;
+    try {
+      during = await readPassStatus(login);
+    } finally {
+      wait.release();
+      await passing;
+    }
+
+    assert.equal(during.pass?.state, 'running');
+    assert.equal(during.pass?.completedAt, null);
+    assert.deepEqual(
+      during.streams.map(({ stream, state, error }) => [stream, state, error]),
+      [['notes', 'running', null]],
+    );
+  },
+);
+
+test(
+  'readPassStatus reads the latest passes of several connections as one pass, and each stream with the errors of its latest attempt, which a later attempt that loads it clears',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { login, admin } = database;
+    const notes = connection(login, 'notes', {
+      notes: [record('notes', 'n1')],
+    });
+    await assert.rejects(
+      run(
+        login,
+        notes,
+        connection(login, 'mail', {
+          inbox: [broken('The inbox broke')],
+          sent: [record('sent', 's1')],
+        }),
+      ),
+      PipelineError,
+    );
+
+    const failed = await readPassStatus(login);
+    const [times] = await admin.query(
+      'SELECT MIN([started_at]) AS [started], MAX([completed_at]) AS [completed] FROM marts.sync_attempts',
+    );
+    await run(
+      login,
       connection(login, 'mail', {
-        inbox: [broken('The inbox broke')],
+        inbox: [record('inbox', 'i1')],
         sent: [record('sent', 's1')],
       }),
-    ),
-    PipelineError,
-  );
+    );
+    const loaded = await readPassStatus(login);
 
-  const failed = await readPassStatus(login);
-  const [times] = await admin.query(
-    'SELECT MIN([started_at]) AS [started], MAX([completed_at]) AS [completed] FROM marts.sync_attempts',
-  );
-  await run(
-    login,
-    connection(login, 'mail', {
-      inbox: [record('inbox', 'i1')],
-      sent: [record('sent', 's1')],
-    }),
-  );
-  const loaded = await readPassStatus(login);
+    assert.ok(
+      times?.started instanceof Date && times.completed instanceof Date,
+    );
+    assert.deepEqual(
+      { ...failed.pass, currentAsOf: undefined },
+      {
+        state: 'partial',
+        startedAt: times.started.toISOString(),
+        completedAt: times.completed.toISOString(),
+        lastSucceededAt: null,
+        currentAsOf: undefined,
+        error:
+          'The following copies did not load completely: inbox: The inbox broke',
+        failureType: 'system',
+      },
+    );
+    assert.deepEqual(
+      failed.streams.map(({ stream, state, error, lastSucceededAt }) => [
+        stream,
+        state,
+        error,
+        lastSucceededAt === null,
+      ]),
+      [
+        ['inbox', 'failed', 'The inbox broke', true],
+        ['notes', 'succeeded', null, false],
+        ['sent', 'succeeded', null, false],
+      ],
+    );
+    assert.equal(loaded.pass?.state, 'succeeded');
+    assert.equal(loaded.pass?.error, null);
+    assert.deepEqual(
+      loaded.streams.map(({ stream, state, error }) => [stream, state, error]),
+      [
+        ['inbox', 'succeeded', null],
+        ['notes', 'succeeded', null],
+        ['sent', 'succeeded', null],
+      ],
+    );
+  },
+);
 
-  assert.ok(times?.started instanceof Date && times.completed instanceof Date);
-  assert.deepEqual(
-    { ...failed.pass, currentAsOf: undefined },
-    {
-      state: 'partial',
-      startedAt: times.started.toISOString(),
-      completedAt: times.completed.toISOString(),
-      lastSucceededAt: null,
-      currentAsOf: undefined,
-      error:
-        'The following copies did not load completely: inbox: The inbox broke',
-      failureType: 'system',
-    },
-  );
-  assert.deepEqual(
-    failed.streams.map(({ stream, state, error, lastSucceededAt }) => [
-      stream,
-      state,
-      error,
-      lastSucceededAt === null,
-    ]),
-    [
-      ['inbox', 'failed', 'The inbox broke', true],
-      ['notes', 'succeeded', null, false],
-      ['sent', 'succeeded', null, false],
-    ],
-  );
-  assert.equal(loaded.pass?.state, 'succeeded');
-  assert.equal(loaded.pass?.error, null);
-  assert.deepEqual(
-    loaded.streams.map(({ stream, state, error }) => [stream, state, error]),
-    [
-      ['inbox', 'succeeded', null],
-      ['notes', 'succeeded', null],
-      ['sent', 'succeeded', null],
-    ],
-  );
-});
+test(
+  'readPassStatus of a database that keeps no row versions reads the failed pass that its history recorded, with the failure type config',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch({ rowVersions: false });
+    const { login } = database;
+    await assert.rejects(
+      run(
+        login,
+        connection(login, 'notes', { notes: [record('notes', 'n1')] }),
+      ),
+      PipelineError,
+    );
 
-test('readPassStatus of a database that keeps no row versions reads the failed pass that its history recorded, with the failure type config', async () => {
-  await using database = await scratch({ rowVersions: false });
-  const { login } = database;
-  await assert.rejects(
-    run(login, connection(login, 'notes', { notes: [record('notes', 'n1')] })),
-    PipelineError,
-  );
+    const status = await readPassStatus(login);
 
-  const status = await readPassStatus(login);
-
-  assert.equal(status.pass?.state, 'failed');
-  assert.equal(status.pass?.failureType, 'config');
-  assert.match(String(status.pass?.error), /keeps no row versions/);
-});
+    assert.equal(status.pass?.state, 'failed');
+    assert.equal(status.pass?.failureType, 'config');
+    assert.match(String(status.pass?.error), /keeps no row versions/);
+  },
+);

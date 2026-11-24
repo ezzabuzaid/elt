@@ -38,6 +38,8 @@ const sqlServer = new SqlServer({
   image: 'mcr.microsoft.com/mssql/server:2025-latest',
 });
 
+const emulation = await SqlServer.emulation({ environment: process.env });
+
 // A database of its own for one test, which keeps row versions, as the
 // destination needs. The admin reads the sessions of the pass and kills them.
 async function scratch() {
@@ -183,191 +185,211 @@ async function sessions(admin: SqlServerConnection) {
   });
 }
 
-test('while the stream of a pass waits, a minute on the clock of the pipeline runs a statement on the session of its load', async (t) => {
-  await using database = await scratch();
-  const wait = latch();
-  const source = new Waiting(wait.step);
-  const clock = createClock(Date.now());
-  const passing = pass(database.login, source, clock, 'full_refresh');
-  await wait.reached;
+test(
+  'while the stream of a pass waits, a minute on the clock of the pipeline runs a statement on the session of its load',
+  { skip: emulation },
+  async (t) => {
+    await using database = await scratch();
+    const wait = latch();
+    const source = new Waiting(wait.step);
+    const clock = createClock(Date.now());
+    const passing = pass(database.login, source, clock, 'full_refresh');
+    await wait.reached;
 
-  let before;
-  try {
-    before = await sessions(database.admin);
-    // The history holds the lock of the attempt; the load holds none.
-    const load = before.find(({ locks }) => locks === 0);
-    await clock.tickAsync(60_000);
-    // The statement reaches the server in real time once the clock moved,
-    // less than a real minute after the last statement of the load, so no
-    // timer of real time ran it.
-    await waitFor(
-      async () => {
-        const now = (await sessions(database.admin)).find(
-          ({ spid }) => spid === load?.spid,
-        );
-        assert.ok(load !== undefined && now !== undefined);
-        assert.ok(
-          now.ended > load.ended && now.ended < load.ended + 60_000,
-          inspect({ load, now }),
-        );
-      },
-      { signal: t.signal },
+    let before;
+    try {
+      before = await sessions(database.admin);
+      // The history holds the lock of the attempt; the load holds none.
+      const load = before.find(({ locks }) => locks === 0);
+      await clock.tickAsync(60_000);
+      // The statement reaches the server in real time once the clock moved,
+      // less than a real minute after the last statement of the load, so no
+      // timer of real time ran it.
+      await waitFor(
+        async () => {
+          const now = (await sessions(database.admin)).find(
+            ({ spid }) => spid === load?.spid,
+          );
+          assert.ok(load !== undefined && now !== undefined);
+          assert.ok(
+            now.ended > load.ended && now.ended < load.ended + 60_000,
+            inspect({ load, now }),
+          );
+        },
+        { signal: t.signal },
+      );
+    } finally {
+      wait.release();
+      await passing;
+    }
+
+    assert.deepEqual(
+      before.map(({ locks }) => locks).toSorted(),
+      [0, 1],
+      inspect(before),
     );
-  } finally {
-    wait.release();
-    await passing;
-  }
+  },
+);
 
-  assert.deepEqual(
-    before.map(({ locks }) => locks).toSorted(),
-    [0, 1],
-    inspect(before),
-  );
-});
+test(
+  'every session that a pass holds runs a statement in each minute that its stream waits, and none ends',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const wait = latch();
+    const source = new Waiting(wait.step);
+    const passing = pass(database.login, source, globalThis, 'incremental');
+    await wait.reached;
 
-test('every session that a pass holds runs a statement in each minute that its stream waits, and none ends', async () => {
-  await using database = await scratch();
-  const wait = latch();
-  const source = new Waiting(wait.step);
-  const passing = pass(database.login, source, globalThis, 'incremental');
-  await wait.reached;
+    let before;
+    let after;
+    try {
+      before = await sessions(database.admin);
+      await setTimeout(65_000);
+      after = await sessions(database.admin);
+    } finally {
+      wait.release();
+      await passing;
+    }
 
-  let before;
-  let after;
-  try {
-    before = await sessions(database.admin);
-    await setTimeout(65_000);
-    after = await sessions(database.admin);
-  } finally {
-    wait.release();
-    await passing;
-  }
-
-  // The history and the lock of the checkpoint hold a lock each; the
-  // checkpoints and the load hold none.
-  assert.deepEqual(
-    before.map(({ locks }) => locks).toSorted(),
-    [0, 0, 1, 1],
-    inspect(before),
-  );
-  assert.deepEqual(
-    after.map(({ spid }) => spid),
-    before.map(({ spid }) => spid),
-  );
-  for (const [index, { spid, ended }] of before.entries())
-    assert.ok(
-      (after[index]?.ended ?? 0) > ended,
-      `session ${spid} ran nothing during the wait`,
+    // The history and the lock of the checkpoint hold a lock each; the
+    // checkpoints and the load hold none.
+    assert.deepEqual(
+      before.map(({ locks }) => locks).toSorted(),
+      [0, 0, 1, 1],
+      inspect(before),
     );
-});
-
-test('a pass whose history session the server ends while the stream waits records its outcome on a session of its own, and its run gives its result', async () => {
-  await using database = await scratch();
-  const wait = latch();
-  const source = new Waiting(wait.step);
-  const passing = pass(database.login, source, globalThis, 'full_refresh');
-  await wait.reached;
-
-  try {
-    const history = (await sessions(database.admin)).find(
-      ({ locks }) => locks === 1,
+    assert.deepEqual(
+      after.map(({ spid }) => spid),
+      before.map(({ spid }) => spid),
     );
-    await database.admin.query(`KILL ${Number(history?.spid)}`);
-  } finally {
-    wait.release();
-  }
-  const results = await passing;
+    for (const [index, { spid, ended }] of before.entries())
+      assert.ok(
+        (after[index]?.ended ?? 0) > ended,
+        `session ${spid} ran nothing during the wait`,
+      );
+  },
+);
 
-  assert.deepEqual(
-    results.map(({ count }) => count),
-    [1],
-  );
-  assert.deepEqual(
-    await database.admin.query(
-      'SELECT a.status, a.error, c.status AS stream, c.written_count AS written FROM marts.sync_attempts AS a JOIN marts.extraction_coverage AS c ON c.attempt_id = a.attempt_id',
-    ),
-    [{ status: 'succeeded', error: null, stream: 'succeeded', written: '1' }],
-  );
-});
+test(
+  'a pass whose history session the server ends while the stream waits records its outcome on a session of its own, and its run gives its result',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const wait = latch();
+    const source = new Waiting(wait.step);
+    const passing = pass(database.login, source, globalThis, 'full_refresh');
+    await wait.reached;
 
-test('a pass whose history session the server ends while it records the outcome records it again on a session of its own', async (t) => {
-  await using database = await scratch();
-  const wait = latch();
-  const source = new Waiting(wait.step);
-  const passing = pass(database.login, source, globalThis, 'full_refresh');
-  await wait.reached;
+    try {
+      const history = (await sessions(database.admin)).find(
+        ({ locks }) => locks === 1,
+      );
+      await database.admin.query(`KILL ${Number(history?.spid)}`);
+    } finally {
+      wait.release();
+    }
+    const results = await passing;
 
-  await using holder = await new SqlServerDatabase(database.login).connect(
-    globalThis,
-  );
-  try {
-    const history = (await sessions(database.admin)).find(
-      ({ locks }) => locks === 1,
+    assert.deepEqual(
+      results.map(({ count }) => count),
+      [1],
     );
-    const [locking] = await holder.query('SELECT @@SPID AS spid');
-    // The record of the outcome waits for the rows that holder locks.
-    await holder.query(
-      'BEGIN TRANSACTION; SELECT COUNT(*) AS [rows] FROM _warehouse.extraction_coverage WITH (UPDLOCK, HOLDLOCK)',
+    assert.deepEqual(
+      await database.admin.query(
+        'SELECT a.status, a.error, c.status AS stream, c.written_count AS written FROM marts.sync_attempts AS a JOIN marts.extraction_coverage AS c ON c.attempt_id = a.attempt_id',
+      ),
+      [{ status: 'succeeded', error: null, stream: 'succeeded', written: '1' }],
     );
-    wait.release();
-    await waitFor(
-      async () => {
-        const [blocked] = await database.admin.query(
-          'SELECT COUNT(*) AS [waits] FROM sys.dm_exec_requests WHERE session_id = CAST(@spid AS int) AND blocking_session_id = CAST(@holder AS int)',
-          { spid: String(history?.spid), holder: String(locking?.spid) },
-        );
-        assert.equal(blocked?.waits, 1);
-      },
-      { signal: t.signal },
+  },
+);
+
+test(
+  'a pass whose history session the server ends while it records the outcome records it again on a session of its own',
+  { skip: emulation },
+  async (t) => {
+    await using database = await scratch();
+    const wait = latch();
+    const source = new Waiting(wait.step);
+    const passing = pass(database.login, source, globalThis, 'full_refresh');
+    await wait.reached;
+
+    await using holder = await new SqlServerDatabase(database.login).connect(
+      globalThis,
     );
-    await database.admin.query(`KILL ${Number(history?.spid)}`);
-  } finally {
-    wait.release();
-    await holder.query('IF @@TRANCOUNT > 0 COMMIT');
-  }
-  const results = await passing;
+    try {
+      const history = (await sessions(database.admin)).find(
+        ({ locks }) => locks === 1,
+      );
+      const [locking] = await holder.query('SELECT @@SPID AS spid');
+      // The record of the outcome waits for the rows that holder locks.
+      await holder.query(
+        'BEGIN TRANSACTION; SELECT COUNT(*) AS [rows] FROM _warehouse.extraction_coverage WITH (UPDLOCK, HOLDLOCK)',
+      );
+      wait.release();
+      await waitFor(
+        async () => {
+          const [blocked] = await database.admin.query(
+            'SELECT COUNT(*) AS [waits] FROM sys.dm_exec_requests WHERE session_id = CAST(@spid AS int) AND blocking_session_id = CAST(@holder AS int)',
+            { spid: String(history?.spid), holder: String(locking?.spid) },
+          );
+          assert.equal(blocked?.waits, 1);
+        },
+        { signal: t.signal },
+      );
+      await database.admin.query(`KILL ${Number(history?.spid)}`);
+    } finally {
+      wait.release();
+      await holder.query('IF @@TRANCOUNT > 0 COMMIT');
+    }
+    const results = await passing;
 
-  assert.deepEqual(
-    results.map(({ count }) => count),
-    [1],
-  );
-  assert.deepEqual(
-    await database.admin.query(
-      'SELECT a.status, a.error, c.status AS stream FROM marts.sync_attempts AS a JOIN marts.extraction_coverage AS c ON c.attempt_id = a.attempt_id',
-    ),
-    [{ status: 'succeeded', error: null, stream: 'succeeded' }],
-  );
-});
-
-test('a pass whose load session the server ends while the stream waits fails with an error that says so, and its attempt is recorded as failed', async () => {
-  await using database = await scratch();
-  const wait = latch();
-  const source = new Waiting(wait.step);
-  const passing = pass(database.login, source, globalThis, 'full_refresh');
-  await wait.reached;
-
-  try {
-    const load = (await sessions(database.admin)).find(
-      ({ locks }) => locks === 0,
+    assert.deepEqual(
+      results.map(({ count }) => count),
+      [1],
     );
-    await database.admin.query(`KILL ${Number(load?.spid)}`);
-  } finally {
-    wait.release();
-  }
-  const failed = await passing.then(
-    () => assert.fail('the pass loaded'),
-    (error: unknown) => error,
-  );
+    assert.deepEqual(
+      await database.admin.query(
+        'SELECT a.status, a.error, c.status AS stream FROM marts.sync_attempts AS a JOIN marts.extraction_coverage AS c ON c.attempt_id = a.attempt_id',
+      ),
+      [{ status: 'succeeded', error: null, stream: 'succeeded' }],
+    );
+  },
+);
 
-  assert.ok(failed instanceof PipelineError, inspect(failed));
-  assert.match(inspect(failed), /The session of this connection ended/);
-  const [attempt, ...others] = await database.admin.query(
-    'SELECT status, error FROM marts.sync_attempts',
-  );
-  assert.deepEqual(others, []);
-  assert.equal(attempt?.status, 'failed');
-  assert.match(
-    String(attempt?.error),
-    /notes: SQL Server .+ cannot be reached\./,
-  );
-});
+test(
+  'a pass whose load session the server ends while the stream waits fails with an error that says so, and its attempt is recorded as failed',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const wait = latch();
+    const source = new Waiting(wait.step);
+    const passing = pass(database.login, source, globalThis, 'full_refresh');
+    await wait.reached;
+
+    try {
+      const load = (await sessions(database.admin)).find(
+        ({ locks }) => locks === 0,
+      );
+      await database.admin.query(`KILL ${Number(load?.spid)}`);
+    } finally {
+      wait.release();
+    }
+    const failed = await passing.then(
+      () => assert.fail('the pass loaded'),
+      (error: unknown) => error,
+    );
+
+    assert.ok(failed instanceof PipelineError, inspect(failed));
+    assert.match(inspect(failed), /The session of this connection ended/);
+    const [attempt, ...others] = await database.admin.query(
+      'SELECT status, error FROM marts.sync_attempts',
+    );
+    assert.deepEqual(others, []);
+    assert.equal(attempt?.status, 'failed');
+    assert.match(
+      String(attempt?.error),
+      /notes: SQL Server .+ cannot be reached\./,
+    );
+  },
+);

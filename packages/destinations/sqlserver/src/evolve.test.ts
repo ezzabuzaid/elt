@@ -29,6 +29,8 @@ const sqlServer = new SqlServer({
   image: 'mcr.microsoft.com/mssql/server:2025-latest',
 });
 
+const emulation = await SqlServer.emulation({ environment: process.env });
+
 // A database of its own for one test, which keeps row versions for readers.
 async function scratch() {
   const database = await sqlServer.database();
@@ -214,328 +216,366 @@ async function failure(running: Promise<unknown>): Promise<string> {
   assert.fail('the run fails');
 }
 
-test('a number field that becomes an integer fails its copy, naming the column, while a stored value has a fraction, and the row and checkpoint stay as they were', async () => {
-  await using database = await scratch();
-  const states: unknown[] = [];
-  await run(database.login, {
-    properties: { amount: { type: 'number' } },
-    records: [{ id: 'a', amount: 1.5 }],
-    number: 1,
-    states,
-  });
+test(
+  'a number field that becomes an integer fails its copy, naming the column, while a stored value has a fraction, and the row and checkpoint stay as they were',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const states: unknown[] = [];
+    await run(database.login, {
+      properties: { amount: { type: 'number' } },
+      records: [{ id: 'a', amount: 1.5 }],
+      number: 1,
+      states,
+    });
 
-  const message = await failure(
-    run(database.login, {
-      properties: { amount: { type: 'integer' } },
+    const message = await failure(
+      run(database.login, {
+        properties: { amount: { type: 'integer' } },
+        records: [],
+        number: 2,
+        states,
+      }),
+    );
+
+    assert.match(message, /\[amount\]/);
+    assert.match(message, /bigint/);
+    assert.deepEqual(
+      await database.admin.query('SELECT id, amount FROM marts.measures'),
+      [{ id: 'a', amount: 1.5 }],
+    );
+    await run(database.login, {
+      properties: { amount: { type: 'number' } },
       records: [],
+      number: 3,
+      states,
+    });
+    assert.deepEqual(states, [null, { run: 1 }]);
+  },
+);
+
+test(
+  'a number field that becomes an integer evolves in place when each stored value is whole, keeping its rows and checkpoint, and expires each position before it, since the history cannot widen it',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const states: unknown[] = [];
+    await run(database.login, {
+      properties: { amount: { type: 'number' } },
+      records: [{ id: 'a', amount: 2 }],
+      number: 1,
+      states,
+    });
+    const before = await newest(database.login);
+
+    await run(database.login, {
+      properties: { amount: { type: 'integer' } },
+      records: [{ id: 'b', amount: 3 }],
       number: 2,
       states,
-    }),
-  );
+    });
 
-  assert.match(message, /\[amount\]/);
-  assert.match(message, /bigint/);
-  assert.deepEqual(
-    await database.admin.query('SELECT id, amount FROM marts.measures'),
-    [{ id: 'a', amount: 1.5 }],
-  );
-  await run(database.login, {
-    properties: { amount: { type: 'number' } },
-    records: [],
-    number: 3,
-    states,
-  });
-  assert.deepEqual(states, [null, { run: 1 }]);
-});
-
-test('a number field that becomes an integer evolves in place when each stored value is whole, keeping its rows and checkpoint, and expires each position before it, since the history cannot widen it', async () => {
-  await using database = await scratch();
-  const states: unknown[] = [];
-  await run(database.login, {
-    properties: { amount: { type: 'number' } },
-    records: [{ id: 'a', amount: 2 }],
-    number: 1,
-    states,
-  });
-  const before = await newest(database.login);
-
-  await run(database.login, {
-    properties: { amount: { type: 'integer' } },
-    records: [{ id: 'b', amount: 3 }],
-    number: 2,
-    states,
-  });
-
-  assert.deepEqual(
-    {
-      type: await typeOf(database.admin, 'amount'),
-      rows: await database.admin.query(
-        'SELECT id, amount FROM marts.measures ORDER BY id',
-      ),
-      states,
-      listed: (await positionsOf(database.login)).includes(before),
-    },
-    {
-      type: 'bigint',
-      rows: [
-        { id: 'a', amount: '2' },
-        { id: 'b', amount: '3' },
-      ],
-      states: [null, { run: 1 }],
-      listed: false,
-    },
-  );
-});
-
-test('an integer field that becomes a string widens in place and its history widens with it and keeps the rows that the change converts, so a dropped field that a later change adds back reads as it was as of each position before the drop', async () => {
-  await using database = await scratch();
-  await run(database.login, {
-    properties: { amount: { type: 'integer' }, note: { type: 'string' } },
-    records: [{ id: 'a', amount: 7, note: 'first' }],
-    number: 1,
-  });
-  await run(database.login, {
-    properties: { amount: { type: 'integer' }, note: { type: 'string' } },
-    records: [{ id: 'a', amount: 8, note: 'second' }],
-    number: 2,
-  });
-  const [first, second] = (await positionsOf(database.login)).map(String);
-  assert.ok(first !== undefined && second !== undefined);
-
-  await run(database.login, {
-    properties: { amount: { type: 'string' } },
-    records: [{ id: 'b', amount: 'x' }],
-    number: 3,
-  });
-  await run(database.login, {
-    properties: { amount: { type: 'string' }, note: { type: 'string' } },
-    records: [],
-    number: 4,
-  });
-
-  const read = (position: string) =>
-    asOf(
-      database.login,
-      position,
-      'SELECT id, amount, note FROM marts.measures ORDER BY id',
+    assert.deepEqual(
+      {
+        type: await typeOf(database.admin, 'amount'),
+        rows: await database.admin.query(
+          'SELECT id, amount FROM marts.measures ORDER BY id',
+        ),
+        states,
+        listed: (await positionsOf(database.login)).includes(before),
+      },
+      {
+        type: 'bigint',
+        rows: [
+          { id: 'a', amount: '2' },
+          { id: 'b', amount: '3' },
+        ],
+        states: [null, { run: 1 }],
+        listed: false,
+      },
     );
-  assert.deepEqual(
-    {
-      type: await typeOf(database.admin, 'amount'),
-      listed: (await positionsOf(database.login)).includes(first),
-      first: await read(first),
-      second: await read(second),
-      now: await database.admin.query(
+  },
+);
+
+test(
+  'an integer field that becomes a string widens in place and its history widens with it and keeps the rows that the change converts, so a dropped field that a later change adds back reads as it was as of each position before the drop',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    await run(database.login, {
+      properties: { amount: { type: 'integer' }, note: { type: 'string' } },
+      records: [{ id: 'a', amount: 7, note: 'first' }],
+      number: 1,
+    });
+    await run(database.login, {
+      properties: { amount: { type: 'integer' }, note: { type: 'string' } },
+      records: [{ id: 'a', amount: 8, note: 'second' }],
+      number: 2,
+    });
+    const [first, second] = (await positionsOf(database.login)).map(String);
+    assert.ok(first !== undefined && second !== undefined);
+
+    await run(database.login, {
+      properties: { amount: { type: 'string' } },
+      records: [{ id: 'b', amount: 'x' }],
+      number: 3,
+    });
+    await run(database.login, {
+      properties: { amount: { type: 'string' }, note: { type: 'string' } },
+      records: [],
+      number: 4,
+    });
+
+    const read = (position: string) =>
+      asOf(
+        database.login,
+        position,
         'SELECT id, amount, note FROM marts.measures ORDER BY id',
-      ),
-    },
-    {
-      type: 'nvarchar',
-      listed: true,
-      first: [{ id: 'a', amount: '7', note: 'first' }],
-      second: [{ id: 'a', amount: '8', note: 'second' }],
-      now: [
-        { id: 'a', amount: '8', note: null },
-        { id: 'b', amount: 'x', note: null },
-      ],
-    },
-  );
-});
-
-test('a field that the stream adds enters the stored table, null in the stored rows, and an array field that it drops goes, keeping the rows, the checkpoint and the positions', async () => {
-  await using database = await scratch();
-  const states: unknown[] = [];
-  await run(database.login, {
-    properties: { tags: { type: 'array', items: { type: 'string' } } },
-    records: [{ id: 'a', tags: ['x'] }],
-    number: 1,
-    states,
-  });
-  const before = await newest(database.login);
-
-  await run(database.login, {
-    properties: { size: { type: 'integer' } },
-    records: [{ id: 'b', size: 4 }],
-    number: 2,
-    states,
-  });
-
-  assert.deepEqual(
-    {
-      tags: await typeOf(database.admin, 'tags'),
-      rows: await database.admin.query(
-        'SELECT id, size FROM marts.measures ORDER BY id',
-      ),
-      states,
-      before: await asOf(
-        database.login,
-        before,
-        'SELECT id, size FROM marts.measures ORDER BY id',
-      ),
-    },
-    {
-      tags: undefined,
-      rows: [
-        { id: 'a', size: null },
-        { id: 'b', size: '4' },
-      ],
-      states: [null, { run: 1 }],
-      before: [{ id: 'a', size: null }],
-    },
-  );
-});
-
-test('an overwrite whose field widens swaps its table in, and its history widens with it, so the position before the swap reads the old rows', async () => {
-  await using database = await scratch();
-  await run(database.login, {
-    properties: { amount: { type: 'integer' } },
-    records: [{ id: 'a', amount: 7 }],
-    number: 1,
-    mode: 'overwrite',
-  });
-  const before = await newest(database.login);
-
-  await run(database.login, {
-    properties: { amount: { type: 'string' } },
-    records: [{ id: 'b', amount: 'x' }],
-    number: 2,
-    mode: 'overwrite',
-  });
-
-  assert.deepEqual(
-    {
-      listed: (await positionsOf(database.login)).includes(before),
-      before: await asOf(
-        database.login,
-        before,
-        'SELECT id, amount FROM marts.measures ORDER BY id',
-      ),
-      now: await database.admin.query(
-        'SELECT id, amount FROM marts.measures ORDER BY id',
-      ),
-    },
-    {
-      listed: true,
-      before: [{ id: 'a', amount: '7' }],
-      now: [{ id: 'b', amount: 'x' }],
-    },
-  );
-});
-
-test('a reader that holds the table delays its change: the copy fails after the lock timeout with the table as it was, and the next run evolves it', async () => {
-  await using database = await scratch();
-  const states: unknown[] = [];
-  await run(database.login, {
-    properties: { amount: { type: 'integer' } },
-    records: [{ id: 'a', amount: 7 }],
-    number: 1,
-    states,
-  });
-  const reshaped = {
-    properties: { amount: { type: 'string' } },
-    records: [],
-    states,
-  } as const;
-  {
-    await using reader = await new SqlServerDatabase(database.login).connect(
-      globalThis,
+      );
+    assert.deepEqual(
+      {
+        type: await typeOf(database.admin, 'amount'),
+        listed: (await positionsOf(database.login)).includes(first),
+        first: await read(first),
+        second: await read(second),
+        now: await database.admin.query(
+          'SELECT id, amount, note FROM marts.measures ORDER BY id',
+        ),
+      },
+      {
+        type: 'nvarchar',
+        listed: true,
+        first: [{ id: 'a', amount: '7', note: 'first' }],
+        second: [{ id: 'a', amount: '8', note: 'second' }],
+        now: [
+          { id: 'a', amount: '8', note: null },
+          { id: 'b', amount: 'x', note: null },
+        ],
+      },
     );
-    await reader.query('BEGIN TRANSACTION');
-    await reader.query(
-      'SELECT COUNT(*) AS [rows] FROM _warehouse.raw_measures WITH (TABLOCK, HOLDLOCK)',
+  },
+);
+
+test(
+  'a field that the stream adds enters the stored table, null in the stored rows, and an array field that it drops goes, keeping the rows, the checkpoint and the positions',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const states: unknown[] = [];
+    await run(database.login, {
+      properties: { tags: { type: 'array', items: { type: 'string' } } },
+      records: [{ id: 'a', tags: ['x'] }],
+      number: 1,
+      states,
+    });
+    const before = await newest(database.login);
+
+    await run(database.login, {
+      properties: { size: { type: 'integer' } },
+      records: [{ id: 'b', size: 4 }],
+      number: 2,
+      states,
+    });
+
+    assert.deepEqual(
+      {
+        tags: await typeOf(database.admin, 'tags'),
+        rows: await database.admin.query(
+          'SELECT id, size FROM marts.measures ORDER BY id',
+        ),
+        states,
+        before: await asOf(
+          database.login,
+          before,
+          'SELECT id, size FROM marts.measures ORDER BY id',
+        ),
+      },
+      {
+        tags: undefined,
+        rows: [
+          { id: 'a', size: null },
+          { id: 'b', size: '4' },
+        ],
+        states: [null, { run: 1 }],
+        before: [{ id: 'a', size: null }],
+      },
+    );
+  },
+);
+
+test(
+  'an overwrite whose field widens swaps its table in, and its history widens with it, so the position before the swap reads the old rows',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    await run(database.login, {
+      properties: { amount: { type: 'integer' } },
+      records: [{ id: 'a', amount: 7 }],
+      number: 1,
+      mode: 'overwrite',
+    });
+    const before = await newest(database.login);
+
+    await run(database.login, {
+      properties: { amount: { type: 'string' } },
+      records: [{ id: 'b', amount: 'x' }],
+      number: 2,
+      mode: 'overwrite',
+    });
+
+    assert.deepEqual(
+      {
+        listed: (await positionsOf(database.login)).includes(before),
+        before: await asOf(
+          database.login,
+          before,
+          'SELECT id, amount FROM marts.measures ORDER BY id',
+        ),
+        now: await database.admin.query(
+          'SELECT id, amount FROM marts.measures ORDER BY id',
+        ),
+      },
+      {
+        listed: true,
+        before: [{ id: 'a', amount: '7' }],
+        now: [{ id: 'b', amount: 'x' }],
+      },
+    );
+  },
+);
+
+test(
+  'a reader that holds the table delays its change: the copy fails after the lock timeout with the table as it was, and the next run evolves it',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const states: unknown[] = [];
+    await run(database.login, {
+      properties: { amount: { type: 'integer' } },
+      records: [{ id: 'a', amount: 7 }],
+      number: 1,
+      states,
+    });
+    const reshaped = {
+      properties: { amount: { type: 'string' } },
+      records: [],
+      states,
+    } as const;
+    {
+      await using reader = await new SqlServerDatabase(database.login).connect(
+        globalThis,
+      );
+      await reader.query('BEGIN TRANSACTION');
+      await reader.query(
+        'SELECT COUNT(*) AS [rows] FROM _warehouse.raw_measures WITH (TABLOCK, HOLDLOCK)',
+      );
+
+      const message = await failure(
+        run(database.login, { ...reshaped, number: 2 }),
+      );
+
+      assert.match(message, /lock/i);
+      assert.equal(await typeOf(database.admin, 'amount'), 'bigint');
+      await reader.query('ROLLBACK');
+    }
+
+    await run(database.login, { ...reshaped, number: 3 });
+
+    assert.deepEqual(
+      {
+        type: await typeOf(database.admin, 'amount'),
+        rows: await database.admin.query(
+          'SELECT id, amount FROM marts.measures',
+        ),
+        states,
+      },
+      {
+        type: 'nvarchar',
+        rows: [{ id: 'a', amount: '7' }],
+        states: [null, { run: 1 }],
+      },
+    );
+  },
+);
+
+test(
+  'a key field that changes its type fails the copy, since the stored key hashes are of the old values, and the table stays as it was',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const keyed = (id: FieldSchema) =>
+      new Stream({
+        name: 'measures',
+        jsonSchema: {
+          type: 'object',
+          description: 'Measures.',
+          properties: {
+            id: { ...id, description: 'The id of the measure.' },
+          },
+          required: ['id'],
+        },
+        primaryKey: ['id'],
+        supportedSyncModes: ['incremental'],
+        sourceDefinedCursor: true,
+      });
+    const once = (stream: Stream, records: readonly object[]) => {
+      const destination = new SqlServerDestination({ login: database.login });
+      return new Pipeline({
+        clock: globalThis,
+        history: new SqlServerSyncHistory({ login: database.login }),
+        connections: [
+          new Connection({
+            name: 'raw',
+            source: new Measured(stream, records, 1, []),
+            destination,
+            checkpoints: new SqlServerCheckpointStore({
+              login: database.login,
+            }),
+            steps: [
+              new Copy(stream, destination.table('measures'), {
+                id: 'measures',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+              }),
+            ],
+          }),
+        ],
+      }).run();
+    };
+    await once(keyed({ type: 'integer' }), [{ id: 1 }]);
+
+    const message = await failure(
+      once(keyed({ type: 'string' }), [{ id: '1' }]),
+    );
+
+    assert.match(message, /clear the copy/);
+    assert.equal(await typeOf(database.admin, 'id'), 'bigint');
+  },
+);
+
+test(
+  'a view WITH SCHEMABINDING that reads a column the stream converts stops the evolve with an error that names it, and the table stays as it was',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    await run(database.login, {
+      properties: { amount: { type: 'integer' } },
+      records: [{ id: 'a', amount: 7 }],
+      number: 1,
+    });
+    await database.admin.query(
+      'CREATE VIEW dbo.bound WITH SCHEMABINDING AS SELECT id, amount FROM _warehouse.raw_measures',
     );
 
     const message = await failure(
-      run(database.login, { ...reshaped, number: 2 }),
+      run(database.login, {
+        properties: { amount: { type: 'string' } },
+        records: [],
+        number: 2,
+      }),
     );
 
-    assert.match(message, /lock/i);
+    assert.match(message, /\[dbo\]\.\[bound\] WITH SCHEMABINDING/);
     assert.equal(await typeOf(database.admin, 'amount'), 'bigint');
-    await reader.query('ROLLBACK');
-  }
-
-  await run(database.login, { ...reshaped, number: 3 });
-
-  assert.deepEqual(
-    {
-      type: await typeOf(database.admin, 'amount'),
-      rows: await database.admin.query('SELECT id, amount FROM marts.measures'),
-      states,
-    },
-    {
-      type: 'nvarchar',
-      rows: [{ id: 'a', amount: '7' }],
-      states: [null, { run: 1 }],
-    },
-  );
-});
-
-test('a key field that changes its type fails the copy, since the stored key hashes are of the old values, and the table stays as it was', async () => {
-  await using database = await scratch();
-  const keyed = (id: FieldSchema) =>
-    new Stream({
-      name: 'measures',
-      jsonSchema: {
-        type: 'object',
-        description: 'Measures.',
-        properties: {
-          id: { ...id, description: 'The id of the measure.' },
-        },
-        required: ['id'],
-      },
-      primaryKey: ['id'],
-      supportedSyncModes: ['incremental'],
-      sourceDefinedCursor: true,
-    });
-  const once = (stream: Stream, records: readonly object[]) => {
-    const destination = new SqlServerDestination({ login: database.login });
-    return new Pipeline({
-      clock: globalThis,
-      history: new SqlServerSyncHistory({ login: database.login }),
-      connections: [
-        new Connection({
-          name: 'raw',
-          source: new Measured(stream, records, 1, []),
-          destination,
-          checkpoints: new SqlServerCheckpointStore({ login: database.login }),
-          steps: [
-            new Copy(stream, destination.table('measures'), {
-              id: 'measures',
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-            }),
-          ],
-        }),
-      ],
-    }).run();
-  };
-  await once(keyed({ type: 'integer' }), [{ id: 1 }]);
-
-  const message = await failure(once(keyed({ type: 'string' }), [{ id: '1' }]));
-
-  assert.match(message, /clear the copy/);
-  assert.equal(await typeOf(database.admin, 'id'), 'bigint');
-});
-
-test('a view WITH SCHEMABINDING that reads a column the stream converts stops the evolve with an error that names it, and the table stays as it was', async () => {
-  await using database = await scratch();
-  await run(database.login, {
-    properties: { amount: { type: 'integer' } },
-    records: [{ id: 'a', amount: 7 }],
-    number: 1,
-  });
-  await database.admin.query(
-    'CREATE VIEW dbo.bound WITH SCHEMABINDING AS SELECT id, amount FROM _warehouse.raw_measures',
-  );
-
-  const message = await failure(
-    run(database.login, {
-      properties: { amount: { type: 'string' } },
-      records: [],
-      number: 2,
-    }),
-  );
-
-  assert.match(message, /\[dbo\]\.\[bound\] WITH SCHEMABINDING/);
-  assert.equal(await typeOf(database.admin, 'amount'), 'bigint');
-});
+  },
+);

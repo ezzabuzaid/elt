@@ -32,6 +32,8 @@ const sqlServer = new SqlServer({
   image: 'mcr.microsoft.com/mssql/server:2025-latest',
 });
 
+const emulation = await SqlServer.emulation({ environment: process.env });
+
 // A database of its own for one test, which keeps row versions for readers.
 async function scratch() {
   const database = await sqlServer.database();
@@ -247,333 +249,372 @@ const parts =
 const committed =
   'SELECT [seq], [part_hash], [start], [end], [committed_in] FROM _warehouse.raw_pieces_parts ORDER BY [seq]';
 
-test('a table rule keeps one output row for each key in marts.<name>, and each part in marts.<name>_parts with its seq from 0, its part hash, its content and its place, unique on the key hash and seq, and derived_status counts the output rows', async () => {
-  await using database = await scratch();
-  const { source, pipeline } = pieces(database.login);
-  source.rows = [
-    { id: 'a', text: 'one|two|one' },
-    { id: 'b', text: 'three' },
-    { id: 'c', text: '' },
-  ];
+test(
+  'a table rule keeps one output row for each key in marts.<name>, and each part in marts.<name>_parts with its seq from 0, its part hash, its content and its place, unique on the key hash and seq, and derived_status counts the output rows',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = pieces(database.login);
+    source.rows = [
+      { id: 'a', text: 'one|two|one' },
+      { id: 'b', text: 'three' },
+      { id: 'c', text: '' },
+    ];
 
-  await pipeline.run();
+    await pipeline.run();
 
-  const declared = (relation: string) =>
-    database.rows(
-      `SELECT c.[name], TYPE_NAME(c.[user_type_id]) AS [type], c.[max_length] AS [length], c.[is_nullable] AS [nullable] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'${relation}') ORDER BY c.[column_id]`,
-    );
-  assert.deepEqual(
-    {
-      outputs: await database.rows(
-        'SELECT [id], [rule], [status], [error] FROM marts.pieces ORDER BY [id]',
-      ),
-      columns: (await declared('marts.pieces')).map(({ name }) => name),
-      parts: await database.rows(
-        'SELECT [id], [seq], [part_hash], [text], [tokens], [start], [end] FROM marts.pieces_parts ORDER BY [id], [seq]',
-      ),
-      view: (await declared('marts.pieces_parts')).map(({ name }) => name),
-      table: await declared('_warehouse.raw_pieces_parts'),
-      indexes: await database.rows(
-        "SELECT i.[type_desc] AS [kind], i.[is_unique] AS [unique], STRING_AGG(c.[name], N',') WITHIN GROUP (ORDER BY ic.[key_ordinal]) AS [columns] FROM sys.indexes AS i JOIN sys.index_columns AS ic ON ic.[object_id] = i.[object_id] AND ic.[index_id] = i.[index_id] JOIN sys.columns AS c ON c.[object_id] = ic.[object_id] AND c.[column_id] = ic.[column_id] WHERE i.[object_id] = OBJECT_ID(N'_warehouse.raw_pieces_parts') GROUP BY i.[type_desc], i.[is_unique] ORDER BY [kind]",
-      ),
-      status: await database.rows(
-        "SELECT [state], CAST([inputs] AS int) AS [inputs], CAST([computed] AS int) AS [computed], CAST([empty] AS int) AS [empty], CAST([pending] AS int) AS [pending] FROM marts.derived_status WHERE [dataset] = N'marts.pieces'",
-      ),
-    },
-    {
-      outputs: [
-        { id: 'a', rule: 'pieces-v1', status: 'computed', error: null },
-        { id: 'b', rule: 'pieces-v1', status: 'computed', error: null },
-        { id: 'c', rule: 'pieces-v1', status: 'empty', error: null },
-      ],
-      columns: ['id', 'input_hash', 'rule', 'status', 'error'],
-      parts: [
-        {
-          id: 'a',
-          seq: 0,
-          part_hash: partHash('one', 3),
-          text: 'one',
-          tokens: '3',
-          start: '0',
-          end: '3',
-        },
-        {
-          id: 'a',
-          seq: 1,
-          part_hash: partHash('two', 3),
-          text: 'two',
-          tokens: '3',
-          start: '4',
-          end: '7',
-        },
-        {
-          id: 'a',
-          seq: 2,
-          part_hash: partHash('one', 3),
-          text: 'one',
-          tokens: '3',
-          start: '8',
-          end: '11',
-        },
-        {
-          id: 'b',
-          seq: 0,
-          part_hash: partHash('three', 5),
-          text: 'three',
-          tokens: '5',
-          start: '0',
-          end: '5',
-        },
-      ],
-      view: ['id', 'seq', 'part_hash', 'text', 'tokens', 'start', 'end'],
-      table: [
-        { name: '_elt_row', type: 'bigint', length: 8, nullable: false },
-        { name: 'id', type: 'nvarchar', length: -1, nullable: false },
-        { name: 'seq', type: 'int', length: 4, nullable: false },
-        { name: 'part_hash', type: 'nvarchar', length: -1, nullable: false },
-        { name: 'text', type: 'nvarchar', length: -1, nullable: true },
-        { name: 'tokens', type: 'bigint', length: 8, nullable: true },
-        { name: 'start', type: 'bigint', length: 8, nullable: true },
-        { name: 'end', type: 'bigint', length: 8, nullable: true },
-        { name: 'committed_in', type: 'bigint', length: 8, nullable: false },
-        { name: '_elt_row_hash', type: 'binary', length: 32, nullable: false },
-        { name: '_elt_key_hash', type: 'binary', length: 32, nullable: false },
-      ],
-      indexes: [
-        { kind: 'CLUSTERED', unique: true, columns: '_elt_row' },
-        { kind: 'NONCLUSTERED', unique: true, columns: '_elt_key_hash,seq' },
-      ],
-      status: [
-        { state: 'current', inputs: 3, computed: 2, empty: 1, pending: 0 },
-      ],
-    },
-  );
-});
-
-test('an input that changes at its end keeps the commit of each part that did not change, writes the part that changed, removes the parts beyond the new list, and a reading before the change shows the old parts with their output row', async () => {
-  await using database = await scratch();
-  const { source, destination, pipeline } = pieces(database.login);
-  source.rows = [{ id: 'a', text: 'one|two|three' }];
-  await pipeline.run();
-  const before = await newest(destination);
-  const [kept, changed] = await database.rows(committed);
-  const [made] = await database.rows('SELECT [input_hash] FROM marts.pieces');
-  source.rows = [{ id: 'a', text: 'one|tw' }];
-
-  await pipeline.run();
-
-  const after = await database.rows(committed);
-  assert.deepEqual(
-    {
-      parts: await database.rows(parts),
-      kept: after[0],
-      written: Number(after[1]?.committed_in) > Number(changed?.committed_in),
-      past: await asOf(
-        destination,
-        before,
-        'SELECT o.[input_hash], p.[seq], p.[text] FROM marts.pieces AS o JOIN marts.pieces_parts AS p ON p.[id] = o.[id] ORDER BY p.[seq]',
-      ),
-    },
-    {
-      parts: [
-        { id: 'a', seq: 0, text: 'one', start: '0', end: '3' },
-        { id: 'a', seq: 1, text: 'tw', start: '4', end: '6' },
-      ],
-      kept,
-      written: true,
-      past: [
-        { input_hash: made?.input_hash, seq: 0, text: 'one' },
-        { input_hash: made?.input_hash, seq: 1, text: 'two' },
-        { input_hash: made?.input_hash, seq: 2, text: 'three' },
-      ],
-    },
-  );
-});
-
-test('a part that only moved keeps its part hash and is written with its new place', async () => {
-  await using database = await scratch();
-  const { source, pipeline } = pieces(database.login);
-  source.rows = [{ id: 'a', text: 'xx|one' }];
-  await pipeline.run();
-  const [, before] = await database.rows(committed);
-  source.rows = [{ id: 'a', text: 'x|one' }];
-
-  await pipeline.run();
-
-  const [, after] = await database.rows(committed);
-  assert.deepEqual(
-    {
-      hash: after?.part_hash,
-      place: [after?.start, after?.end],
-      written: Number(after?.committed_in) > Number(before?.committed_in),
-    },
-    { hash: before?.part_hash, place: ['2', '5'], written: true },
-  );
-});
-
-test('an input that is empty or failed has no parts, and an input whose parts were kept loses them when it fails', async () => {
-  await using database = await scratch();
-  const { source, pipeline } = pieces(database.login);
-  source.rows = [
-    { id: 'a', text: '' },
-    { id: 'b', text: 'bad' },
-    { id: 'c', text: 'one|two' },
-  ];
-  await pipeline.run();
-  const first = await database.rows(parts);
-  source.rows = [
-    { id: 'a', text: '' },
-    { id: 'b', text: 'bad' },
-    { id: 'c', text: 'bad again' },
-  ];
-
-  await pipeline.run();
-
-  assert.deepEqual(
-    {
-      first: first.map(({ id, seq }) => `${String(id)}${String(seq)}`),
-      outputs: await database.rows(
-        'SELECT [id], [status], [error] FROM marts.pieces ORDER BY [id]',
-      ),
-      parts: await database.rows(parts),
-    },
-    {
-      first: ['c0', 'c1'],
-      outputs: [
-        { id: 'a', status: 'empty', error: null },
-        { id: 'b', status: 'failed', error: 'b is bad' },
-        { id: 'c', status: 'failed', error: 'c is bad' },
-      ],
-      parts: [],
-    },
-  );
-});
-
-test('a removed input removes its output row and its parts, and a reading before the removal still shows them', async () => {
-  await using database = await scratch();
-  const { source, destination, pipeline } = pieces(database.login);
-  source.rows = [
-    { id: 'a', text: 'one|two' },
-    { id: 'b', text: 'three' },
-  ];
-  await pipeline.run();
-  const before = await newest(destination);
-  source.rows = [{ id: 'b', text: 'three' }];
-
-  await pipeline.run();
-
-  assert.deepEqual(
-    {
-      outputs: await database.rows('SELECT [id] FROM marts.pieces'),
-      parts: (await database.rows(parts)).map(({ id }) => id),
-      past: await asOf(
-        destination,
-        before,
-        'SELECT o.[id], COUNT(p.[seq]) AS [parts] FROM marts.pieces AS o JOIN marts.pieces_parts AS p ON p.[id] = o.[id] GROUP BY o.[id] ORDER BY o.[id]',
-      ),
-    },
-    {
-      outputs: [{ id: 'b' }],
-      parts: ['b'],
-      past: [
-        { id: 'a', parts: 2 },
-        { id: 'b', parts: 1 },
-      ],
-    },
-  );
-});
-
-test('a changed declaration of the parts makes both tables again in one commit, a view over <name>_parts reads the new table, and a reading before shows the parts of the old declaration', async () => {
-  await using database = await scratch();
-  const first = pieces(database.login);
-  first.source.rows = [{ id: 'a', text: 'one|two' }];
-  await first.pipeline.run();
-  await database.admin.query(
-    'CREATE VIEW marts.piece_texts AS SELECT * FROM marts.pieces_parts',
-  );
-  const before = await newest(first.destination);
-  const [output] = await database.rows(
-    'SELECT [committed_in] FROM _warehouse.raw_pieces',
-  );
-  const second = pieces(
-    database.login,
-    new Pieces({
-      place: {
-        ...offsets,
-        line: { type: 'integer', description: 'The line of the piece.' },
+    const declared = (relation: string) =>
+      database.rows(
+        `SELECT c.[name], TYPE_NAME(c.[user_type_id]) AS [type], c.[max_length] AS [length], c.[is_nullable] AS [nullable] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'${relation}') ORDER BY c.[column_id]`,
+      );
+    assert.deepEqual(
+      {
+        outputs: await database.rows(
+          'SELECT [id], [rule], [status], [error] FROM marts.pieces ORDER BY [id]',
+        ),
+        columns: (await declared('marts.pieces')).map(({ name }) => name),
+        parts: await database.rows(
+          'SELECT [id], [seq], [part_hash], [text], [tokens], [start], [end] FROM marts.pieces_parts ORDER BY [id], [seq]',
+        ),
+        view: (await declared('marts.pieces_parts')).map(({ name }) => name),
+        table: await declared('_warehouse.raw_pieces_parts'),
+        indexes: await database.rows(
+          "SELECT i.[type_desc] AS [kind], i.[is_unique] AS [unique], STRING_AGG(c.[name], N',') WITHIN GROUP (ORDER BY ic.[key_ordinal]) AS [columns] FROM sys.indexes AS i JOIN sys.index_columns AS ic ON ic.[object_id] = i.[object_id] AND ic.[index_id] = i.[index_id] JOIN sys.columns AS c ON c.[object_id] = ic.[object_id] AND c.[column_id] = ic.[column_id] WHERE i.[object_id] = OBJECT_ID(N'_warehouse.raw_pieces_parts') GROUP BY i.[type_desc], i.[is_unique] ORDER BY [kind]",
+        ),
+        status: await database.rows(
+          "SELECT [state], CAST([inputs] AS int) AS [inputs], CAST([computed] AS int) AS [computed], CAST([empty] AS int) AS [empty], CAST([pending] AS int) AS [pending] FROM marts.derived_status WHERE [dataset] = N'marts.pieces'",
+        ),
       },
-    }),
-  );
-  second.source.rows = first.source.rows;
+      {
+        outputs: [
+          { id: 'a', rule: 'pieces-v1', status: 'computed', error: null },
+          { id: 'b', rule: 'pieces-v1', status: 'computed', error: null },
+          { id: 'c', rule: 'pieces-v1', status: 'empty', error: null },
+        ],
+        columns: ['id', 'input_hash', 'rule', 'status', 'error'],
+        parts: [
+          {
+            id: 'a',
+            seq: 0,
+            part_hash: partHash('one', 3),
+            text: 'one',
+            tokens: '3',
+            start: '0',
+            end: '3',
+          },
+          {
+            id: 'a',
+            seq: 1,
+            part_hash: partHash('two', 3),
+            text: 'two',
+            tokens: '3',
+            start: '4',
+            end: '7',
+          },
+          {
+            id: 'a',
+            seq: 2,
+            part_hash: partHash('one', 3),
+            text: 'one',
+            tokens: '3',
+            start: '8',
+            end: '11',
+          },
+          {
+            id: 'b',
+            seq: 0,
+            part_hash: partHash('three', 5),
+            text: 'three',
+            tokens: '5',
+            start: '0',
+            end: '5',
+          },
+        ],
+        view: ['id', 'seq', 'part_hash', 'text', 'tokens', 'start', 'end'],
+        table: [
+          { name: '_elt_row', type: 'bigint', length: 8, nullable: false },
+          { name: 'id', type: 'nvarchar', length: -1, nullable: false },
+          { name: 'seq', type: 'int', length: 4, nullable: false },
+          { name: 'part_hash', type: 'nvarchar', length: -1, nullable: false },
+          { name: 'text', type: 'nvarchar', length: -1, nullable: true },
+          { name: 'tokens', type: 'bigint', length: 8, nullable: true },
+          { name: 'start', type: 'bigint', length: 8, nullable: true },
+          { name: 'end', type: 'bigint', length: 8, nullable: true },
+          { name: 'committed_in', type: 'bigint', length: 8, nullable: false },
+          {
+            name: '_elt_row_hash',
+            type: 'binary',
+            length: 32,
+            nullable: false,
+          },
+          {
+            name: '_elt_key_hash',
+            type: 'binary',
+            length: 32,
+            nullable: false,
+          },
+        ],
+        indexes: [
+          { kind: 'CLUSTERED', unique: true, columns: '_elt_row' },
+          { kind: 'NONCLUSTERED', unique: true, columns: '_elt_key_hash,seq' },
+        ],
+        status: [
+          { state: 'current', inputs: 3, computed: 2, empty: 1, pending: 0 },
+        ],
+      },
+    );
+  },
+);
 
-  await second.pipeline.run();
+test(
+  'an input that changes at its end keeps the commit of each part that did not change, writes the part that changed, removes the parts beyond the new list, and a reading before the change shows the old parts with their output row',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, destination, pipeline } = pieces(database.login);
+    source.rows = [{ id: 'a', text: 'one|two|three' }];
+    await pipeline.run();
+    const before = await newest(destination);
+    const [kept, changed] = await database.rows(committed);
+    const [made] = await database.rows('SELECT [input_hash] FROM marts.pieces');
+    source.rows = [{ id: 'a', text: 'one|tw' }];
 
-  const [remade] = await database.rows(
-    'SELECT [committed_in] FROM _warehouse.raw_pieces',
-  );
-  assert.deepEqual(
-    {
-      parts: await database.rows(
-        'SELECT [seq], [text], [line] FROM marts.pieces_parts ORDER BY [seq]',
-      ),
-      view: await database.rows(
-        'SELECT [id], [text], [line] FROM marts.piece_texts ORDER BY [seq]',
-      ),
-      outputRemade: Number(remade?.committed_in) > Number(output?.committed_in),
-      past: await asOf(
-        second.destination,
-        before,
-        'SELECT [seq], [text] FROM marts.pieces_parts ORDER BY [seq]',
-      ),
-    },
-    {
-      parts: [
-        { seq: 0, text: 'one', line: null },
-        { seq: 1, text: 'two', line: null },
-      ],
-      view: [
-        { id: 'a', text: 'one', line: null },
-        { id: 'a', text: 'two', line: null },
-      ],
-      outputRemade: true,
-      past: [
-        { seq: 0, text: 'one' },
-        { seq: 1, text: 'two' },
-      ],
-    },
-  );
-});
+    await pipeline.run();
 
-test('a table rule indexes its parts table and its raw table each by its own declaration', async () => {
-  await using database = await scratch();
-  const { source, pipeline } = pieces(database.login, new Pieces(), {
-    indexes: [{ type: 'nonclustered', columns: ['committed_in'] }],
-    partIndexes: [{ type: 'nonclustered', columns: ['tokens', 'seq'] }],
-  });
-  source.rows = [{ id: 'n1', text: 'ab|c' }];
+    const after = await database.rows(committed);
+    assert.deepEqual(
+      {
+        parts: await database.rows(parts),
+        kept: after[0],
+        written: Number(after[1]?.committed_in) > Number(changed?.committed_in),
+        past: await asOf(
+          destination,
+          before,
+          'SELECT o.[input_hash], p.[seq], p.[text] FROM marts.pieces AS o JOIN marts.pieces_parts AS p ON p.[id] = o.[id] ORDER BY p.[seq]',
+        ),
+      },
+      {
+        parts: [
+          { id: 'a', seq: 0, text: 'one', start: '0', end: '3' },
+          { id: 'a', seq: 1, text: 'tw', start: '4', end: '6' },
+        ],
+        kept,
+        written: true,
+        past: [
+          { input_hash: made?.input_hash, seq: 0, text: 'one' },
+          { input_hash: made?.input_hash, seq: 1, text: 'two' },
+          { input_hash: made?.input_hash, seq: 2, text: 'three' },
+        ],
+      },
+    );
+  },
+);
 
-  await pipeline.run();
+test(
+  'a part that only moved keeps its part hash and is written with its new place',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = pieces(database.login);
+    source.rows = [{ id: 'a', text: 'xx|one' }];
+    await pipeline.run();
+    const [, before] = await database.rows(committed);
+    source.rows = [{ id: 'a', text: 'x|one' }];
 
-  const indexes = (table: string) =>
-    database.rows(
-      `SELECT STRING_AGG(c.[name], N',') WITHIN GROUP (ORDER BY ic.[key_ordinal]) AS [columns]
+    await pipeline.run();
+
+    const [, after] = await database.rows(committed);
+    assert.deepEqual(
+      {
+        hash: after?.part_hash,
+        place: [after?.start, after?.end],
+        written: Number(after?.committed_in) > Number(before?.committed_in),
+      },
+      { hash: before?.part_hash, place: ['2', '5'], written: true },
+    );
+  },
+);
+
+test(
+  'an input that is empty or failed has no parts, and an input whose parts were kept loses them when it fails',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = pieces(database.login);
+    source.rows = [
+      { id: 'a', text: '' },
+      { id: 'b', text: 'bad' },
+      { id: 'c', text: 'one|two' },
+    ];
+    await pipeline.run();
+    const first = await database.rows(parts);
+    source.rows = [
+      { id: 'a', text: '' },
+      { id: 'b', text: 'bad' },
+      { id: 'c', text: 'bad again' },
+    ];
+
+    await pipeline.run();
+
+    assert.deepEqual(
+      {
+        first: first.map(({ id, seq }) => `${String(id)}${String(seq)}`),
+        outputs: await database.rows(
+          'SELECT [id], [status], [error] FROM marts.pieces ORDER BY [id]',
+        ),
+        parts: await database.rows(parts),
+      },
+      {
+        first: ['c0', 'c1'],
+        outputs: [
+          { id: 'a', status: 'empty', error: null },
+          { id: 'b', status: 'failed', error: 'b is bad' },
+          { id: 'c', status: 'failed', error: 'c is bad' },
+        ],
+        parts: [],
+      },
+    );
+  },
+);
+
+test(
+  'a removed input removes its output row and its parts, and a reading before the removal still shows them',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, destination, pipeline } = pieces(database.login);
+    source.rows = [
+      { id: 'a', text: 'one|two' },
+      { id: 'b', text: 'three' },
+    ];
+    await pipeline.run();
+    const before = await newest(destination);
+    source.rows = [{ id: 'b', text: 'three' }];
+
+    await pipeline.run();
+
+    assert.deepEqual(
+      {
+        outputs: await database.rows('SELECT [id] FROM marts.pieces'),
+        parts: (await database.rows(parts)).map(({ id }) => id),
+        past: await asOf(
+          destination,
+          before,
+          'SELECT o.[id], COUNT(p.[seq]) AS [parts] FROM marts.pieces AS o JOIN marts.pieces_parts AS p ON p.[id] = o.[id] GROUP BY o.[id] ORDER BY o.[id]',
+        ),
+      },
+      {
+        outputs: [{ id: 'b' }],
+        parts: ['b'],
+        past: [
+          { id: 'a', parts: 2 },
+          { id: 'b', parts: 1 },
+        ],
+      },
+    );
+  },
+);
+
+test(
+  'a changed declaration of the parts makes both tables again in one commit, a view over <name>_parts reads the new table, and a reading before shows the parts of the old declaration',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const first = pieces(database.login);
+    first.source.rows = [{ id: 'a', text: 'one|two' }];
+    await first.pipeline.run();
+    await database.admin.query(
+      'CREATE VIEW marts.piece_texts AS SELECT * FROM marts.pieces_parts',
+    );
+    const before = await newest(first.destination);
+    const [output] = await database.rows(
+      'SELECT [committed_in] FROM _warehouse.raw_pieces',
+    );
+    const second = pieces(
+      database.login,
+      new Pieces({
+        place: {
+          ...offsets,
+          line: { type: 'integer', description: 'The line of the piece.' },
+        },
+      }),
+    );
+    second.source.rows = first.source.rows;
+
+    await second.pipeline.run();
+
+    const [remade] = await database.rows(
+      'SELECT [committed_in] FROM _warehouse.raw_pieces',
+    );
+    assert.deepEqual(
+      {
+        parts: await database.rows(
+          'SELECT [seq], [text], [line] FROM marts.pieces_parts ORDER BY [seq]',
+        ),
+        view: await database.rows(
+          'SELECT [id], [text], [line] FROM marts.piece_texts ORDER BY [seq]',
+        ),
+        outputRemade:
+          Number(remade?.committed_in) > Number(output?.committed_in),
+        past: await asOf(
+          second.destination,
+          before,
+          'SELECT [seq], [text] FROM marts.pieces_parts ORDER BY [seq]',
+        ),
+      },
+      {
+        parts: [
+          { seq: 0, text: 'one', line: null },
+          { seq: 1, text: 'two', line: null },
+        ],
+        view: [
+          { id: 'a', text: 'one', line: null },
+          { id: 'a', text: 'two', line: null },
+        ],
+        outputRemade: true,
+        past: [
+          { seq: 0, text: 'one' },
+          { seq: 1, text: 'two' },
+        ],
+      },
+    );
+  },
+);
+
+test(
+  'a table rule indexes its parts table and its raw table each by its own declaration',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = pieces(database.login, new Pieces(), {
+      indexes: [{ type: 'nonclustered', columns: ['committed_in'] }],
+      partIndexes: [{ type: 'nonclustered', columns: ['tokens', 'seq'] }],
+    });
+    source.rows = [{ id: 'n1', text: 'ab|c' }];
+
+    await pipeline.run();
+
+    const indexes = (table: string) =>
+      database.rows(
+        `SELECT STRING_AGG(c.[name], N',') WITHIN GROUP (ORDER BY ic.[key_ordinal]) AS [columns]
        FROM sys.indexes AS i
        JOIN sys.index_columns AS ic ON ic.[object_id] = i.[object_id] AND ic.[index_id] = i.[index_id]
        JOIN sys.columns AS c ON c.[object_id] = ic.[object_id] AND c.[column_id] = ic.[column_id]
        WHERE i.[object_id] = OBJECT_ID(N'${table}') AND i.[name] LIKE N'ix[_]elt[_]%'
        GROUP BY i.[name]`,
+      );
+    assert.deepEqual(
+      {
+        raw: await indexes('_warehouse.raw_pieces'),
+        parts: await indexes('_warehouse.raw_pieces_parts'),
+      },
+      {
+        raw: [{ columns: 'committed_in' }],
+        parts: [{ columns: 'tokens,seq' }],
+      },
     );
-  assert.deepEqual(
-    {
-      raw: await indexes('_warehouse.raw_pieces'),
-      parts: await indexes('_warehouse.raw_pieces_parts'),
-    },
-    {
-      raw: [{ columns: 'committed_in' }],
-      parts: [{ columns: 'tokens,seq' }],
-    },
-  );
-});
+  },
+);
 
 test('an index of the parts table on a column that only the raw table has is refused when the dataset is constructed', () => {
   assert.throws(
@@ -625,88 +666,96 @@ test('two vector indexes of the parts table are refused when the dataset is cons
   );
 });
 
-test('a computed dataset with a vector index of its parts refuses a pipeline whose copy makes Pieces_Parts_Nearest, before anything is made', async () => {
-  await using database = await scratch();
-  const source = new Notes();
-  const destination = new SqlServerDestination({ login: database.login });
-  const target = destination.table('Pieces_Parts_Nearest');
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SqlServerSyncHistory({ login: database.login }),
-    connections: [
-      new Connection({
-        name: 'notes',
-        source,
-        destination,
-        steps: [new Copy(source.notes, target)],
-      }),
-    ],
-    derived: [
-      new ComputedDataset({
-        into: destination,
-        name: 'pieces',
-        description: 'The pieces of each note.',
-        from: [target],
-        compute: vectorPieces(),
-        partIndexes: [{ type: 'vector', column: 'vector', metric: 'cosine' }],
-      }),
-    ],
-  });
+test(
+  'a computed dataset with a vector index of its parts refuses a pipeline whose copy makes Pieces_Parts_Nearest, before anything is made',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Notes();
+    const destination = new SqlServerDestination({ login: database.login });
+    const target = destination.table('Pieces_Parts_Nearest');
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new SqlServerSyncHistory({ login: database.login }),
+      connections: [
+        new Connection({
+          name: 'notes',
+          source,
+          destination,
+          steps: [new Copy(source.notes, target)],
+        }),
+      ],
+      derived: [
+        new ComputedDataset({
+          into: destination,
+          name: 'pieces',
+          description: 'The pieces of each note.',
+          from: [target],
+          compute: vectorPieces(),
+          partIndexes: [{ type: 'vector', column: 'vector', metric: 'cosine' }],
+        }),
+      ],
+    });
 
-  await assert.rejects(
-    pipeline.run(),
-    new TypeError(
-      'Computed dataset pieces needs marts.pieces_parts_nearest, which a copy of the pipeline makes',
-    ),
-  );
-  assert.deepEqual(
-    await database.rows(
-      "SELECT OBJECT_ID(N'_warehouse.raw_pieces') AS [dataset], OBJECT_ID(N'marts.Pieces_Parts_Nearest') AS [copied]",
-    ),
-    [{ dataset: null, copied: null }],
-  );
-});
+    await assert.rejects(
+      pipeline.run(),
+      new TypeError(
+        'Computed dataset pieces needs marts.pieces_parts_nearest, which a copy of the pipeline makes',
+      ),
+    );
+    assert.deepEqual(
+      await database.rows(
+        "SELECT OBJECT_ID(N'_warehouse.raw_pieces') AS [dataset], OBJECT_ID(N'marts.Pieces_Parts_Nearest') AS [copied]",
+      ),
+      [{ dataset: null, copied: null }],
+    );
+  },
+);
 
-test('a computed dataset with a table rule refuses a pipeline whose copy makes Pieces_Parts, in another case, before anything is made', async () => {
-  await using database = await scratch();
-  const source = new Notes();
-  const destination = new SqlServerDestination({ login: database.login });
-  const target = destination.table('Pieces_Parts');
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SqlServerSyncHistory({ login: database.login }),
-    connections: [
-      new Connection({
-        name: 'notes',
-        source,
-        destination,
-        steps: [new Copy(source.notes, target)],
-      }),
-    ],
-    derived: [
-      new ComputedDataset({
-        into: destination,
-        name: 'pieces',
-        description: 'The pieces of each note.',
-        from: [target],
-        compute: new Pieces(),
-      }),
-    ],
-  });
+test(
+  'a computed dataset with a table rule refuses a pipeline whose copy makes Pieces_Parts, in another case, before anything is made',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Notes();
+    const destination = new SqlServerDestination({ login: database.login });
+    const target = destination.table('Pieces_Parts');
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new SqlServerSyncHistory({ login: database.login }),
+      connections: [
+        new Connection({
+          name: 'notes',
+          source,
+          destination,
+          steps: [new Copy(source.notes, target)],
+        }),
+      ],
+      derived: [
+        new ComputedDataset({
+          into: destination,
+          name: 'pieces',
+          description: 'The pieces of each note.',
+          from: [target],
+          compute: new Pieces(),
+        }),
+      ],
+    });
 
-  await assert.rejects(
-    pipeline.run(),
-    new TypeError(
-      'Computed dataset pieces needs marts.pieces_parts, which a copy of the pipeline makes',
-    ),
-  );
-  assert.deepEqual(
-    await database.rows(
-      "SELECT OBJECT_ID(N'_warehouse.raw_pieces') AS [dataset], OBJECT_ID(N'marts.Pieces_Parts') AS [copied]",
-    ),
-    [{ dataset: null, copied: null }],
-  );
-});
+    await assert.rejects(
+      pipeline.run(),
+      new TypeError(
+        'Computed dataset pieces needs marts.pieces_parts, which a copy of the pipeline makes',
+      ),
+    );
+    assert.deepEqual(
+      await database.rows(
+        "SELECT OBJECT_ID(N'_warehouse.raw_pieces') AS [dataset], OBJECT_ID(N'marts.Pieces_Parts') AS [copied]",
+      ),
+      [{ dataset: null, copied: null }],
+    );
+  },
+);
 
 for (const [output, place, column, taken] of [
   [['text'], ['SEQ'], 'SEQ', 'seq'],

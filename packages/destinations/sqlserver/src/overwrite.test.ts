@@ -33,6 +33,8 @@ const sqlServer = new SqlServer({
   image: 'mcr.microsoft.com/mssql/server:2025-latest',
 });
 
+const emulation = await SqlServer.emulation({ environment: process.env });
+
 // A database of its own for one test, which keeps row versions for readers.
 async function scratch() {
   const database = await sqlServer.database();
@@ -212,185 +214,213 @@ async function historyOf(admin: SqlServerConnection) {
   );
 }
 
-test('an overwrite whose source fails after its records leaves the table and its history as they were, and the next run replaces them', async () => {
-  await using database = await scratch();
-  const { source, pipeline } = overwriting(
-    database.login,
-    notes('notes', { keyed: false }),
-    'overwrite',
-  );
-  source.messages = { notes: [note('notes', 'n1', 1), note('notes', 'n2', 1)] };
-  await pipeline.run();
-  const raw = await rawOf(database.admin);
+test(
+  'an overwrite whose source fails after its records leaves the table and its history as they were, and the next run replaces them',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = overwriting(
+      database.login,
+      notes('notes', { keyed: false }),
+      'overwrite',
+    );
+    source.messages = {
+      notes: [note('notes', 'n1', 1), note('notes', 'n2', 1)],
+    };
+    await pipeline.run();
+    const raw = await rawOf(database.admin);
 
-  source.messages = { notes: [note('notes', 'n3', 1)] };
-  source.failure = new Error('the source stopped');
-  await assert.rejects(pipeline.run(), /the source stopped/);
+    source.messages = { notes: [note('notes', 'n3', 1)] };
+    source.failure = new Error('the source stopped');
+    await assert.rejects(pipeline.run(), /the source stopped/);
 
-  assert.deepEqual(await rawOf(database.admin), raw);
-  assert.deepEqual(await historyOf(database.admin), []);
-  source.messages = { notes: [note('notes', 'n2', 1)] };
-  source.failure = null;
-  await pipeline.run();
-  assert.deepEqual(await notesOf(database.admin), ['n2:1:n2']);
-});
+    assert.deepEqual(await rawOf(database.admin), raw);
+    assert.deepEqual(await historyOf(database.admin), []);
+    source.messages = { notes: [note('notes', 'n2', 1)] };
+    source.failure = null;
+    await pipeline.run();
+    assert.deepEqual(await notesOf(database.admin), ['n2:1:n2']);
+  },
+);
 
-test('an overwrite replaces the rows of the table with the records of its run, the history keeps each row that left with the commit that replaced it, and the position before reads as it was', async () => {
-  await using database = await scratch();
-  const { warehouse, source, pipeline } = overwriting(
-    database.login,
-    notes('notes', { keyed: false }),
-    'overwrite',
-  );
-  source.messages = { notes: [note('notes', 'n1', 1), note('notes', 'n2', 1)] };
-  await pipeline.run();
-  const [before] = await positionsOf(warehouse);
+test(
+  'an overwrite replaces the rows of the table with the records of its run, the history keeps each row that left with the commit that replaced it, and the position before reads as it was',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { warehouse, source, pipeline } = overwriting(
+      database.login,
+      notes('notes', { keyed: false }),
+      'overwrite',
+    );
+    source.messages = {
+      notes: [note('notes', 'n1', 1), note('notes', 'n2', 1)],
+    };
+    await pipeline.run();
+    const [before] = await positionsOf(warehouse);
 
-  source.messages = { notes: [note('notes', 'n3', 1)] };
-  await pipeline.run();
-  const [, after] = await positionsOf(warehouse);
+    source.messages = { notes: [note('notes', 'n3', 1)] };
+    await pipeline.run();
+    const [, after] = await positionsOf(warehouse);
 
-  assert.deepEqual(await notesOf(database.admin), ['n3:1:n3']);
-  assert.deepEqual(await historyOf(database.admin), [
-    {
-      id: 'n1',
-      version: '1',
-      body: 'n1',
-      committed_in: numberOf(before),
-      replaced_in: numberOf(after),
-    },
-    {
-      id: 'n2',
-      version: '1',
-      body: 'n2',
-      committed_in: numberOf(before),
-      replaced_in: numberOf(after),
-    },
-  ]);
-  assert.deepEqual(await asOf(database.login, String(before)), [
-    'n1:1:n1',
-    'n2:1:n2',
-  ]);
-});
+    assert.deepEqual(await notesOf(database.admin), ['n3:1:n3']);
+    assert.deepEqual(await historyOf(database.admin), [
+      {
+        id: 'n1',
+        version: '1',
+        body: 'n1',
+        committed_in: numberOf(before),
+        replaced_in: numberOf(after),
+      },
+      {
+        id: 'n2',
+        version: '1',
+        body: 'n2',
+        committed_in: numberOf(before),
+        replaced_in: numberOf(after),
+      },
+    ]);
+    assert.deepEqual(await asOf(database.login, String(before)), [
+      'n1:1:n1',
+      'n2:1:n2',
+    ]);
+  },
+);
 
-test('an overwrite that brings the same rows again keeps no history, leaves each row with its commit and its loaded_at, and takes no position', async () => {
-  await using database = await scratch();
-  const { warehouse, source, pipeline } = overwriting(
-    database.login,
-    notes('notes', { keyed: false }),
-    'overwrite',
-  );
-  source.messages = { notes: [note('notes', 'n1', 1), note('notes', 'n2', 1)] };
-  await pipeline.run();
-  const raw = await rawOf(database.admin);
-  const positions = await positionsOf(warehouse);
+test(
+  'an overwrite that brings the same rows again keeps no history, leaves each row with its commit and its loaded_at, and takes no position',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { warehouse, source, pipeline } = overwriting(
+      database.login,
+      notes('notes', { keyed: false }),
+      'overwrite',
+    );
+    source.messages = {
+      notes: [note('notes', 'n1', 1), note('notes', 'n2', 1)],
+    };
+    await pipeline.run();
+    const raw = await rawOf(database.admin);
+    const positions = await positionsOf(warehouse);
 
-  await pipeline.run();
+    await pipeline.run();
 
-  assert.deepEqual(await rawOf(database.admin), raw);
-  assert.deepEqual(await historyOf(database.admin), []);
-  assert.deepEqual(await positionsOf(warehouse), positions);
-});
+    assert.deepEqual(await rawOf(database.admin), raw);
+    assert.deepEqual(await historyOf(database.admin), []);
+    assert.deepEqual(await positionsOf(warehouse), positions);
+  },
+);
 
-test('a keyless overwrite that sends one of two identical rows again keeps only the copy that left in the history, and the copy that stays keeps its commit', async () => {
-  await using database = await scratch();
-  const { warehouse, source, pipeline } = overwriting(
-    database.login,
-    notes('notes', { keyed: false }),
-    'overwrite',
-  );
-  source.messages = {
-    notes: [
-      note('notes', 'r1', 1),
-      note('notes', 'r1', 1),
-      note('notes', 'r2', 2),
-    ],
-  };
-  await pipeline.run();
-  const [before] = await positionsOf(warehouse);
+test(
+  'a keyless overwrite that sends one of two identical rows again keeps only the copy that left in the history, and the copy that stays keeps its commit',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { warehouse, source, pipeline } = overwriting(
+      database.login,
+      notes('notes', { keyed: false }),
+      'overwrite',
+    );
+    source.messages = {
+      notes: [
+        note('notes', 'r1', 1),
+        note('notes', 'r1', 1),
+        note('notes', 'r2', 2),
+      ],
+    };
+    await pipeline.run();
+    const [before] = await positionsOf(warehouse);
 
-  source.messages = { notes: [note('notes', 'r1', 1), note('notes', 'r2', 2)] };
-  await pipeline.run();
-  const [, after] = await positionsOf(warehouse);
+    source.messages = {
+      notes: [note('notes', 'r1', 1), note('notes', 'r2', 2)],
+    };
+    await pipeline.run();
+    const [, after] = await positionsOf(warehouse);
 
-  assert.deepEqual(
-    (await rawOf(database.admin)).map(({ id, committed_in }) => ({
-      id,
-      committed_in,
-    })),
-    [
-      { id: 'r1', committed_in: numberOf(before) },
-      { id: 'r2', committed_in: numberOf(before) },
-    ],
-  );
-  assert.deepEqual(await historyOf(database.admin), [
-    {
-      id: 'r1',
-      version: '1',
-      body: 'r1',
-      committed_in: numberOf(before),
-      replaced_in: numberOf(after),
-    },
-  ]);
-  assert.deepEqual(await asOf(database.login, String(before)), [
-    'r1:1:r1',
-    'r1:1:r1',
-    'r2:2:r2',
-  ]);
-});
+    assert.deepEqual(
+      (await rawOf(database.admin)).map(({ id, committed_in }) => ({
+        id,
+        committed_in,
+      })),
+      [
+        { id: 'r1', committed_in: numberOf(before) },
+        { id: 'r2', committed_in: numberOf(before) },
+      ],
+    );
+    assert.deepEqual(await historyOf(database.admin), [
+      {
+        id: 'r1',
+        version: '1',
+        body: 'r1',
+        committed_in: numberOf(before),
+        replaced_in: numberOf(after),
+      },
+    ]);
+    assert.deepEqual(await asOf(database.login, String(before)), [
+      'r1:1:r1',
+      'r1:1:r1',
+      'r2:2:r2',
+    ]);
+  },
+);
 
-test('an overwrite_dedup keeps the newest record of each key of its run, replaces only the row whose values changed, and the history keeps only its old values', async () => {
-  await using database = await scratch();
-  const { warehouse, source, pipeline } = overwriting(
-    database.login,
-    notes('notes', { keyed: true }),
-    'overwrite_dedup',
-  );
-  source.messages = {
-    notes: [
-      note('notes', 'n1', 1),
-      note('notes', 'n2', 1),
-      note('notes', 'n3', 1),
-    ],
-  };
-  await pipeline.run();
-  const [before] = await positionsOf(warehouse);
+test(
+  'an overwrite_dedup keeps the newest record of each key of its run, replaces only the row whose values changed, and the history keeps only its old values',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { warehouse, source, pipeline } = overwriting(
+      database.login,
+      notes('notes', { keyed: true }),
+      'overwrite_dedup',
+    );
+    source.messages = {
+      notes: [
+        note('notes', 'n1', 1),
+        note('notes', 'n2', 1),
+        note('notes', 'n3', 1),
+      ],
+    };
+    await pipeline.run();
+    const [before] = await positionsOf(warehouse);
 
-  source.messages = {
-    notes: [
-      note('notes', 'n2', 3, 'newest'),
-      note('notes', 'n1', 1),
-      note('notes', 'n2', 2, 'older'),
-    ],
-  };
-  await pipeline.run();
-  const [, after] = await positionsOf(warehouse);
+    source.messages = {
+      notes: [
+        note('notes', 'n2', 3, 'newest'),
+        note('notes', 'n1', 1),
+        note('notes', 'n2', 2, 'older'),
+      ],
+    };
+    await pipeline.run();
+    const [, after] = await positionsOf(warehouse);
 
-  assert.deepEqual(
-    (await rawOf(database.admin)).map(({ id, version, committed_in }) => ({
-      id,
-      version,
-      committed_in,
-    })),
-    [
-      { id: 'n1', version: '1', committed_in: numberOf(before) },
-      { id: 'n2', version: '3', committed_in: numberOf(after) },
-    ],
-  );
-  assert.deepEqual(await historyOf(database.admin), [
-    {
-      id: 'n2',
-      version: '1',
-      body: 'n2',
-      committed_in: numberOf(before),
-      replaced_in: numberOf(after),
-    },
-    {
-      id: 'n3',
-      version: '1',
-      body: 'n3',
-      committed_in: numberOf(before),
-      replaced_in: numberOf(after),
-    },
-  ]);
-});
+    assert.deepEqual(
+      (await rawOf(database.admin)).map(({ id, version, committed_in }) => ({
+        id,
+        version,
+        committed_in,
+      })),
+      [
+        { id: 'n1', version: '1', committed_in: numberOf(before) },
+        { id: 'n2', version: '3', committed_in: numberOf(after) },
+      ],
+    );
+    assert.deepEqual(await historyOf(database.admin), [
+      {
+        id: 'n2',
+        version: '1',
+        body: 'n2',
+        committed_in: numberOf(before),
+        replaced_in: numberOf(after),
+      },
+      {
+        id: 'n3',
+        version: '1',
+        body: 'n3',
+        committed_in: numberOf(before),
+        replaced_in: numberOf(after),
+      },
+    ]);
+  },
+);

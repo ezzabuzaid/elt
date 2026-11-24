@@ -43,6 +43,8 @@ const sqlServer = new SqlServer({
   image: 'mcr.microsoft.com/mssql/server:2025-latest',
 });
 
+const emulation = await SqlServer.emulation({ environment: process.env });
+
 // A database of its own for one test, which keeps row versions for readers.
 async function scratch() {
   const database = await sqlServer.database();
@@ -215,221 +217,237 @@ const rejection = (run: Promise<unknown>) =>
 const measures =
   'SELECT [id], [status], [size], [label], CAST([vector] AS nvarchar(max)) AS [vector], [error] FROM marts.measures ORDER BY [id]';
 
-test('a rule with text, integer and vector columns stores them as NVARCHAR(MAX), BIGINT and VECTOR(n), the vector reads back with fromSql and measures with VECTOR_DISTANCE, and marts.derived_status counts the rows', async () => {
-  await using database = await scratch();
-  const measure = new Measure();
-  const { pipeline } = measuresPipeline(
-    database.login,
-    new Records(['r1', 'r2']),
-    measure,
-  );
-  measure.answers.set('r1', {
-    size: Number.MAX_SAFE_INTEGER,
-    label: 'größe 🌍',
-    vector: Vector.from([0.5, -1, 2]),
-  });
-
-  await pipeline.run();
-
-  const rows = plain(await database.admin.query(measures));
-  assert.deepEqual(
-    {
-      rows: rows.map(({ vector, ...row }) => ({
-        ...row,
-        vector:
-          typeof vector === 'string'
-            ? [...fromSql(Vector, vector).values]
-            : vector,
-      })),
-      distance: plain(
-        await database.admin.query(
-          "SELECT VECTOR_DISTANCE('euclidean', [vector], CAST(N'[0.5,-1,2]' AS VECTOR(3))) AS [distance] FROM marts.measures WHERE [id] = N'r1'",
-        ),
-      ),
-      declared: plain(
-        await database.admin.query(
-          "SELECT c.[name], TYPE_NAME(c.[user_type_id]) AS [type], c.[vector_dimensions] AS [dimensions] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND c.[name] IN (N'id', N'size', N'label', N'vector') ORDER BY c.[name]",
-        ),
-      ),
-      status: plain(
-        await database.admin.query(
-          'SELECT [dataset], [kind], [state], CAST([inputs] AS int) AS [inputs], CAST([computed] AS int) AS [computed], CAST([failed] AS int) AS [failed], CAST([pending] AS int) AS [pending] FROM marts.derived_status',
-        ),
-      ),
-    },
-    {
-      rows: [
-        {
-          id: 'r1',
-          status: 'computed',
-          size: String(Number.MAX_SAFE_INTEGER),
-          label: 'größe 🌍',
-          vector: [0.5, -1, 2],
-          error: null,
-        },
-        {
-          id: 'r2',
-          status: 'computed',
-          size: null,
-          label: null,
-          vector: null,
-          error: null,
-        },
-      ],
-      distance: [{ distance: 0 }],
-      declared: [
-        { name: 'id', type: 'nvarchar', dimensions: null },
-        { name: 'label', type: 'nvarchar', dimensions: null },
-        { name: 'size', type: 'bigint', dimensions: null },
-        { name: 'vector', type: 'vector', dimensions: 3 },
-      ],
-      status: [
-        {
-          dataset: 'marts.measures',
-          kind: 'computed',
-          state: 'current',
-          inputs: 2,
-          computed: 2,
-          failed: 0,
-          pending: 0,
-        },
-      ],
-    },
-  );
-});
-
-test('a vector of other dimensions than its column fails its row with both counts, the run and the other rows succeed, and the next run that fails the row the same way keeps its commit', async () => {
-  await using database = await scratch();
-  const measure = new Measure();
-  const { pipeline } = measuresPipeline(
-    database.login,
-    new Records(['r1', 'r2']),
-    measure,
-  );
-  measure.answers.set('r1', { vector: Vector.from([1, 2]) });
-  measure.answers.set('r2', { vector: Vector.from([1, 2, 3]) });
-  const rows = async () =>
-    plain(
-      await database.admin.query(
-        'SELECT [id], [status], [error], IIF([vector] IS NULL, 0, 1) AS [stored], [committed_in] FROM _warehouse.raw_measures ORDER BY [id]',
-      ),
+test(
+  'a rule with text, integer and vector columns stores them as NVARCHAR(MAX), BIGINT and VECTOR(n), the vector reads back with fromSql and measures with VECTOR_DISTANCE, and marts.derived_status counts the rows',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const measure = new Measure();
+    const { pipeline } = measuresPipeline(
+      database.login,
+      new Records(['r1', 'r2']),
+      measure,
     );
+    measure.answers.set('r1', {
+      size: Number.MAX_SAFE_INTEGER,
+      label: 'größe 🌍',
+      vector: Vector.from([0.5, -1, 2]),
+    });
 
-  await pipeline.run();
-  const first = await rows();
-  // The refresh after the passes asks the rule again for a failed row, and
-  // the row it makes has the values of the stored row.
-  await pipeline.run();
+    await pipeline.run();
 
-  assert.deepEqual(await rows(), first);
-  assert.deepEqual(
-    first.map(({ committed_in: _, ...row }) => row),
-    [
+    const rows = plain(await database.admin.query(measures));
+    assert.deepEqual(
       {
-        id: 'r1',
-        status: 'failed',
-        error:
-          'The column vector takes a vector of 3 dimensions, and the rule gave one of 2.',
-        stored: 0,
-      },
-      { id: 'r2', status: 'computed', error: null, stored: 1 },
-    ],
-  );
-});
-
-test('a refresh whose outputs did not change keeps their commits, a changed rule writes each row in a new commit that a reading of the earlier position does not see, and a gone input removes its row', async () => {
-  await using database = await scratch();
-  const source = new Records(['r1', 'r2']);
-  const measure = new Measure();
-  const { pipeline, destination } = measuresPipeline(
-    database.login,
-    source,
-    measure,
-  );
-  const commits = async () =>
-    plain(
-      await database.admin.query(
-        'SELECT [id], [committed_in] FROM _warehouse.raw_measures ORDER BY [id]',
-      ),
-    );
-  measure.answers.set('r1', { label: 'first' });
-  await pipeline.run();
-  const first = await commits();
-  const positions = await destination.positions();
-  const before = Array.isArray(positions) ? positions.at(-1) : undefined;
-  assert.ok(before !== undefined, 'the first run made no position');
-
-  await pipeline.run();
-  const unchanged = await commits();
-  measure.model = 'measure-2';
-  measure.answers.set('r1', { label: 'second' });
-  source.ids = ['r1'];
-  await pipeline.run();
-
-  const then = await destination.reading(before);
-  if ('expired' in then) assert.fail(then.expired);
-  await using _then = then;
-  assert.deepEqual(
-    {
-      unchanged,
-      then: plain(
-        await then.sql.query(
-          'SELECT [id], [label] FROM marts.measures ORDER BY [id]',
-        ),
-      ),
-      now: plain(
-        await database.admin.query(
-          'SELECT [id], [rule], [label] FROM marts.measures ORDER BY [id]',
-        ),
-      ),
-    },
-    {
-      unchanged: first,
-      then: [
-        { id: 'r1', label: 'first' },
-        { id: 'r2', label: null },
-      ],
-      now: [{ id: 'r1', rule: 'measure-2', label: 'second' }],
-    },
-  );
-});
-
-test('a vector column of other dimensions makes the raw table again with the new VECTOR(n), and each row again', async () => {
-  await using database = await scratch();
-  const source = new Records(['r1']);
-  const three = new Measure(3);
-  three.answers.set('r1', { vector: Vector.from([1, 2, 3]) });
-  await measuresPipeline(database.login, source, three).pipeline.run();
-  const four = new Measure(4);
-  four.model = 'measure-4';
-  four.answers.set('r1', { vector: Vector.from([1, 2, 3, 4]) });
-
-  await measuresPipeline(database.login, source, four).pipeline.run();
-
-  assert.deepEqual(
-    {
-      rows: plain(await database.admin.query(measures)).map(
-        ({ id, status, vector }) => ({
-          id,
-          status,
+        rows: rows.map(({ vector, ...row }) => ({
+          ...row,
           vector:
             typeof vector === 'string'
               ? [...fromSql(Vector, vector).values]
               : vector,
-        }),
-      ),
-      dimensions: plain(
-        await database.admin.query(
-          "SELECT c.[vector_dimensions] AS [dimensions] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND c.[name] = N'vector'",
+        })),
+        distance: plain(
+          await database.admin.query(
+            "SELECT VECTOR_DISTANCE('euclidean', [vector], CAST(N'[0.5,-1,2]' AS VECTOR(3))) AS [distance] FROM marts.measures WHERE [id] = N'r1'",
+          ),
         ),
-      ),
-    },
-    {
-      rows: [{ id: 'r1', status: 'computed', vector: [1, 2, 3, 4] }],
-      dimensions: [{ dimensions: 4 }],
-    },
-  );
-});
+        declared: plain(
+          await database.admin.query(
+            "SELECT c.[name], TYPE_NAME(c.[user_type_id]) AS [type], c.[vector_dimensions] AS [dimensions] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND c.[name] IN (N'id', N'size', N'label', N'vector') ORDER BY c.[name]",
+          ),
+        ),
+        status: plain(
+          await database.admin.query(
+            'SELECT [dataset], [kind], [state], CAST([inputs] AS int) AS [inputs], CAST([computed] AS int) AS [computed], CAST([failed] AS int) AS [failed], CAST([pending] AS int) AS [pending] FROM marts.derived_status',
+          ),
+        ),
+      },
+      {
+        rows: [
+          {
+            id: 'r1',
+            status: 'computed',
+            size: String(Number.MAX_SAFE_INTEGER),
+            label: 'größe 🌍',
+            vector: [0.5, -1, 2],
+            error: null,
+          },
+          {
+            id: 'r2',
+            status: 'computed',
+            size: null,
+            label: null,
+            vector: null,
+            error: null,
+          },
+        ],
+        distance: [{ distance: 0 }],
+        declared: [
+          { name: 'id', type: 'nvarchar', dimensions: null },
+          { name: 'label', type: 'nvarchar', dimensions: null },
+          { name: 'size', type: 'bigint', dimensions: null },
+          { name: 'vector', type: 'vector', dimensions: 3 },
+        ],
+        status: [
+          {
+            dataset: 'marts.measures',
+            kind: 'computed',
+            state: 'current',
+            inputs: 2,
+            computed: 2,
+            failed: 0,
+            pending: 0,
+          },
+        ],
+      },
+    );
+  },
+);
+
+test(
+  'a vector of other dimensions than its column fails its row with both counts, the run and the other rows succeed, and the next run that fails the row the same way keeps its commit',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const measure = new Measure();
+    const { pipeline } = measuresPipeline(
+      database.login,
+      new Records(['r1', 'r2']),
+      measure,
+    );
+    measure.answers.set('r1', { vector: Vector.from([1, 2]) });
+    measure.answers.set('r2', { vector: Vector.from([1, 2, 3]) });
+    const rows = async () =>
+      plain(
+        await database.admin.query(
+          'SELECT [id], [status], [error], IIF([vector] IS NULL, 0, 1) AS [stored], [committed_in] FROM _warehouse.raw_measures ORDER BY [id]',
+        ),
+      );
+
+    await pipeline.run();
+    const first = await rows();
+    // The refresh after the passes asks the rule again for a failed row, and
+    // the row it makes has the values of the stored row.
+    await pipeline.run();
+
+    assert.deepEqual(await rows(), first);
+    assert.deepEqual(
+      first.map(({ committed_in: _, ...row }) => row),
+      [
+        {
+          id: 'r1',
+          status: 'failed',
+          error:
+            'The column vector takes a vector of 3 dimensions, and the rule gave one of 2.',
+          stored: 0,
+        },
+        { id: 'r2', status: 'computed', error: null, stored: 1 },
+      ],
+    );
+  },
+);
+
+test(
+  'a refresh whose outputs did not change keeps their commits, a changed rule writes each row in a new commit that a reading of the earlier position does not see, and a gone input removes its row',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Records(['r1', 'r2']);
+    const measure = new Measure();
+    const { pipeline, destination } = measuresPipeline(
+      database.login,
+      source,
+      measure,
+    );
+    const commits = async () =>
+      plain(
+        await database.admin.query(
+          'SELECT [id], [committed_in] FROM _warehouse.raw_measures ORDER BY [id]',
+        ),
+      );
+    measure.answers.set('r1', { label: 'first' });
+    await pipeline.run();
+    const first = await commits();
+    const positions = await destination.positions();
+    const before = Array.isArray(positions) ? positions.at(-1) : undefined;
+    assert.ok(before !== undefined, 'the first run made no position');
+
+    await pipeline.run();
+    const unchanged = await commits();
+    measure.model = 'measure-2';
+    measure.answers.set('r1', { label: 'second' });
+    source.ids = ['r1'];
+    await pipeline.run();
+
+    const then = await destination.reading(before);
+    if ('expired' in then) assert.fail(then.expired);
+    await using _then = then;
+    assert.deepEqual(
+      {
+        unchanged,
+        then: plain(
+          await then.sql.query(
+            'SELECT [id], [label] FROM marts.measures ORDER BY [id]',
+          ),
+        ),
+        now: plain(
+          await database.admin.query(
+            'SELECT [id], [rule], [label] FROM marts.measures ORDER BY [id]',
+          ),
+        ),
+      },
+      {
+        unchanged: first,
+        then: [
+          { id: 'r1', label: 'first' },
+          { id: 'r2', label: null },
+        ],
+        now: [{ id: 'r1', rule: 'measure-2', label: 'second' }],
+      },
+    );
+  },
+);
+
+test(
+  'a vector column of other dimensions makes the raw table again with the new VECTOR(n), and each row again',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Records(['r1']);
+    const three = new Measure(3);
+    three.answers.set('r1', { vector: Vector.from([1, 2, 3]) });
+    await measuresPipeline(database.login, source, three).pipeline.run();
+    const four = new Measure(4);
+    four.model = 'measure-4';
+    four.answers.set('r1', { vector: Vector.from([1, 2, 3, 4]) });
+
+    await measuresPipeline(database.login, source, four).pipeline.run();
+
+    assert.deepEqual(
+      {
+        rows: plain(await database.admin.query(measures)).map(
+          ({ id, status, vector }) => ({
+            id,
+            status,
+            vector:
+              typeof vector === 'string'
+                ? [...fromSql(Vector, vector).values]
+                : vector,
+          }),
+        ),
+        dimensions: plain(
+          await database.admin.query(
+            "SELECT c.[vector_dimensions] AS [dimensions] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND c.[name] = N'vector'",
+          ),
+        ),
+      },
+      {
+        rows: [{ id: 'r1', status: 'computed', vector: [1, 2, 3, 4] }],
+        dimensions: [{ dimensions: 4 }],
+      },
+    );
+  },
+);
 
 // The nonclustered and vector indexes of a table, each with its key columns
 // in order, sorted by those columns and then by name.
@@ -459,139 +477,159 @@ const rowsOf = async (admin: SqlServerConnection) =>
 
 const managedName = /^ix_elt_[0-9a-f]{16}$/;
 
-test('a declared index is made on the raw table under a name the destination derives from it, and one declared later is made in place: each row keeps its _elt_row and its commit, and the index a person made stays', async () => {
-  await using database = await scratch();
-  const source = new Records(['r1', 'r2']);
-  const measure = new Measure();
-  measure.answers.set('r1', { size: 1 });
-  await measuresPipeline(database.login, source, measure, () => [], [
-    { type: 'nonclustered', columns: ['committed_in'] },
-  ]).pipeline.run();
-  await database.admin.query(
-    'CREATE INDEX [by_hand] ON _warehouse.raw_measures ([committed_in])',
-  );
-  const first = await indexesOf(database.admin, '_warehouse.raw_measures');
-  const rows = await rowsOf(database.admin);
+test(
+  'a declared index is made on the raw table under a name the destination derives from it, and one declared later is made in place: each row keeps its _elt_row and its commit, and the index a person made stays',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Records(['r1', 'r2']);
+    const measure = new Measure();
+    measure.answers.set('r1', { size: 1 });
+    await measuresPipeline(database.login, source, measure, () => [], [
+      { type: 'nonclustered', columns: ['committed_in'] },
+    ]).pipeline.run();
+    await database.admin.query(
+      'CREATE INDEX [by_hand] ON _warehouse.raw_measures ([committed_in])',
+    );
+    const first = await indexesOf(database.admin, '_warehouse.raw_measures');
+    const rows = await rowsOf(database.admin);
 
-  await measuresPipeline(database.login, source, measure, () => [], [
-    { type: 'nonclustered', columns: ['committed_in'] },
-    { type: 'nonclustered', columns: ['size', 'committed_in'] },
-  ]).pipeline.run();
+    await measuresPipeline(database.login, source, measure, () => [], [
+      { type: 'nonclustered', columns: ['committed_in'] },
+      { type: 'nonclustered', columns: ['size', 'committed_in'] },
+    ]).pipeline.run();
 
-  const second = await indexesOf(database.admin, '_warehouse.raw_measures');
-  const committedIn = first.find(({ name }) => managedName.test(String(name)));
-  const bySize = second.find(({ columns }) => columns === 'size,committed_in');
-  assert.ok(
-    committedIn !== undefined && bySize !== undefined,
-    JSON.stringify(second),
-  );
-  assert.match(String(bySize.name), managedName);
-  assert.deepEqual(
-    { first, second, rows: await rowsOf(database.admin) },
-    {
-      first: [
-        { name: 'key_hash', type: 'NONCLUSTERED', columns: '_elt_key_hash' },
-        { name: 'by_hand', type: 'NONCLUSTERED', columns: 'committed_in' },
-        {
-          name: committedIn.name,
-          type: 'NONCLUSTERED',
-          columns: 'committed_in',
-        },
-      ],
-      second: [
-        { name: 'key_hash', type: 'NONCLUSTERED', columns: '_elt_key_hash' },
-        { name: 'by_hand', type: 'NONCLUSTERED', columns: 'committed_in' },
-        {
-          name: committedIn.name,
-          type: 'NONCLUSTERED',
-          columns: 'committed_in',
-        },
-        {
-          name: bySize.name,
-          type: 'NONCLUSTERED',
-          columns: 'size,committed_in',
-        },
-      ],
-      rows,
-    },
-  );
-});
+    const second = await indexesOf(database.admin, '_warehouse.raw_measures');
+    const committedIn = first.find(({ name }) =>
+      managedName.test(String(name)),
+    );
+    const bySize = second.find(
+      ({ columns }) => columns === 'size,committed_in',
+    );
+    assert.ok(
+      committedIn !== undefined && bySize !== undefined,
+      JSON.stringify(second),
+    );
+    assert.match(String(bySize.name), managedName);
+    assert.deepEqual(
+      { first, second, rows: await rowsOf(database.admin) },
+      {
+        first: [
+          { name: 'key_hash', type: 'NONCLUSTERED', columns: '_elt_key_hash' },
+          { name: 'by_hand', type: 'NONCLUSTERED', columns: 'committed_in' },
+          {
+            name: committedIn.name,
+            type: 'NONCLUSTERED',
+            columns: 'committed_in',
+          },
+        ],
+        second: [
+          { name: 'key_hash', type: 'NONCLUSTERED', columns: '_elt_key_hash' },
+          { name: 'by_hand', type: 'NONCLUSTERED', columns: 'committed_in' },
+          {
+            name: committedIn.name,
+            type: 'NONCLUSTERED',
+            columns: 'committed_in',
+          },
+          {
+            name: bySize.name,
+            type: 'NONCLUSTERED',
+            columns: 'size,committed_in',
+          },
+        ],
+        rows,
+      },
+    );
+  },
+);
 
-test('an index that the declaration no longer names is dropped in place, each row keeps its _elt_row and its commit, and the index a person made stays', async () => {
-  await using database = await scratch();
-  const source = new Records(['r1', 'r2']);
-  const measure = new Measure();
-  await measuresPipeline(database.login, source, measure, () => [], [
-    { type: 'nonclustered', columns: ['size'] },
-    { type: 'nonclustered', columns: ['committed_in'] },
-  ]).pipeline.run();
-  await database.admin.query(
-    'CREATE INDEX [ix_by_hand] ON _warehouse.raw_measures ([size])',
-  );
-  const rows = await rowsOf(database.admin);
-  const declared = (
-    await indexesOf(database.admin, '_warehouse.raw_measures')
-  ).find(
-    ({ columns, name }) =>
-      columns === 'committed_in' && managedName.test(String(name)),
-  );
+test(
+  'an index that the declaration no longer names is dropped in place, each row keeps its _elt_row and its commit, and the index a person made stays',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Records(['r1', 'r2']);
+    const measure = new Measure();
+    await measuresPipeline(database.login, source, measure, () => [], [
+      { type: 'nonclustered', columns: ['size'] },
+      { type: 'nonclustered', columns: ['committed_in'] },
+    ]).pipeline.run();
+    await database.admin.query(
+      'CREATE INDEX [ix_by_hand] ON _warehouse.raw_measures ([size])',
+    );
+    const rows = await rowsOf(database.admin);
+    const declared = (
+      await indexesOf(database.admin, '_warehouse.raw_measures')
+    ).find(
+      ({ columns, name }) =>
+        columns === 'committed_in' && managedName.test(String(name)),
+    );
 
-  await measuresPipeline(database.login, source, measure, () => [], [
-    { type: 'nonclustered', columns: ['committed_in'] },
-  ]).pipeline.run();
+    await measuresPipeline(database.login, source, measure, () => [], [
+      { type: 'nonclustered', columns: ['committed_in'] },
+    ]).pipeline.run();
 
-  assert.deepEqual(
-    {
-      indexes: await indexesOf(database.admin, '_warehouse.raw_measures'),
-      rows: await rowsOf(database.admin),
-    },
-    {
-      indexes: [
-        { name: 'key_hash', type: 'NONCLUSTERED', columns: '_elt_key_hash' },
-        { name: declared?.name, type: 'NONCLUSTERED', columns: 'committed_in' },
-        { name: 'ix_by_hand', type: 'NONCLUSTERED', columns: 'size' },
-      ],
-      rows,
-    },
-  );
-});
+    assert.deepEqual(
+      {
+        indexes: await indexesOf(database.admin, '_warehouse.raw_measures'),
+        rows: await rowsOf(database.admin),
+      },
+      {
+        indexes: [
+          { name: 'key_hash', type: 'NONCLUSTERED', columns: '_elt_key_hash' },
+          {
+            name: declared?.name,
+            type: 'NONCLUSTERED',
+            columns: 'committed_in',
+          },
+          { name: 'ix_by_hand', type: 'NONCLUSTERED', columns: 'size' },
+        ],
+        rows,
+      },
+    );
+  },
+);
 
-test('a changed declaration that makes the raw table again makes the declared indexes on the new table', async () => {
-  await using database = await scratch();
-  const source = new Records(['r1']);
-  const indexes = [{ type: 'nonclustered', columns: ['size'] }] as const;
-  await measuresPipeline(
-    database.login,
-    source,
-    new Measure(3),
-    () => [],
-    indexes,
-  ).pipeline.run();
-  const before = await indexesOf(database.admin, '_warehouse.raw_measures');
-  const four = new Measure(4);
-  four.model = 'measure-4';
+test(
+  'a changed declaration that makes the raw table again makes the declared indexes on the new table',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Records(['r1']);
+    const indexes = [{ type: 'nonclustered', columns: ['size'] }] as const;
+    await measuresPipeline(
+      database.login,
+      source,
+      new Measure(3),
+      () => [],
+      indexes,
+    ).pipeline.run();
+    const before = await indexesOf(database.admin, '_warehouse.raw_measures');
+    const four = new Measure(4);
+    four.model = 'measure-4';
 
-  await measuresPipeline(
-    database.login,
-    source,
-    four,
-    () => [],
-    indexes,
-  ).pipeline.run();
+    await measuresPipeline(
+      database.login,
+      source,
+      four,
+      () => [],
+      indexes,
+    ).pipeline.run();
 
-  assert.deepEqual(
-    {
-      indexes: await indexesOf(database.admin, '_warehouse.raw_measures'),
-      dimensions: plain(
-        await database.admin.query(
-          "SELECT c.[vector_dimensions] AS [dimensions] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND c.[name] = N'vector'",
+    assert.deepEqual(
+      {
+        indexes: await indexesOf(database.admin, '_warehouse.raw_measures'),
+        dimensions: plain(
+          await database.admin.query(
+            "SELECT c.[vector_dimensions] AS [dimensions] FROM sys.columns AS c WHERE c.[object_id] = OBJECT_ID(N'_warehouse.raw_measures') AND c.[name] = N'vector'",
+          ),
         ),
-      ),
-    },
-    { indexes: before, dimensions: [{ dimensions: 4 }] },
-  );
-  assert.equal(before.length, 2);
-});
+      },
+      { indexes: before, dimensions: [{ dimensions: 4 }] },
+    );
+    assert.equal(before.length, 2);
+  },
+);
 
 // SQL Server 2025 in Docker makes a DiskANN index only with PREVIEW_FEATURES
 // on, and only on a table whose clustered key is a single int: it refuses the
@@ -599,38 +637,42 @@ test('a changed declaration that makes the raw table again makes the declared in
 // (@zukhruf/vectors README). The error comes after SQL Server parsed the
 // statement and checked that the column is a vector, so the refusal shows that
 // the statement the destination sends is valid T-SQL.
-test('a declared vector index reaches SQL Server as CREATE VECTOR INDEX with its metric, and an index that SQL Server refuses fails the dataset with its error', async () => {
-  await using database = await scratch();
-  await database.admin.query(
-    'ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON',
-  );
-  const { pipeline } = measuresPipeline(
-    database.login,
-    new Records(['r1']),
-    new Measure(),
-    () => [],
-    [{ type: 'vector', column: 'vector', metric: 'cosine' }],
-  );
+test(
+  'a declared vector index reaches SQL Server as CREATE VECTOR INDEX with its metric, and an index that SQL Server refuses fails the dataset with its error',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    await database.admin.query(
+      'ALTER DATABASE SCOPED CONFIGURATION SET PREVIEW_FEATURES = ON',
+    );
+    const { pipeline } = measuresPipeline(
+      database.login,
+      new Records(['r1']),
+      new Measure(),
+      () => [],
+      [{ type: 'vector', column: 'vector', metric: 'cosine' }],
+    );
 
-  const failed = await rejection(pipeline.run());
+    const failed = await rejection(pipeline.run());
 
-  assert.ok(failed instanceof DerivedDatasetError, String(failed));
-  assert.deepEqual(
-    {
-      error: failed.message,
-      status: plain(
-        await database.admin.query(
-          "SELECT [state] FROM marts.derived_status WHERE [dataset] = N'marts.measures'",
+    assert.ok(failed instanceof DerivedDatasetError, String(failed));
+    assert.deepEqual(
+      {
+        error: failed.message,
+        status: plain(
+          await database.admin.query(
+            "SELECT [state] FROM marts.derived_status WHERE [dataset] = N'marts.measures'",
+          ),
         ),
-      ),
-    },
-    {
-      error:
-        "Derived dataset measures failed: Table '_warehouse.raw_measures' must have a clustered primary key on a single 4 byte INT column to create a vector index.",
-      status: [{ state: 'failed' }],
-    },
-  );
-});
+      },
+      {
+        error:
+          "Derived dataset measures failed: Table '_warehouse.raw_measures' must have a clustered primary key on a single 4 byte INT column to create a vector index.",
+        status: [{ state: 'failed' }],
+      },
+    );
+  },
+);
 
 // A gauge that a test turns, as a store whose version changed.
 class Dial extends Gauge<number> {
@@ -709,7 +751,7 @@ const errorNumber = (error: unknown) =>
 
 test(
   'under a watch, a vector index that SQL Server refuses is yielded once and fails only its dataset: the views before and after it refresh and the passes go on',
-  { timeout: 120_000 },
+  { skip: emulation, timeout: 120_000 },
   async (t) => {
     await using database = await scratch();
     const source = new WatchedRecords(['r1']);
@@ -777,33 +819,37 @@ test(
   },
 );
 
-test('a run refreshes the views before and after a vector index that SQL Server refuses, and then rejects with that dataset failure', async () => {
-  await using database = await scratch();
-  const pipeline = vectorsPipeline(database.login, new Records(['r1', 'r2']));
+test(
+  'a run refreshes the views before and after a vector index that SQL Server refuses, and then rejects with that dataset failure',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const pipeline = vectorsPipeline(database.login, new Records(['r1', 'r2']));
 
-  const failed = await rejection(pipeline.run());
+    const failed = await rejection(pipeline.run());
 
-  assert.ok(failed instanceof DerivedDatasetError, String(failed));
-  assert.deepEqual(
-    {
-      failed: { dataset: failed.dataset, number: errorNumber(failed.cause) },
-      status: (await statuses(database.admin)).map(({ dataset, state }) => [
-        dataset,
-        state,
-      ]),
-      counts: await counts(database.admin),
-    },
-    {
-      failed: { dataset: 'measures', number: 343 },
-      status: [
-        ['marts.after_count', 'current'],
-        ['marts.before_count', 'current'],
-        ['marts.measures', 'failed'],
-      ],
-      counts: [{ before: 2, after: 2 }],
-    },
-  );
-});
+    assert.ok(failed instanceof DerivedDatasetError, String(failed));
+    assert.deepEqual(
+      {
+        failed: { dataset: failed.dataset, number: errorNumber(failed.cause) },
+        status: (await statuses(database.admin)).map(({ dataset, state }) => [
+          dataset,
+          state,
+        ]),
+        counts: await counts(database.admin),
+      },
+      {
+        failed: { dataset: 'measures', number: 343 },
+        status: [
+          ['marts.after_count', 'current'],
+          ['marts.before_count', 'current'],
+          ['marts.measures', 'failed'],
+        ],
+        counts: [{ before: 2, after: 2 }],
+      },
+    );
+  },
+);
 
 for (const [index, error] of [
   [
@@ -878,135 +924,147 @@ for (const [compute, indexes, error] of [
     );
   });
 
-test('a computed dataset with a vector index refuses a pipeline whose copy makes Measures_Nearest, in another case, before anything is made', async () => {
-  await using database = await scratch();
-  const source = new Records(['r1']);
-  const destination = new SqlServerDestination({ login: database.login });
-  const target = destination.table('Measures_Nearest');
-  const pipeline = new Pipeline({
-    clock: globalThis,
-    history: new SqlServerSyncHistory({ login: database.login }),
-    connections: [
-      new Connection({
-        name: 'records',
-        source,
-        destination,
-        steps: [new Copy(source.records, target)],
-      }),
-    ],
-    derived: [
-      new ComputedDataset({
-        into: destination,
-        name: 'measures',
-        description: 'The measures of each record.',
-        from: [target],
-        compute: new Measure(),
-        indexes: [{ type: 'vector', column: 'vector', metric: 'cosine' }],
-      }),
-    ],
-  });
+test(
+  'a computed dataset with a vector index refuses a pipeline whose copy makes Measures_Nearest, in another case, before anything is made',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Records(['r1']);
+    const destination = new SqlServerDestination({ login: database.login });
+    const target = destination.table('Measures_Nearest');
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new SqlServerSyncHistory({ login: database.login }),
+      connections: [
+        new Connection({
+          name: 'records',
+          source,
+          destination,
+          steps: [new Copy(source.records, target)],
+        }),
+      ],
+      derived: [
+        new ComputedDataset({
+          into: destination,
+          name: 'measures',
+          description: 'The measures of each record.',
+          from: [target],
+          compute: new Measure(),
+          indexes: [{ type: 'vector', column: 'vector', metric: 'cosine' }],
+        }),
+      ],
+    });
 
-  await assert.rejects(
-    pipeline.run(),
-    new TypeError(
-      'Computed dataset measures needs marts.measures_nearest, which a copy of the pipeline makes',
-    ),
-  );
-  assert.deepEqual(
-    plain(
-      await database.admin.query(
-        "SELECT OBJECT_ID(N'_warehouse.raw_measures') AS [dataset], OBJECT_ID(N'marts.Measures_Nearest') AS [copied]",
+    await assert.rejects(
+      pipeline.run(),
+      new TypeError(
+        'Computed dataset measures needs marts.measures_nearest, which a copy of the pipeline makes',
       ),
-    ),
-    [{ dataset: null, copied: null }],
-  );
-});
+    );
+    assert.deepEqual(
+      plain(
+        await database.admin.query(
+          "SELECT OBJECT_ID(N'_warehouse.raw_measures') AS [dataset], OBJECT_ID(N'marts.Measures_Nearest') AS [copied]",
+        ),
+      ),
+      [{ dataset: null, copied: null }],
+    );
+  },
+);
 
 // The container cannot make the search function of a vector index: it
 // parses no SELECT TOP (@k) WITH APPROXIMATE (error 102), and it refuses the
 // index on the bigint _elt_row (error 42217), which Azure SQL makes (ADR
 // 0014). Thus the test makes marts.measures_nearest in place of the one that
 // a refresh on Azure SQL made, with a body that the container runs.
-test('a refresh whose declaration names no vector index drops marts.measures_nearest, the search that an earlier vector index had, and a function of another name in marts stays', async () => {
-  await using database = await scratch();
-  const source = new Records(['r1']);
-  const measure = new Measure();
-  await measuresPipeline(database.login, source, measure).pipeline.run();
-  for (const name of ['measures_nearest', 'measures_by_hand'])
-    await database.admin.query(
-      `CREATE FUNCTION marts.${name}(@query vector(3), @k int) RETURNS TABLE AS RETURN SELECT TOP (@k) [id], VECTOR_DISTANCE('cosine', [vector], @query) AS [distance] FROM _warehouse.raw_measures ORDER BY [distance]`,
-    );
-
-  await measuresPipeline(database.login, source, measure).pipeline.run();
-
-  assert.deepEqual(
-    plain(
+test(
+  'a refresh whose declaration names no vector index drops marts.measures_nearest, the search that an earlier vector index had, and a function of another name in marts stays',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Records(['r1']);
+    const measure = new Measure();
+    await measuresPipeline(database.login, source, measure).pipeline.run();
+    for (const name of ['measures_nearest', 'measures_by_hand'])
       await database.admin.query(
-        "SELECT [name] FROM sys.objects WHERE [schema_id] = SCHEMA_ID(N'marts') AND [type] = N'IF' ORDER BY [name]",
+        `CREATE FUNCTION marts.${name}(@query vector(3), @k int) RETURNS TABLE AS RETURN SELECT TOP (@k) [id], VECTOR_DISTANCE('cosine', [vector], @query) AS [distance] FROM _warehouse.raw_measures ORDER BY [distance]`,
+      );
+
+    await measuresPipeline(database.login, source, measure).pipeline.run();
+
+    assert.deepEqual(
+      plain(
+        await database.admin.query(
+          "SELECT [name] FROM sys.objects WHERE [schema_id] = SCHEMA_ID(N'marts') AND [type] = N'IF' ORDER BY [name]",
+        ),
       ),
-    ),
-    [{ name: 'measures_by_hand' }],
-  );
-});
+      [{ name: 'measures_by_hand' }],
+    );
+  },
+);
 
 // The container cannot make the search function (see above), so the test
 // makes marts.measures_nearest and its descriptions in place of the ones that
 // a refresh on Azure SQL makes, and reads the catalog that the run publishes.
-test('marts.catalog lists a search function of marts with its description, each parameter with its type, and each column that it gives', async () => {
-  await using database = await scratch();
-  await measuresPipeline(
-    database.login,
-    new Records(['r1']),
-    new Measure(),
-  ).pipeline.run();
-  await database.admin.query(
-    `CREATE FUNCTION marts.measures_nearest(@query vector(3), @k int) RETURNS TABLE AS RETURN SELECT TOP (@k) [id], VECTOR_DISTANCE('cosine', [vector], @query) AS [distance] FROM _warehouse.raw_measures ORDER BY [distance]`,
-  );
-  await database.admin.query(
-    `EXEC sp_addextendedproperty N'MS_Description', N'The nearest measures.', 'SCHEMA', 'marts', 'FUNCTION', 'measures_nearest';
+test(
+  'marts.catalog lists a search function of marts with its description, each parameter with its type, and each column that it gives',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    await measuresPipeline(
+      database.login,
+      new Records(['r1']),
+      new Measure(),
+    ).pipeline.run();
+    await database.admin.query(
+      `CREATE FUNCTION marts.measures_nearest(@query vector(3), @k int) RETURNS TABLE AS RETURN SELECT TOP (@k) [id], VECTOR_DISTANCE('cosine', [vector], @query) AS [distance] FROM _warehouse.raw_measures ORDER BY [distance]`,
+    );
+    await database.admin.query(
+      `EXEC sp_addextendedproperty N'MS_Description', N'The nearest measures.', 'SCHEMA', 'marts', 'FUNCTION', 'measures_nearest';
      EXEC sp_addextendedproperty N'MS_Description', N'How near.', 'SCHEMA', 'marts', 'FUNCTION', 'measures_nearest', 'COLUMN', 'distance';`,
-  );
+    );
 
-  assert.deepEqual(
-    plain(
-      await database.admin.query(
-        "SELECT [kind], [name], [data_type], [description] FROM marts.catalog WHERE [name] LIKE N'measures[_]nearest%' ORDER BY [kind], [name]",
+    assert.deepEqual(
+      plain(
+        await database.admin.query(
+          "SELECT [kind], [name], [data_type], [description] FROM marts.catalog WHERE [name] LIKE N'measures[_]nearest%' ORDER BY [kind], [name]",
+        ),
       ),
-    ),
-    [
-      {
-        kind: 'column',
-        name: 'measures_nearest.distance',
-        data_type: 'float',
-        description: 'How near.',
-      },
-      {
-        kind: 'column',
-        name: 'measures_nearest.id',
-        data_type: 'nvarchar(max)',
-        description: null,
-      },
-      {
-        kind: 'function',
-        name: 'measures_nearest',
-        data_type: null,
-        description: 'The nearest measures.',
-      },
-      {
-        kind: 'parameter',
-        name: 'measures_nearest.@k',
-        data_type: 'int',
-        description: null,
-      },
-      {
-        kind: 'parameter',
-        name: 'measures_nearest.@query',
-        data_type: 'vector(3)',
-        description: null,
-      },
-    ],
-  );
-});
+      [
+        {
+          kind: 'column',
+          name: 'measures_nearest.distance',
+          data_type: 'float',
+          description: 'How near.',
+        },
+        {
+          kind: 'column',
+          name: 'measures_nearest.id',
+          data_type: 'nvarchar(max)',
+          description: null,
+        },
+        {
+          kind: 'function',
+          name: 'measures_nearest',
+          data_type: null,
+          description: 'The nearest measures.',
+        },
+        {
+          kind: 'parameter',
+          name: 'measures_nearest.@k',
+          data_type: 'int',
+          description: null,
+        },
+        {
+          kind: 'parameter',
+          name: 'measures_nearest.@query',
+          data_type: 'vector(3)',
+          description: null,
+        },
+      ],
+    );
+  },
+);
 
 // A claim of the type checker: the function is never called.
 test('a computed dataset of a rule takes no indexes of a parts table, which only a table rule has', () => {
@@ -1022,60 +1080,64 @@ test('a computed dataset of a rule takes no indexes of a parts table, which only
     }));
 });
 
-test('a view over the dataset waits while the dataset waits for its input, and appears with the run that loads it', async () => {
-  await using database = await scratch();
-  const source = new Records(['r1', 'r2']);
-  const { pipeline } = measuresPipeline(
-    database.login,
-    source,
-    new Measure(),
-    (marts) => [
-      new View({
-        into: marts,
-        name: 'measure_count',
-        description: 'How many records were measured.',
-        columns: { n: 'Number of measured records.' },
-        sql: "SELECT count(*) AS n FROM measures WHERE status = N'computed'",
-      }),
-    ],
-  );
-  const status = async () =>
-    plain(
-      await database.admin.query(
-        'SELECT [dataset], [state] FROM marts.derived_status ORDER BY [dataset]',
-      ),
+test(
+  'a view over the dataset waits while the dataset waits for its input, and appears with the run that loads it',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const source = new Records(['r1', 'r2']);
+    const { pipeline } = measuresPipeline(
+      database.login,
+      source,
+      new Measure(),
+      (marts) => [
+        new View({
+          into: marts,
+          name: 'measure_count',
+          description: 'How many records were measured.',
+          columns: { n: 'Number of measured records.' },
+          sql: "SELECT count(*) AS n FROM measures WHERE status = N'computed'",
+        }),
+      ],
     );
-  source.failing = true;
+    const status = async () =>
+      plain(
+        await database.admin.query(
+          'SELECT [dataset], [state] FROM marts.derived_status ORDER BY [dataset]',
+        ),
+      );
+    source.failing = true;
 
-  const failed = await rejection(pipeline.run());
-  const waiting = await status();
-  source.failing = false;
-  await pipeline.run();
+    const failed = await rejection(pipeline.run());
+    const waiting = await status();
+    source.failing = false;
+    await pipeline.run();
 
-  assert.ok(failed instanceof PipelineError, String(failed));
-  assert.deepEqual(
-    {
-      errors: failed.errors.map(({ message }: Error) => message),
-      waiting,
-      current: await status(),
-      rows: plain(
-        await database.admin.query('SELECT n FROM marts.measure_count'),
-      ),
-    },
-    {
-      errors: ['the store is gone'],
-      waiting: [
-        { dataset: 'marts.measure_count', state: 'waiting' },
-        { dataset: 'marts.measures', state: 'waiting' },
-      ],
-      current: [
-        { dataset: 'marts.measure_count', state: 'current' },
-        { dataset: 'marts.measures', state: 'current' },
-      ],
-      rows: [{ n: 2 }],
-    },
-  );
-});
+    assert.ok(failed instanceof PipelineError, String(failed));
+    assert.deepEqual(
+      {
+        errors: failed.errors.map(({ message }: Error) => message),
+        waiting,
+        current: await status(),
+        rows: plain(
+          await database.admin.query('SELECT n FROM marts.measure_count'),
+        ),
+      },
+      {
+        errors: ['the store is gone'],
+        waiting: [
+          { dataset: 'marts.measure_count', state: 'waiting' },
+          { dataset: 'marts.measures', state: 'waiting' },
+        ],
+        current: [
+          { dataset: 'marts.measure_count', state: 'current' },
+          { dataset: 'marts.measures', state: 'current' },
+        ],
+        rows: [{ n: 2 }],
+      },
+    );
+  },
+);
 
 test('a vector column of more than 1,998 dimensions is refused when the dataset is constructed', () => {
   const destination = new SqlServerDestination({

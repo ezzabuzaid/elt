@@ -34,6 +34,8 @@ const sqlServer = new SqlServer({
   image: 'mcr.microsoft.com/mssql/server:2025-latest',
 });
 
+const emulation = await SqlServer.emulation({ environment: process.env });
+
 // A database of its own for one test, which keeps row versions for readers.
 async function scratch() {
   const database = await sqlServer.database();
@@ -202,72 +204,80 @@ async function failures(open: Awaited<ReturnType<typeof readings>>) {
   return failed;
 }
 
-test('a start whose declarations equal what the database holds changes no object in marts, so each reading open before it still reads every view', async () => {
-  await using database = await scratch();
-  await warehouse(database.login).run();
-  await using stack = new AsyncDisposableStack();
-  const open = await readings(
-    database.admin,
-    new SqlServerDestination({ login: database.login }),
-    stack,
-  );
+test(
+  'a start whose declarations equal what the database holds changes no object in marts, so each reading open before it still reads every view',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    await warehouse(database.login).run();
+    await using stack = new AsyncDisposableStack();
+    const open = await readings(
+      database.admin,
+      new SqlServerDestination({ login: database.login }),
+      stack,
+    );
 
-  await warehouse(database.login).run();
+    await warehouse(database.login).run();
 
-  const views = open.map(({ view }) => view);
-  assert.deepEqual(
-    {
-      read: [
-        'marts.[catalog]',
-        'marts.[record_count]',
-        'marts.[records]',
-        'marts.[sizes]',
-        'marts.[sync_status]',
-      ].filter((view) => views.includes(view)).length,
-      failed: await failures(open),
-    },
-    { read: 5, failed: {} },
-  );
-});
+    const views = open.map(({ view }) => view);
+    assert.deepEqual(
+      {
+        read: [
+          'marts.[catalog]',
+          'marts.[record_count]',
+          'marts.[records]',
+          'marts.[sizes]',
+          'marts.[sync_status]',
+        ].filter((view) => views.includes(view)).length,
+        failed: await failures(open),
+      },
+      { read: 5, failed: {} },
+    );
+  },
+);
 
-test('a start that changes the SQL and the descriptions of a view puts them in SQL Server, also a description that changes only by a trailing space or only in case, and a reading open before it fails on that view with error 3961', async () => {
-  await using database = await scratch();
-  await warehouse(database.login).run();
-  await using stack = new AsyncDisposableStack();
-  const open = await readings(
-    database.admin,
-    new SqlServerDestination({ login: database.login }),
-    stack,
-  );
+test(
+  'a start that changes the SQL and the descriptions of a view puts them in SQL Server, also a description that changes only by a trailing space or only in case, and a reading open before it fails on that view with error 3961',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    await warehouse(database.login).run();
+    await using stack = new AsyncDisposableStack();
+    const open = await readings(
+      database.admin,
+      new SqlServerDestination({ login: database.login }),
+      stack,
+    );
 
-  await warehouse(database.login, {
-    description: 'How many records loaded. ',
-    columns: { n: 'Number of Records.' },
-    sql: 'SELECT count(*) * 10 AS n FROM records',
-  }).run();
+    await warehouse(database.login, {
+      description: 'How many records loaded. ',
+      columns: { n: 'Number of Records.' },
+      sql: 'SELECT count(*) * 10 AS n FROM records',
+    }).run();
 
-  assert.deepEqual(
-    {
-      rows: (
-        await database.admin.query('SELECT n FROM marts.record_count')
-      ).map((row) => ({ ...row })),
-      catalog: (
-        await database.admin.query(
-          "SELECT [name], [description] FROM marts.catalog WHERE [name] LIKE N'record[_]count%' ORDER BY [name]",
-        )
-      ).map((row) => ({ ...row })),
-      failed: await failures(open),
-    },
-    {
-      rows: [{ n: 20 }],
-      catalog: [
-        {
-          name: 'record_count',
-          description: 'How many records loaded. ',
-        },
-        { name: 'record_count.n', description: 'Number of Records.' },
-      ],
-      failed: { 'marts.[record_count]': 3961 },
-    },
-  );
-});
+    assert.deepEqual(
+      {
+        rows: (
+          await database.admin.query('SELECT n FROM marts.record_count')
+        ).map((row) => ({ ...row })),
+        catalog: (
+          await database.admin.query(
+            "SELECT [name], [description] FROM marts.catalog WHERE [name] LIKE N'record[_]count%' ORDER BY [name]",
+          )
+        ).map((row) => ({ ...row })),
+        failed: await failures(open),
+      },
+      {
+        rows: [{ n: 20 }],
+        catalog: [
+          {
+            name: 'record_count',
+            description: 'How many records loaded. ',
+          },
+          { name: 'record_count.n', description: 'Number of Records.' },
+        ],
+        failed: { 'marts.[record_count]': 3961 },
+      },
+    );
+  },
+);

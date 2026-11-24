@@ -41,6 +41,8 @@ const sqlServer = new SqlServer({
   image: 'mcr.microsoft.com/mssql/server:2025-latest',
 });
 
+const emulation = await SqlServer.emulation({ environment: process.env });
+
 // A database of its own for one test, which keeps row versions for readers.
 async function scratchDatabase() {
   const database = await sqlServer.database();
@@ -228,285 +230,312 @@ function documentsImport(
 const joined =
   'SELECT d.id, t.status, t.content, t.error FROM marts.documents d JOIN marts.document_text t ON t.ref = d.ref ORDER BY d.[id]';
 
-test('a copy stores each file in the database, an empty one too, and the text of each stored file is computed from a temporary copy that keeps the extension and the bytes of the source and is gone after the run', async () => {
-  await using database = await scratchDatabase();
-  const { login } = database;
-  await using scratch = await new TemporaryFiles().directory('elt-db-files-');
-  const big = randomBytes(large);
-  await writeFile(join(scratch.path, 'big.bin'), big);
-  await writeFile(join(scratch.path, 'note.txt'), 'note');
-  await writeFile(join(scratch.path, 'empty.txt'), '');
-  const source = new Documents();
-  source.messages = {
-    documents: [
-      {
-        stream: 'documents',
-        data: { id: 'empty' },
-        file: join(scratch.path, 'empty.txt'),
-      },
-      {
-        stream: 'documents',
-        data: { id: 'big' },
-        file: join(scratch.path, 'big.bin'),
-      },
-      {
-        stream: 'documents',
-        data: { id: 'note' },
-        file: join(scratch.path, 'note.txt'),
-      },
-    ],
-  };
-  const parser = new HashParser('hash-v1');
-  const { pipeline } = documentsImport(login, parser, source);
-
-  await pipeline.run();
-
-  assert.deepEqual(await database.read(joined), [
-    {
-      id: 'big',
-      status: 'computed',
-      content: `.bin ${hash('sha256', big)}`,
-      error: null,
-    },
-    {
-      id: 'empty',
-      status: 'computed',
-      content: `.txt ${hash('sha256', '')}`,
-      error: null,
-    },
-    {
-      id: 'note',
-      status: 'computed',
-      content: `.txt ${hash('sha256', 'note')}`,
-      error: null,
-    },
-  ]);
-  assert.equal(parser.paths.length, 3);
-  for (const path of parser.paths)
-    await assert.rejects(stat(dirname(path)), { code: 'ENOENT' });
-});
-
-test('a second pipeline with no files folder and a parser of a new identity parses each file again from the database', async () => {
-  await using database = await scratchDatabase();
-  const { login } = database;
-  await using scratch = await new TemporaryFiles().directory('elt-db-files-');
-  const sources = join(scratch.path, 'sources');
-  await mkdir(sources);
-  await writeFile(join(sources, 'note.txt'), 'note');
-  const source = new Documents();
-  source.messages = {
-    documents: [
-      {
-        stream: 'documents',
-        data: { id: 'note' },
-        file: join(sources, 'note.txt'),
-      },
-    ],
-  };
-  await documentsImport(login, new HashParser('hash-v1'), source, {
-    mode: 'append',
-  }).pipeline.run();
-  // The source file is gone too, and the append reads no row: only the
-  // database holds the bytes.
-  await rm(sources, { recursive: true });
-  source.messages = {};
-  const parser = new HashParser('hash-v2');
-
-  await documentsImport(login, parser, source, {
-    mode: 'append',
-  }).pipeline.run();
-
-  assert.deepEqual(
-    {
-      parsed: parser.paths.length,
-      folder: await readdir(scratch.path),
-      rows: await database.read(
-        'SELECT [rule], [status], [content] FROM marts.document_text',
-      ),
-    },
-    {
-      parsed: 1,
-      folder: [],
-      rows: [
+test(
+  'a copy stores each file in the database, an empty one too, and the text of each stored file is computed from a temporary copy that keeps the extension and the bytes of the source and is gone after the run',
+  { skip: emulation },
+  async () => {
+    await using database = await scratchDatabase();
+    const { login } = database;
+    await using scratch = await new TemporaryFiles().directory('elt-db-files-');
+    const big = randomBytes(large);
+    await writeFile(join(scratch.path, 'big.bin'), big);
+    await writeFile(join(scratch.path, 'note.txt'), 'note');
+    await writeFile(join(scratch.path, 'empty.txt'), '');
+    const source = new Documents();
+    source.messages = {
+      documents: [
         {
-          rule: 'hash-v2',
-          status: 'computed',
-          content: `.txt ${hash('sha256', 'note')}`,
+          stream: 'documents',
+          data: { id: 'empty' },
+          file: join(scratch.path, 'empty.txt'),
+        },
+        {
+          stream: 'documents',
+          data: { id: 'big' },
+          file: join(scratch.path, 'big.bin'),
+        },
+        {
+          stream: 'documents',
+          data: { id: 'note' },
+          file: join(scratch.path, 'note.txt'),
         },
       ],
-    },
-  );
-});
+    };
+    const parser = new HashParser('hash-v1');
+    const { pipeline } = documentsImport(login, parser, source);
 
-test('the storage removes a file that no row names once the retention forgets the history rows that named it, and keeps it until then', async () => {
-  await using database = await scratchDatabase();
-  const { login } = database;
-  await using scratch = await new TemporaryFiles().directory('elt-db-files-');
-  for (const name of ['a1.txt', 'a2.txt', 'b.txt'])
-    await writeFile(join(scratch.path, name), name);
-  const file = (id: string, name: string): SourceMessage => ({
-    stream: 'documents',
-    data: { id },
-    file: join(scratch.path, name),
-  });
-  let now = Date.now();
-  const source = new Documents();
-  const { destination, pipeline } = documentsImport(
-    login,
-    new HashParser('hash-v1'),
-    source,
-    { retention: Temporal.Duration.from({ milliseconds: 20 }), now: () => now },
-  );
-  const refs = async () =>
-    Object.fromEntries(
-      (await database.read('SELECT id, ref FROM marts.documents')).map(
-        ({ id, ref }) => [String(id), String(ref)],
-      ),
-    );
-  const bytes = async (ref: string) => {
-    try {
-      await using opened = await destination.files().open(ref);
-      return await readFile(opened.path, 'utf8');
-    } catch (error) {
-      if (error instanceof StoredFileMissingError) return 'missing';
-      throw error;
-    }
-  };
-  source.messages = { documents: [file('a', 'a1.txt'), file('b', 'b.txt')] };
-  await pipeline.run();
-  const first = await refs();
-  // The overwrite replaces a and deletes b; the history keeps both rows.
-  source.messages = { documents: [file('a', 'a2.txt')] };
-  await pipeline.run();
-  const second = await refs();
-  const kept = [
-    await bytes(String(first.a)),
-    await bytes(String(first.b)),
-    await bytes(String(second.a)),
-  ];
-  now += 60;
+    await pipeline.run();
 
-  // The next commit forgets the history rows older than the retention.
-  await pipeline.run();
+    assert.deepEqual(await database.read(joined), [
+      {
+        id: 'big',
+        status: 'computed',
+        content: `.bin ${hash('sha256', big)}`,
+        error: null,
+      },
+      {
+        id: 'empty',
+        status: 'computed',
+        content: `.txt ${hash('sha256', '')}`,
+        error: null,
+      },
+      {
+        id: 'note',
+        status: 'computed',
+        content: `.txt ${hash('sha256', 'note')}`,
+        error: null,
+      },
+    ]);
+    assert.equal(parser.paths.length, 3);
+    for (const path of parser.paths)
+      await assert.rejects(stat(dirname(path)), { code: 'ENOENT' });
+  },
+);
 
-  assert.deepEqual(
-    {
-      kept,
-      after: [
-        await bytes(String(first.a)),
-        await bytes(String(first.b)),
-        await bytes(String(second.a)),
+test(
+  'a second pipeline with no files folder and a parser of a new identity parses each file again from the database',
+  { skip: emulation },
+  async () => {
+    await using database = await scratchDatabase();
+    const { login } = database;
+    await using scratch = await new TemporaryFiles().directory('elt-db-files-');
+    const sources = join(scratch.path, 'sources');
+    await mkdir(sources);
+    await writeFile(join(sources, 'note.txt'), 'note');
+    const source = new Documents();
+    source.messages = {
+      documents: [
+        {
+          stream: 'documents',
+          data: { id: 'note' },
+          file: join(sources, 'note.txt'),
+        },
       ],
-    },
-    {
-      kept: ['a1.txt', 'b.txt', 'a2.txt'],
-      after: ['missing', 'missing', 'a2.txt'],
-    },
-  );
-});
+    };
+    await documentsImport(login, new HashParser('hash-v1'), source, {
+      mode: 'append',
+    }).pipeline.run();
+    // The source file is gone too, and the append reads no row: only the
+    // database holds the bytes.
+    await rm(sources, { recursive: true });
+    source.messages = {};
+    const parser = new HashParser('hash-v2');
 
-test('head reads the first bytes of a stored file across its chunks, and no more', async () => {
-  await using database = await scratchDatabase();
-  const { login } = database;
-  await using scratch = await new TemporaryFiles().directory('elt-db-files-');
-  const big = randomBytes(large);
-  await writeFile(join(scratch.path, 'big.bin'), big);
-  const source = new Documents();
-  source.messages = {
-    documents: [
+    await documentsImport(login, parser, source, {
+      mode: 'append',
+    }).pipeline.run();
+
+    assert.deepEqual(
       {
-        stream: 'documents',
-        data: { id: 'big' },
-        file: join(scratch.path, 'big.bin'),
-      },
-    ],
-  };
-  // Past the end of the first chunk.
-  const length = 4 * 1024 * 1024 + 16;
-  const parser = new HashParser('hash-v1', length);
-
-  await documentsImport(login, parser, source).pipeline.run();
-
-  assert.ok(parser.heads.length > 0);
-  for (const head of parser.heads)
-    assert.ok(Buffer.from(head).equals(big.subarray(0, length)));
-});
-
-test('a ref that the database does not hold fails only its row, with a message that says to reload the copy that stored it', async () => {
-  await using database = await scratchDatabase();
-  const { login } = database;
-  await using scratch = await new TemporaryFiles().directory('elt-db-files-');
-  await writeFile(join(scratch.path, 'note.txt'), 'note');
-  const ref = `${'0'.repeat(64)}/gone.txt`;
-  const source = new Documents();
-  source.messages = {
-    documents: [
-      {
-        stream: 'documents',
-        data: { id: 'note' },
-        file: join(scratch.path, 'note.txt'),
-      },
-    ],
-    links: [{ stream: 'links', data: { id: 'gone', ref } }],
-  };
-
-  await documentsImport(
-    login,
-    new HashParser('hash-v1'),
-    source,
-  ).pipeline.run();
-
-  assert.deepEqual(
-    await database.read('SELECT ref, status, error FROM marts.link_text'),
-    [
-      {
-        ref,
-        status: 'failed',
-        error: `Table _warehouse._elt_files has no stored file ${ref}. Reload the copy that stored it to store the file again.`,
-      },
-    ],
-  );
-});
-
-test('two files of the same bytes whose extensions differ only in case are two stored files, though the collation of the database ignores case', async () => {
-  await using database = await scratchDatabase();
-  const { login } = database;
-  await using scratch = await new TemporaryFiles().directory('elt-db-files-');
-  await writeFile(join(scratch.path, 'upper.PDF'), 'scan');
-  await writeFile(join(scratch.path, 'lower.pdf'), 'scan');
-  const source = new Documents();
-  source.messages = {
-    documents: [
-      {
-        stream: 'documents',
-        data: { id: 'upper' },
-        file: join(scratch.path, 'upper.PDF'),
+        parsed: parser.paths.length,
+        folder: await readdir(scratch.path),
+        rows: await database.read(
+          'SELECT [rule], [status], [content] FROM marts.document_text',
+        ),
       },
       {
-        stream: 'documents',
-        data: { id: 'lower' },
-        file: join(scratch.path, 'lower.pdf'),
+        parsed: 1,
+        folder: [],
+        rows: [
+          {
+            rule: 'hash-v2',
+            status: 'computed',
+            content: `.txt ${hash('sha256', 'note')}`,
+          },
+        ],
       },
-    ],
-  };
-  const { pipeline } = documentsImport(
-    login,
-    new HashParser('hash-v1'),
-    source,
-  );
+    );
+  },
+);
 
-  // The second run reconciles the stored files with both refs.
-  await pipeline.run();
-  await pipeline.run();
+test(
+  'the storage removes a file that no row names once the retention forgets the history rows that named it, and keeps it until then',
+  { skip: emulation },
+  async () => {
+    await using database = await scratchDatabase();
+    const { login } = database;
+    await using scratch = await new TemporaryFiles().directory('elt-db-files-');
+    for (const name of ['a1.txt', 'a2.txt', 'b.txt'])
+      await writeFile(join(scratch.path, name), name);
+    const file = (id: string, name: string): SourceMessage => ({
+      stream: 'documents',
+      data: { id },
+      file: join(scratch.path, name),
+    });
+    let now = Date.now();
+    const source = new Documents();
+    const { destination, pipeline } = documentsImport(
+      login,
+      new HashParser('hash-v1'),
+      source,
+      {
+        retention: Temporal.Duration.from({ milliseconds: 20 }),
+        now: () => now,
+      },
+    );
+    const refs = async () =>
+      Object.fromEntries(
+        (await database.read('SELECT id, ref FROM marts.documents')).map(
+          ({ id, ref }) => [String(id), String(ref)],
+        ),
+      );
+    const bytes = async (ref: string) => {
+      try {
+        await using opened = await destination.files().open(ref);
+        return await readFile(opened.path, 'utf8');
+      } catch (error) {
+        if (error instanceof StoredFileMissingError) return 'missing';
+        throw error;
+      }
+    };
+    source.messages = { documents: [file('a', 'a1.txt'), file('b', 'b.txt')] };
+    await pipeline.run();
+    const first = await refs();
+    // The overwrite replaces a and deletes b; the history keeps both rows.
+    source.messages = { documents: [file('a', 'a2.txt')] };
+    await pipeline.run();
+    const second = await refs();
+    const kept = [
+      await bytes(String(first.a)),
+      await bytes(String(first.b)),
+      await bytes(String(second.a)),
+    ];
+    now += 60;
 
-  // A join of the refs would ignore case too, so the rows are read apart.
-  assert.deepEqual(
-    await database.read(
-      'SELECT [status], [content] FROM marts.document_text ORDER BY [content] COLLATE Latin1_General_BIN2',
-    ),
-    [
-      { status: 'computed', content: `.PDF ${hash('sha256', 'scan')}` },
-      { status: 'computed', content: `.pdf ${hash('sha256', 'scan')}` },
-    ],
-  );
-});
+    // The next commit forgets the history rows older than the retention.
+    await pipeline.run();
+
+    assert.deepEqual(
+      {
+        kept,
+        after: [
+          await bytes(String(first.a)),
+          await bytes(String(first.b)),
+          await bytes(String(second.a)),
+        ],
+      },
+      {
+        kept: ['a1.txt', 'b.txt', 'a2.txt'],
+        after: ['missing', 'missing', 'a2.txt'],
+      },
+    );
+  },
+);
+
+test(
+  'head reads the first bytes of a stored file across its chunks, and no more',
+  { skip: emulation },
+  async () => {
+    await using database = await scratchDatabase();
+    const { login } = database;
+    await using scratch = await new TemporaryFiles().directory('elt-db-files-');
+    const big = randomBytes(large);
+    await writeFile(join(scratch.path, 'big.bin'), big);
+    const source = new Documents();
+    source.messages = {
+      documents: [
+        {
+          stream: 'documents',
+          data: { id: 'big' },
+          file: join(scratch.path, 'big.bin'),
+        },
+      ],
+    };
+    // Past the end of the first chunk.
+    const length = 4 * 1024 * 1024 + 16;
+    const parser = new HashParser('hash-v1', length);
+
+    await documentsImport(login, parser, source).pipeline.run();
+
+    assert.ok(parser.heads.length > 0);
+    for (const head of parser.heads)
+      assert.ok(Buffer.from(head).equals(big.subarray(0, length)));
+  },
+);
+
+test(
+  'a ref that the database does not hold fails only its row, with a message that says to reload the copy that stored it',
+  { skip: emulation },
+  async () => {
+    await using database = await scratchDatabase();
+    const { login } = database;
+    await using scratch = await new TemporaryFiles().directory('elt-db-files-');
+    await writeFile(join(scratch.path, 'note.txt'), 'note');
+    const ref = `${'0'.repeat(64)}/gone.txt`;
+    const source = new Documents();
+    source.messages = {
+      documents: [
+        {
+          stream: 'documents',
+          data: { id: 'note' },
+          file: join(scratch.path, 'note.txt'),
+        },
+      ],
+      links: [{ stream: 'links', data: { id: 'gone', ref } }],
+    };
+
+    await documentsImport(
+      login,
+      new HashParser('hash-v1'),
+      source,
+    ).pipeline.run();
+
+    assert.deepEqual(
+      await database.read('SELECT ref, status, error FROM marts.link_text'),
+      [
+        {
+          ref,
+          status: 'failed',
+          error: `Table _warehouse._elt_files has no stored file ${ref}. Reload the copy that stored it to store the file again.`,
+        },
+      ],
+    );
+  },
+);
+
+test(
+  'two files of the same bytes whose extensions differ only in case are two stored files, though the collation of the database ignores case',
+  { skip: emulation },
+  async () => {
+    await using database = await scratchDatabase();
+    const { login } = database;
+    await using scratch = await new TemporaryFiles().directory('elt-db-files-');
+    await writeFile(join(scratch.path, 'upper.PDF'), 'scan');
+    await writeFile(join(scratch.path, 'lower.pdf'), 'scan');
+    const source = new Documents();
+    source.messages = {
+      documents: [
+        {
+          stream: 'documents',
+          data: { id: 'upper' },
+          file: join(scratch.path, 'upper.PDF'),
+        },
+        {
+          stream: 'documents',
+          data: { id: 'lower' },
+          file: join(scratch.path, 'lower.pdf'),
+        },
+      ],
+    };
+    const { pipeline } = documentsImport(
+      login,
+      new HashParser('hash-v1'),
+      source,
+    );
+
+    // The second run reconciles the stored files with both refs.
+    await pipeline.run();
+    await pipeline.run();
+
+    // A join of the refs would ignore case too, so the rows are read apart.
+    assert.deepEqual(
+      await database.read(
+        'SELECT [status], [content] FROM marts.document_text ORDER BY [content] COLLATE Latin1_General_BIN2',
+      ),
+      [
+        { status: 'computed', content: `.PDF ${hash('sha256', 'scan')}` },
+        { status: 'computed', content: `.pdf ${hash('sha256', 'scan')}` },
+      ],
+    );
+  },
+);
