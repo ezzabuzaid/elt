@@ -116,6 +116,10 @@ _Avoid_: Full scan stream, polling stream
 The rule that gives each vanished key of a snapshot stream a verdict: deleted, unknown or expired.
 _Avoid_: Retention policy (a retention is one kind)
 
+**Iterable source**:
+A source whose streams read the rows that the host gives at each pass, as an iterable, with no source subclass of the host.
+_Avoid_: Push source (a push source puts rows in a queue, and elt pulls them), memory source, resource (a resource is a stream)
+
 **Partition**:
 One part of a stream that a source reads apart, with its own checkpoint, for example one Search Console property.
 _Avoid_: Shard, slice

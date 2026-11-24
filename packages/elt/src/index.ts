@@ -114,6 +114,14 @@ export {
   type SnapshotDiffOptions,
 } from './core/snapshot.ts';
 export {
+  type IterableChangeSignal,
+  type IterableReadContext,
+  type IterableRow,
+  IterableSource,
+  type IterableStreamDeclaration,
+  type SnapshotStreamDeclaration,
+} from './core/iterable-source.ts';
+export {
   type DeleteMessage,
   type ExtractionCoverage,
   type FailureType,

@@ -463,6 +463,116 @@ const notifications = new Stream({
 - **Rows outlive the upstream**, as for expired rows: a clear of the copy, or a full refresh with overwrite, loses them. A reset, or a change of the fields of the stream, keeps them. Nothing marks a loaded row as gone from the upstream.
 - **Airbyte:** it deletes destination rows only "if your source supports emitting deleting records (e.g. an CDC database source)" ([incremental append + deduped](https://docs.airbyte.com/platform/using-airbyte/core-concepts/sync-modes/incremental-append-deduped)). An incremental stream with no deletions keeps each row that it loaded. In elt this is a declaration on the stream, not a property of the source.
 
+## Load rows that the host holds
+
+A host that holds rows in its own memory or store loads them with an `IterableSource`. It writes no `Source` subclass. It gives a schema, a key and the rows of each stream. dlt does the same with `pipeline.run(data)`, and LangChain with `index(docs)`. See [ADR 0033](./docs/adr/0033-a-host-loads-the-rows-it-holds-through-an-iterable-source.md).
+
+This example loads the tasks that a host holds into one SQLite file. It runs three passes: the first loads two tasks, the second gives one changed task and stops giving the other, and the third gives the same rows again.
+
+```ts
+import { DatabaseSync } from 'node:sqlite';
+
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
+import { SQLiteDestination, SQLiteSyncHistory } from '@eltjs/elt-sqlite';
+
+// The rows that the host holds. A real host reads them from its own store.
+let tasks = [
+  { name: 'fix-git', text: 'Recover the lost commit.', difficulty: 'easy' },
+  {
+    name: 'build-pmars',
+    text: 'Build pMARS from source.',
+    difficulty: 'medium',
+  },
+];
+
+const source = new IterableSource({
+  identity: 'tasks',
+  streams: {
+    tasks: {
+      description: 'Each task that the host holds now.',
+      jsonSchema: {
+        type: 'object',
+        description: 'A task.',
+        properties: {
+          name: { type: 'string', description: 'Name of the task.' },
+          text: { type: 'string', description: 'What the task asks.' },
+          difficulty: {
+            type: 'string',
+            enum: ['easy', 'medium', 'hard'],
+            description: 'How hard the task is.',
+          },
+        },
+        required: ['name', 'text', 'difficulty'],
+      },
+      primaryKey: ['name'],
+      deletions: 'closed-world',
+      snapshot: () => tasks,
+    },
+  },
+});
+const sqlite = new SQLiteDestination({ path: './tasks.sqlite' });
+const pipeline = new Pipeline({
+  history: new SQLiteSyncHistory(),
+  clock: globalThis,
+  connections: [
+    new Connection({
+      name: 'tasks',
+      source,
+      destination: sqlite,
+      steps: [
+        new Copy(source.streams.tasks, sqlite.table('tasks'), {
+          syncMode: 'full_refresh',
+          destinationSyncMode: 'overwrite_dedup',
+        }),
+      ],
+    }),
+  ],
+});
+
+const rows = () =>
+  new DatabaseSync('./tasks.sqlite', { readOnly: true })
+    .prepare(
+      'SELECT name, difficulty, committed_in FROM raw_tasks ORDER BY name',
+    )
+    .all()
+    .map((row) => ({ ...row }));
+
+await pipeline.run();
+console.log('first', rows());
+
+// The host changes one task and stops holding the other.
+tasks = [
+  { name: 'fix-git', text: 'Recover the lost commit.', difficulty: 'hard' },
+];
+await pipeline.run();
+console.log('second', rows());
+
+// The same rows again: no row is written.
+await pipeline.run();
+console.log('third', rows());
+```
+
+Output:
+
+```
+first [
+  { name: 'build-pmars', difficulty: 'medium', committed_in: 1 },
+  { name: 'fix-git', difficulty: 'easy', committed_in: 1 }
+]
+second [ { name: 'fix-git', difficulty: 'hard', committed_in: 2 } ]
+third [ { name: 'fix-git', difficulty: 'hard', committed_in: 2 } ]
+```
+
+- **One stream for each key of `streams`.** `source.streams.tasks` is the frozen `Stream` for a `Copy`. It supports `full_refresh` and `incremental`, and it defines its own cursor. The host writes none of these flags.
+- **The rows of a pass.** Each pass calls `snapshot({ signal })` one time and pulls the rows as the destination asks for them. The rows can be an `Iterable` or an `AsyncIterable`. elt keeps no buffer: a pass that fails reads the rows again from the host. `signal` is the signal of the run, so rows that wait on the host stop with the run.
+- **Deletions.** With `deletions: 'closed-world'`, the host gives every row that it holds, and a row that it stops giving is deleted. The stream then emits deletions. Without it, a row that the host stops giving stays loaded, as in a [forgetting upstream](#forgetting-upstreams). The source has no cleanup option: the sync modes of the copy and `deletions` are the cleanup.
+- **A key that comes two times** in one pass fails the read in both sync modes: `Snapshot tasks returned name a twice in one scan`. Two rows for one key show that the key of the host is wrong ([ADR 0022](./docs/adr/0022-a-stream-s-key-is-an-identity-its-upstream-enforces.md)). A key can have more than one field.
+- **Rows that did not change write nothing.** A full refresh with `overwrite_dedup` replaces rows by difference in each destination, so the third pass keeps `committed_in` 2. An incremental copy with `append_dedup` compares each row with the [snapshot](#snapshot-streams) in its checkpoint, and keeps that snapshot in the checkpoint store of the connection.
+- **Which mode.** `full_refresh` with `overwrite_dedup` needs no checkpoint store and no copy `id`. Use `incremental` with `append_dedup` when the target is so large that a comparison of the whole target at each pass costs more than a snapshot of about 55 bytes for each row. For 5,500 rows, an unchanged pass took 156-270 ms in a full refresh and 105-199 ms in an incremental copy.
+- **`rowVersion`** names a column whose value changes each time the host changes the row, such as a version counter. An incremental copy then compares that value in place of the hash of the row (dlt `row_version_column_name`). **Hazard:** a row whose content changed but whose version did not change keeps its old content. The column must be in `jsonSchema`; the constructor refuses another name with a `TypeError`. A full refresh reads every row and does not use it.
+- **Watch.** `source.changed(stream)` tells a watch that the host's rows of the stream changed; the next check, at most one second later, starts a pass. A host whose rows are in a store that it can watch also gives `changeSignal: { gauge: (clock) => gauge, interval, timeout }`. The watch gets a new gauge for each watch, and `changed()` works beside it with the same interval.
+- **Coverage** of each pass is `{ description, selection: {} }`, with the `description` of the stream. `currentAsOf` is null, unless the stream gives `currentAsOf: () => Promise<Date | null>`. `configErrors` lists the error classes of the host that the user must fix; the failure type of other errors is `system`.
+
 ## Partitioned streams
 
 One source can read a stream as several partitions, for example one for each Search Console property or each account. The stream declares `partitionKey`, which is a subset of its `primaryKey`. The source lists the partitions from its configuration, and `extract` gets each partition:
@@ -1254,6 +1364,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0028](./docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md): a host names each relation that readers query once.
 - [ADR 0029](./docs/adr/0029-the-side-that-raised-a-failure-names-its-type.md): the side that raised a failure names its type.
 - [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md): a rule reads a stored file through its storage.
+- [ADR 0033](./docs/adr/0033-a-host-loads-the-rows-it-holds-through-an-iterable-source.md): a host loads the rows that it holds through an `IterableSource`.
 
 ## Development
 
@@ -1280,6 +1391,7 @@ src/core/
   reload-mode.ts        reloadMode: load, make, evolve or reload a target
   reloads.ts            Reloads: what an open reload reloads, the whole stream or some partitions
   snapshot.ts           diffSnapshot and diffGroupedSnapshot
+  iterable-source.ts    IterableSource: the rows that a host holds, with no Source subclass
   partition.ts          the checkpoint of a partitioned stream
   identifiers.ts        Identifiers: the naming rule, and the name of a reader view
   target.ts             Target, and targetFileReads: the checks of the columns a host declares

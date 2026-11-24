@@ -1,3 +1,5 @@
+import { setImmediate } from 'node:timers/promises';
+
 import {
   DeletionPolicy,
   type KeptGroup,
@@ -43,16 +45,38 @@ type SnapshotMessage<Data> =
 // every record of the scan, one at a time as the scan yields it, and saves
 // nothing. rereads names the lookback window of a scan the next one repeats
 // only in part; continues makes the call one part of a scan.
-export async function* diffSnapshot<Data extends Record<string, unknown>>(
-  { stream, syncMode }: CopyConfiguration,
+export function diffSnapshot<Data extends Record<string, unknown>>(
+  configuration: CopyConfiguration,
   records: AsyncIterable<Data> | Iterable<Data>,
   state: unknown,
   options: SnapshotDiffOptions & {
     readonly rereads?: (record: Data) => boolean;
   },
 ): AsyncGenerator<SnapshotMessage<Data>> {
+  return diffVersionedSnapshot(configuration, records, state, options);
+}
+
+// diffSnapshot that compares each record by what fingerprint gives for it,
+// such as the host's version of the row, in place of the hash of its
+// content. A record whose fingerprint did not change keeps its row, also
+// when its content changed.
+export async function* diffVersionedSnapshot<
+  Data extends Record<string, unknown>,
+>(
+  { stream, syncMode }: CopyConfiguration,
+  records: AsyncIterable<Data> | Iterable<Data>,
+  state: unknown,
+  options: SnapshotDiffOptions & {
+    readonly rereads?: (record: Data) => boolean;
+    readonly fingerprint?: ((record: Data) => string) | undefined;
+  },
+): AsyncGenerator<SnapshotMessage<Data>> {
   const deduplication = deduplicationOf(stream);
-  const differential = differentialOf<Data>(deduplication, options);
+  const differential = differentialOf<Data>(
+    deduplication,
+    options,
+    options.fingerprint,
+  );
   if (syncMode !== 'incremental') {
     for await (const data of records) yield { stream: stream.name, data };
     return;
@@ -113,8 +137,7 @@ async function* untilStopped<Item>(
 ): AsyncGenerator<Item> {
   let read = 0;
   for await (const item of items) {
-    if (++read % turnItems === 0)
-      await new Promise((resolve) => setImmediate(resolve));
+    if (++read % turnItems === 0) await setImmediate();
     signal?.throwIfAborted();
     yield item;
   }
@@ -145,6 +168,7 @@ function deduplicationOf(stream: Stream): Deduplication {
 function differentialOf<Data extends Record<string, unknown>>(
   deduplication: Deduplication,
   { policy }: SnapshotDiffOptions,
+  fingerprint?: (record: Data) => string,
 ): SnapshotDifferential<Data> {
   const { stream } = deduplication;
   return new SnapshotDifferential<Data>({
@@ -156,6 +180,7 @@ function differentialOf<Data extends Record<string, unknown>>(
       ),
     expiresBy: stream.expiresBy,
     policy: policyOf(stream, policy),
+    ...(fingerprint === undefined ? {} : { fingerprint }),
   });
 }
 
