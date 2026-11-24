@@ -85,7 +85,7 @@ A URL that only a reader reads, such as `robots.txt` or a sitemap. The crawl doe
 _Avoid_: Page, file
 
 **List**:
-An HTML page that lists pages, such as an archive or a category page. Only the reader that finds a list knows that it is one, so the reader tells the crawler.
+A response that lists pages: an HTML page that links them, such as an archive or a category page, or a JSON page that holds their records, such as a page of WooCommerce's Store API, which is a page too. Only the reader that finds a list knows that it is one, so the reader tells the crawler.
 _Avoid_: Index, hub
 
 **Hops**:

@@ -86,6 +86,170 @@ test('a failing page of the pagination is handed out as a failure, and the pages
   }
 });
 
+test('a declared next page of a JSON list that fails is handed out as a failure, and the pages handed back before it are kept', async (t) => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url === '/products?page=2') response.writeHead(500).end();
+    else
+      response
+        .writeHead(200, {
+          'content-type': 'application/json; charset=UTF-8',
+          link: `<http://${request.headers.host}/products?page=2>; rel="next"`,
+        })
+        .end('[{"id":1}]');
+  });
+
+  const entries = await crawl(
+    pagination(),
+    `${upstream.origin}/products?page=1`,
+    t.signal,
+  );
+
+  assert.deepEqual(
+    entries.flatMap((entry) =>
+      'error' in entry ? [{ url: entry.url, page: entry.error.page }] : [],
+    ),
+    // A page of a JSON list holds its records, so a failed one is a failed page.
+    [{ url: `${upstream.origin}/products?page=2`, page: true }],
+  );
+  assert.deepEqual(
+    entries.filter((entry) => !('error' in entry)).map(location),
+    [
+      {
+        url: `${upstream.origin}/products?page=1`,
+        lastModified: null,
+        listingUrl: `${upstream.origin}/products?page=1`,
+      },
+    ],
+  );
+});
+
+test('a JSON list is read to its end through the pages its Link header declares, and each of its pages is handed back once, the first included', async (t) => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    const page = Number(
+      new URL(request.url ?? '/', upstream.origin).searchParams.get('page'),
+    );
+    const list = `${upstream.origin}/wp-json/wc/store/v1/products?per_page=2`;
+    // The header of WooCommerce's Store API as a live store gave it on
+    // 2026-11-24: one header names the previous and the next page, and
+    // WordPress escapes their & as &#038;, so the rest lands in the fragment.
+    const links = [
+      ...(page > 1
+        ? [`<${list}&page=${page - 1}#038;page=${page}>; rel="prev"`]
+        : []),
+      ...(page < 3
+        ? [`<${list}&page=${page + 1}#038;page=${page}>; rel="next"`]
+        : []),
+    ];
+    response
+      .writeHead(200, {
+        'content-type': 'application/json; charset=UTF-8',
+        ...(links.length > 0 ? { link: links.join(', ') } : {}),
+      })
+      .end(JSON.stringify([{ id: page * 2 - 1 }, { id: page * 2 }]));
+  });
+  const page = (n: number) =>
+    `${upstream.origin}/wp-json/wc/store/v1/products?per_page=2&page=${n}`;
+
+  const pages = await crawl(pagination(), page(1), t.signal);
+
+  assert.deepEqual(
+    pages.map(location).toSorted((a, b) => a.url.localeCompare(b.url)),
+    [1, 2, 3].map((n) => ({
+      url: page(n),
+      lastModified: null,
+      listingUrl: page(Math.max(n - 1, 1)),
+    })),
+  );
+});
+
+test('a JSON list follows no next page on another origin', async (t) => {
+  await using elsewhere = await new HttpServer().start((_request, response) => {
+    response
+      .writeHead(200, { 'content-type': 'application/json' })
+      .end('[{"id":2}]');
+  });
+  await using upstream = await new HttpServer().start((_request, response) => {
+    response
+      .writeHead(200, {
+        'content-type': 'application/json',
+        link: `<${elsewhere.origin}/products?page=2>; rel="next"`,
+      })
+      .end('[{"id":1}]');
+  });
+
+  const pages = await crawl(
+    pagination(),
+    `${upstream.origin}/products?page=1`,
+    t.signal,
+  );
+
+  assert.deepEqual(
+    pages.map(location).map((page) => page.url),
+    [`${upstream.origin}/products?page=1`],
+  );
+});
+
+test('a JSON Feed served as application/json is a feed, not a JSON list, so the crawl hands back its items and not the feed', async (t) => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    if (request.url === '/feed.json')
+      response.writeHead(200, { 'content-type': 'application/json' }).end(
+        JSON.stringify({
+          version: 'https://jsonfeed.org/version/1.1',
+          title: 'Blog',
+          items: [{ id: '1', url: `${upstream.origin}/posts/1` }],
+        }),
+      );
+    else
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end('<p>A post.</p>');
+  });
+
+  const pages = await crawl(
+    new Origins(noRetries, null, globalThis).crawler(
+      noRetries,
+      [new ListingReader(), new PaginationReader()],
+      new AdaptiveRevisit(),
+    ),
+    `${upstream.origin}/feed.json`,
+    t.signal,
+  );
+
+  assert.deepEqual(
+    pages.map(location).map((page) => page.url),
+    [`${upstream.origin}/posts/1`],
+  );
+});
+
+test("a list served as a JSON format of the +json suffix, such as JSON:API's, is a JSON list", async (t) => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    response.writeHead(200, {
+      'content-type': 'application/vnd.api+json',
+      ...(request.url === '/articles?page=1'
+        ? { link: '</articles?page=2>; rel="next"' }
+        : {}),
+    });
+    response.end('{"data":[]}');
+  });
+
+  const pages = await crawl(
+    pagination(),
+    `${upstream.origin}/articles?page=1`,
+    t.signal,
+  );
+
+  assert.deepEqual(
+    pages
+      .map(location)
+      .map((page) => page.url)
+      .toSorted(),
+    [
+      `${upstream.origin}/articles?page=1`,
+      `${upstream.origin}/articles?page=2`,
+    ],
+  );
+});
+
 test('a listed page that is gone is skipped, not a failure', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {

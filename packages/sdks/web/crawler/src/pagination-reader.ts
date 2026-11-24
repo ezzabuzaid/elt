@@ -1,4 +1,5 @@
 import { discoverUrisFromHeaders } from 'feedscout/methods';
+import { detectJsonFeed } from 'feedsmith';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { z } from 'zod';
 
@@ -11,13 +12,19 @@ import {
   isHtml,
   pageText,
 } from './reader.ts';
+import { StartReader } from './start-reader.ts';
 import { webUrl } from './web-url.ts';
+
+// A JSON list holds its records, so its starting list is a page as a starting
+// URL is one for StartReader.
+const startingList = new StartReader();
 
 /**
  * Lists of pages, such as categories and archives: the starting pages, the
  * pages a reader found as lists, and the pages their pagination reaches. It
  * hands back the pages each list links, follows the list's pagination, and
- * reads no other page.
+ * reads no other page. A JSON list holds its records instead of linking them,
+ * so it hands back each page of a JSON list, the first included.
  */
 export class PaginationReader extends Reader<null, null> {
   readonly notes = z.null();
@@ -53,14 +60,22 @@ export class PaginationReader extends Reader<null, null> {
     return false;
   }
 
-  read({
-    response,
-    headers,
-    type,
-    request,
-  }: Visit<null>): readonly Finding<null>[] {
+  read(visit: Visit<null>): readonly Finding<null>[] {
+    const { response, headers, type, request } = visit;
     if (!request.start && !request.list) return [];
-    if (response.statusCode !== 200 || !isHtml(type)) return [];
+    if (response.statusCode !== 200) return [];
+    // The body of a JSON list declares no pagination that a standard defines,
+    // so only its Link header is read, as Airbyte's, dlt's and the Singer
+    // SDK's paginators do. A JSON Feed, often served as application/json, is
+    // a feed that ListingReader reads, not a list of records.
+    if (isJson(type)) {
+      if (detectJsonFeed(pageText(response))) return [];
+      return [
+        ...startingList.read(visit),
+        ...declaredPagination(headers, response.url).map(jsonListPage),
+      ];
+    }
+    if (!isHtml(type)) return [];
     const { pagination, pages } = this.#readList(
       pageText(response),
       response.url,
@@ -107,11 +122,7 @@ export class PaginationReader extends Reader<null, null> {
       const origin = new URL(url).origin;
       // A declared next page that fails is an error; a page that a link only
       // looks like, such as Fortune's linked /page/0/ that answers 404, is not.
-      const declared = discoverUrisFromHeaders(headers, {
-        linkSelectors: paginationLinks,
-      })
-        .map((value) => webUrl(value, url))
-        .filter((value) => new URL(value).origin === origin);
+      const declared = declaredPagination(headers, url);
       const tolerate = new Map<string, readonly number[]>(
         declared.map((value) => [value, []]),
       );
@@ -172,6 +183,41 @@ export class PaginationReader extends Reader<null, null> {
       dom.window.close();
     }
   }
+}
+
+// The other pages of a list that its HTTP Link header declares (RFC 8288), on
+// the list's own origin.
+function declaredPagination(headers: Headers, url: string) {
+  const { origin } = new URL(url);
+  return discoverUrisFromHeaders(headers, { linkSelectors: paginationLinks })
+    .map((value) => webUrl(value, url))
+    .filter((value) => new URL(value).origin === origin);
+}
+
+// JSON, and the formats built on it that a +json suffix names (RFC 6839), such
+// as JSON:API's application/vnd.api+json and HAL's application/hal+json.
+function isJson(type: string | null) {
+  return type === 'application/json' || (type?.endsWith('+json') ?? false);
+}
+
+// Another page of a JSON list, such as page 2 of WooCommerce's Store API: a
+// page, because it holds records, and a list, because its Link header declares
+// the pages after it.
+function jsonListPage(url: string): Finding<null> {
+  return {
+    url,
+    naming: { how: 'pagination', text: null },
+    lastModified: null,
+    published: null,
+    localizedVersions: [],
+    page: true,
+    list: true,
+    linked: false,
+    // A declared next page that fails is an error.
+    tolerate: [],
+    note: null,
+    priority: 'backfill',
+  };
 }
 
 // The list a URL shows one page of, and whether the URL names a page number,

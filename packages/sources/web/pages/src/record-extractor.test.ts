@@ -6,6 +6,7 @@ import { TemporaryFiles } from '@zukhruf/fs';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 import type { Response } from 'got';
+import { z } from 'zod';
 
 import { Connection, Copy, Pipeline } from '@eltjs/elt';
 import {
@@ -13,7 +14,11 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@eltjs/elt-sqlite';
-import { AlwaysRevisit, ListingReader } from '@eltjs/sdk-web-crawler';
+import {
+  AlwaysRevisit,
+  ListingReader,
+  PaginationReader,
+} from '@eltjs/sdk-web-crawler';
 
 import { RecordExtractor } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';
@@ -215,3 +220,94 @@ for (const accept of ['application/vnd.sections+json', null])
     );
     assert.equal(accepts.get('/guide'), accept ?? accepts.get('/sitemap.xml'));
   });
+
+// One record per item of a JSON list page's top-level array, as WooCommerce's
+// Store API answers.
+class ProductListExtractor extends RecordExtractor {
+  readonly properties = {
+    id: { type: 'number', description: 'Product id.' },
+  } as const;
+  open() {
+    return {
+      negotiation: null,
+      async read(response: Response) {
+        const items = z
+          .array(z.object({ id: z.number() }))
+          .parse(JSON.parse(new TextDecoder().decode(response.rawBody)));
+        return {
+          fingerprint: null,
+          async records() {
+            return items.map(({ id }) => ({ id }));
+          },
+        };
+      },
+    };
+  }
+}
+
+test('a web stream over a JSON list stores the records of every page that its Link header declares', async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  await using upstream = await new HttpServer().start((request, response) => {
+    const page = Number(
+      new URL(request.url ?? '/', upstream.origin).searchParams.get('page'),
+    );
+    const list = `${upstream.origin}/wp-json/wc/store/v1/products?per_page=2`;
+    // The header of WooCommerce's Store API as a live store gave it on
+    // 2026-11-24, with WordPress's &#038; in place of each &.
+    const links = [
+      ...(page > 1
+        ? [`<${list}&page=${page - 1}#038;page=${page}>; rel="prev"`]
+        : []),
+      ...(page < 3
+        ? [`<${list}&page=${page + 1}#038;page=${page}>; rel="next"`]
+        : []),
+    ];
+    response
+      .writeHead(200, {
+        'content-type': 'application/json; charset=UTF-8',
+        ...(links.length > 0 ? { link: links.join(', ') } : {}),
+      })
+      .end(JSON.stringify([{ id: page * 2 - 1 }, { id: page * 2 }]));
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const page = (n: number) =>
+    `${upstream.origin}/wp-json/wc/store/v1/products?per_page=2&page=${n}`;
+  const ingestion = await pipeline(
+    new WebSource({
+      cachePath: join(cache.path, 'web-http.sqlite'),
+      userAgent: 'elt-test/1.0',
+      streams: [
+        {
+          stream: new WebStream({
+            name: 'products',
+            primaryKey: ['id'],
+            readers: [new PaginationReader()],
+            revisit: new AlwaysRevisit(),
+            extractor: new ProductListExtractor(),
+          }),
+          inputs: [page(1)],
+        },
+      ],
+    }),
+    database.path,
+    checkpoints.path,
+  );
+
+  assert.equal((await ingestion.run())[0]?.count, 6);
+
+  // The first page is the input itself, and each later page is the one that
+  // the page before it declares, so page 1 does not come back through the
+  // prev link of page 2.
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT pageUrl, listingUrl, id FROM products ORDER BY id')
+      .all()
+      .map((row) => ({ ...row })),
+    [1, 2, 3, 4, 5, 6].map((id) => ({
+      pageUrl: page(Math.ceil(id / 2)),
+      listingUrl: page(Math.max(Math.ceil(id / 2) - 1, 1)),
+      id,
+    })),
+  );
+});
