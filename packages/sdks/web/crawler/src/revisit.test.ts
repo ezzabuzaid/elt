@@ -120,7 +120,7 @@ const request: CrawlRequest = {
 test('a page that is not due is not requested and comes out as deferred after the pages, and it is requested again once due', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       requests.push(pathOf(request.url));
       return pathOf(request.url) === '/'
@@ -155,7 +155,7 @@ test('a page that is not due is not requested and comes out as deferred after th
 
 test('a caller that keeps no memento gets every page on every crawl', async (t) => {
   const requests: string[] = [];
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       requests.push(pathOf(request.url));
       return HttpResponse.html('<a href="/a">A</a>');
@@ -177,7 +177,7 @@ test('a caller that keeps no memento gets every page on every crawl', async (t) 
 test('a page whose body changed is handed back as modified', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   let body = '<p>First</p>';
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) =>
       pathOf(request.url) === '/'
         ? HttpResponse.html('<a href="/a">A</a>')
@@ -200,7 +200,7 @@ test('a page whose body changed is handed back as modified', async (t) => {
 
 test('a visit is timed at the start of its crawl, so a page due one interval later is due in the crawl that starts then', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       if (pathOf(request.url) === '/')
         return HttpResponse.html('<a href="/a">A</a>');
@@ -227,7 +227,7 @@ test('a failed page is due again two hours later even when nothing lists it, and
   let listed = true;
   let broken = true;
   const requests: string[] = [];
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       requests.push(pathOf(request.url));
       if (pathOf(request.url) === '/')
@@ -267,7 +267,7 @@ test('a gone page waits a day, is not deferred meanwhile, and is handed back onc
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   let gone = true;
   const requests: string[] = [];
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       requests.push(pathOf(request.url));
       if (pathOf(request.url) === '/')
@@ -304,7 +304,7 @@ test('a gone page waits a day, is not deferred meanwhile, and is handed back onc
 test('a page that fails three visits in a row is gone: it waits a day, then half again as long at each gone visit, and a visit that succeeds starts the count again', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   let broken = true;
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       if (pathOf(request.url) === '/')
         return HttpResponse.html('<a href="/a">A</a>');
@@ -343,7 +343,7 @@ test('a page that fails three visits in a row is gone: it waits a day, then half
 
 test('a gone page waits half again as long at each gone visit, up to ninety days', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) =>
       pathOf(request.url) === '/'
         ? HttpResponse.html('<a href="/a">A</a>')
@@ -382,7 +382,7 @@ test('a gone page waits half again as long at each gone visit, up to ninety days
 test('a page that failed keeps the body digest of its last download, so the download after the failure compares with it', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   let broken = false;
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       if (pathOf(request.url) === '/')
         return HttpResponse.html('<a href="/a">A</a>');
@@ -414,7 +414,7 @@ test('a page that failed keeps the body digest of its last download, so the down
 test('a page that answers 304 is unmodified: no failure, it is deferred, it is due by its policy, and its next download compares with the body before', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   let status = 200;
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       if (pathOf(request.url) === '/')
         return HttpResponse.html('<a href="/a">A</a>');
@@ -455,7 +455,7 @@ test('a listing that gives a page another lastModified makes it due at once, and
   const now = Date.parse('2026-11-01T00:00:00Z');
   t.mock.timers.enable({ apis: ['Date'], now });
   let lastModified = '2026-10-01';
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) =>
       pathOf(request.url) === '/sitemap.xml'
         ? HttpResponse.xml(
@@ -494,7 +494,7 @@ test('a known page that is due and that no listing names goes after the pages th
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   let items = ['/a'];
   const requests: string[] = [];
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       requests.push(pathOf(request.url));
       return pathOf(request.url) === '/feed.json'
@@ -532,7 +532,7 @@ test('a known page that is due and that no listing names goes after the pages th
 
 test('fail makes a handed-back page due as a failed one: it is not deferred, and its next download has no body to compare', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) =>
       pathOf(request.url) === '/'
         ? HttpResponse.html('<a href="/a">A</a>')
@@ -570,7 +570,7 @@ test('fail makes a handed-back page due as a failed one: it is not deferred, and
 test('a linked page that is not due spends no LinkReader budget, so the budget reaches a page the last crawl could not', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       requests.push(pathOf(request.url));
       return pathOf(request.url) === '/'
@@ -605,7 +605,7 @@ test('a linked page that is not due spends no LinkReader budget, so the budget r
 test('AlwaysRevisit makes every visited URL due in the next crawl, failed and gone ones too', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -747,7 +747,7 @@ test('CompositeRevisit routes a URL to the first matching policy or the fallback
 
 test('nextDue gives when the next crawl has a known URL due, starting URLs included, and null before any visit', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) =>
       pathOf(request.url) === '/'
         ? HttpResponse.html('<a href="/a">A</a>')
@@ -773,7 +773,7 @@ test('nextDue gives when the next crawl has a known URL due, starting URLs inclu
 test('a feed is due again within half the time its items cover, whatever the policy, so it rolls no item off unseen', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   let dated = true;
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) =>
       pathOf(request.url) === '/feed.xml'
         ? HttpResponse.xml(

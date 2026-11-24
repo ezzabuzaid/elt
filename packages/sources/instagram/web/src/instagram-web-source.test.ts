@@ -664,7 +664,7 @@ function instagram(world: World) {
       });
     }),
   );
-  return { calls, downloads, [Symbol.dispose]: () => server.cleanup() };
+  return { calls, downloads, [Symbol.asyncDispose]: () => server.cleanup() };
 }
 
 function commentNode(comment: Comment, parent?: string) {
@@ -793,7 +793,7 @@ test('a run reads at most 10 pages of a list, and the next run goes on with the 
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   const profile = hive(posts(400));
   const world: World = { profiles: [profile], following: [] };
-  using wire = instagram(world);
+  await using wire = instagram(world);
   const source = await InstagramWebSource.connect(
     {
       home: mac.path,
@@ -827,7 +827,7 @@ test('a rate limit in the middle of a scan keeps the pages committed before it, 
     following: [],
     queriesUntilLimit: 3,
   };
-  using wire = instagram(world);
+  await using wire = instagram(world);
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -859,7 +859,7 @@ test('while a scan is under way no post is deleted; a post deleted before the sc
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   const profile = hive(posts(400));
-  using _wire = instagram({ profiles: [profile], following: [] });
+  await using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -898,7 +898,7 @@ test('a post published while a scan is under way loads at the next run', async (
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   const profile = hive(posts(400));
-  using _wire = instagram({ profiles: [profile], following: [] });
+  await using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -932,7 +932,7 @@ test('an old post pinned above the newest ones does not stop the read of new pos
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   const pinned = { pk: '4000000', takenAt: day - 900 * 86_400, pinned: true };
   const profile = hive([pinned, ...posts(400)]);
-  using _wire = instagram({ profiles: [profile], following: [] });
+  await using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -967,7 +967,7 @@ test('an edited caption updates its post when the scan reads the post again', as
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   const profile = hive(posts(5));
-  using _wire = instagram({ profiles: [profile], following: [] });
+  await using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -997,7 +997,7 @@ test('an edited caption updates its post when the scan reads the post again', as
 test('a date range ends the walk at the first post older than its start, so a narrowed import reads only the pages it needs, and leaves out a post at its end', async () => {
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
-  using wire = instagram({ profiles: [hive(posts(400))], following: [] });
+  await using wire = instagram({ profiles: [hive(posts(400))], following: [] });
   const startAt = new Date((day - 19 * 86_400) * 1000).toISOString();
   // An import scope's end is exclusive: a post at that instant is out.
   const endAt = new Date((day - 2 * 86_400) * 1000).toISOString();
@@ -1039,7 +1039,7 @@ test('a scope narrowed to one profile reads that profile’s lists and nothing o
     username: 'propertyplus.jo',
     posts: posts(3, 1000),
   };
-  using wire = instagram({
+  await using wire = instagram({
     profiles: [hive(posts(3)), other],
     following: [
       { pk: '44555906095', username: 'hivefitnationgym' },
@@ -1097,7 +1097,7 @@ test('a second run with no change upstream writes nothing and downloads no image
       },
     ],
   };
-  using wire = instagram({
+  await using wire = instagram({
     profiles: [profile],
     following: [{ pk: '44555906095', username: 'hivefitnationgym' }],
   });
@@ -1156,7 +1156,7 @@ test(
         takenAt: day - index * 3600,
       })),
     );
-    using _wire = instagram({ profiles: [profile], following: [] });
+    await using _wire = instagram({ profiles: [profile], following: [] });
     const run = await pipeline(
       await InstagramWebSource.connect(
         {
@@ -1194,7 +1194,7 @@ async function storedFiles(directory: string, sql: string) {
 test('a post tagged with a place loads the place’s id, name and coordinates, a place without coordinates loads them as NULL, and a post without a place loads none', async () => {
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [
       hive([
         {
@@ -1265,7 +1265,7 @@ test('a post tagged with a place loads the place’s id, name and coordinates, a
 test('a profile whose reel count Instagram leaves out loads its reels as NULL', async () => {
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [{ ...hive([]), reelCount: null }],
     following: [],
   });
@@ -1298,7 +1298,7 @@ test('every slide of a carousel, of a repost and of a tagged post is a media row
     slides: 11,
     caption: 'Our October schedules are now available.',
   };
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [
       {
         ...hive([timetable, { pk: '41', takenAt: day - 86_400 }]),
@@ -1380,7 +1380,7 @@ test('every slide of a carousel, of a repost and of a tagged post is a media row
 test('a video post and a reel load their cover frame as the file, and no video is downloaded', async () => {
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
-  using wire = instagram({
+  await using wire = instagram({
     profiles: [
       {
         ...hive([{ pk: '71', takenAt: day, video: true }]),
@@ -1436,7 +1436,7 @@ test('a story that Instagram stopped showing keeps its row, and one the profile 
       { pk: '93', takenAt: now - 60, expiresAt: now + 86_340 },
     ],
   };
-  using _wire = instagram({ profiles: [profile], following: [] });
+  await using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -1486,7 +1486,7 @@ test('a profile, a page of posts and a highlights tray Instagram refused to one 
   };
   // Each is refused once: to profiles, posts and highlights, the first
   // streams that ask for them.
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [profile],
     following: [],
     refused: {
@@ -1539,7 +1539,7 @@ test('highlights load with every story in them and its image, and a highlight th
       })),
     ],
   };
-  using _wire = instagram({ profiles: [profile], following: [] });
+  await using _wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -1588,7 +1588,7 @@ test('a highlight story whose image Instagram’s CDN no longer has loads withou
     takenAt: day - 90 * 86_400,
     expiresAt: day - 89 * 86_400,
   });
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [
       {
         ...hive([]),
@@ -1635,7 +1635,7 @@ test('an image whose connection the CDN drops once is asked for again and stored
     takenAt: day - 90 * 86_400,
     expiresAt: day - 89 * 86_400,
   });
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [
       {
         ...hive([]),
@@ -1678,7 +1678,7 @@ test('an image the CDN answers 503 once is asked for again and stored', async ()
     takenAt: day - 90 * 86_400,
     expiresAt: day - 89 * 86_400,
   });
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [
       {
         ...hive([]),
@@ -1736,7 +1736,7 @@ test('a highlight story whose image keeps failing fails the run, the highlights 
     following: [],
     dropped: { 861: Number.POSITIVE_INFINITY },
   };
-  using wire = instagram(world);
+  await using wire = instagram(world);
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -1793,7 +1793,7 @@ test('comments load with their replies, are read again within a scan only when a
   };
   // Longer than one run reads, so the second run is in the same scan.
   const profile = hive([changed, unchanged, ...posts(398)]);
-  using wire = instagram({ profiles: [profile], following: [] });
+  await using wire = instagram({ profiles: [profile], following: [] });
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -1847,7 +1847,7 @@ test('a grid page that lists one post twice fails the posts, media and comments 
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   const [repeated, other] = posts(2);
   assert.ok(repeated !== undefined && other !== undefined);
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [hive([repeated, repeated, other])],
     following: [],
   });
@@ -1879,7 +1879,7 @@ test('a reels, reposts or tagged page that lists one post twice fails its stream
     const post = { pk, takenAt: day };
     return [post, post, { pk: String(Number(pk) - 1), takenAt: day - 3600 }];
   };
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [
       {
         ...hive([]),
@@ -1919,7 +1919,7 @@ test('the reels tab, reposts and tagged posts load for the profile, page after p
       pk: String(from + count - index),
       takenAt: day - index * 3600,
     }));
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [
       {
         ...hive(posts(2)),
@@ -1997,7 +1997,7 @@ test('overlapping following pages import each profile once and keep every distin
   // on 2026-10-16. Repeat an account within a page and across the 50-row
   // page boundary; the last page must still contribute its new accounts.
   const repeated = { pk: '10000', username: 'account0' };
-  using wire = instagram({
+  await using wire = instagram({
     profiles,
     following: [
       repeated,
@@ -2042,7 +2042,7 @@ test('the accounts the browser’s account follows load across pages, and one it
       username: `account${index}`,
     })),
   };
-  using _wire = instagram(world);
+  await using _wire = instagram(world);
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -2080,7 +2080,7 @@ test('a full refresh loads every account the browser’s account follows, and th
       username: `account${index}`,
     })),
   };
-  using _wire = instagram(world);
+  await using _wire = instagram(world);
   const source = await InstagramWebSource.connect(
     { home: mac.path, profileIds: ['44555906095'] },
     globalThis,
@@ -2126,7 +2126,7 @@ test('a session Instagram no longer accepts fails as the user’s to fix, with t
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   const world: World = { profiles: [hive(posts(5))], following: [] };
-  using _wire = instagram(world);
+  await using _wire = instagram(world);
   const run = await pipeline(
     await InstagramWebSource.connect(
       {
@@ -2153,7 +2153,7 @@ test('a session Instagram no longer accepts fails as the user’s to fix, with t
 test('a Mac where no browser is signed in to Instagram fails as the user’s to fix, naming the browsers it checked', async () => {
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
-  using _wire = instagram({ profiles: [hive(posts(1))], following: [] });
+  await using _wire = instagram({ profiles: [hive(posts(1))], following: [] });
   const source = await InstagramWebSource.connect(
     {
       home: mac.path,
@@ -2188,7 +2188,7 @@ test('a Cookies file that is missing or that the process may not read fails ever
     return t.skip('chmod does not deny this process');
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
-  using _wire = instagram({ profiles: [hive(posts(1))], following: [] });
+  await using _wire = instagram({ profiles: [hive(posts(1))], following: [] });
   const source = await InstagramWebSource.connect(
     {
       home: mac.path,
@@ -2235,7 +2235,7 @@ test(
   async () => {
     await using mac = await signedInMac();
     await using dir = await new TemporaryFiles().directory('instagram-load-');
-    using wire = instagram({ profiles: [hive([])], following: [] });
+    await using wire = instagram({ profiles: [hive([])], following: [] });
     const source = await InstagramWebSource.connect(
       {
         home: mac.path,
@@ -2278,7 +2278,7 @@ test('a comment that Instagram lists twice fails the comments stream with twice 
   // and 8 distinct comments, while the SDK paired has_more_comments with
   // next_min_id; it now follows each direction with its own cursor.
   const repeated: Comment = { pk: '18398660635134371', text: 'See you there' };
-  using _wire = instagram({
+  await using _wire = instagram({
     profiles: [
       hive([
         {

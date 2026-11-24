@@ -131,7 +131,7 @@ test('open reads the grant once and refreshes a token for the session scopes onl
     // Without a rotation there is nothing to persist.
     assert.equal(calls.writes, 0);
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -152,7 +152,7 @@ test('a rotated refresh token is persisted with every scope the grant holds befo
       refreshToken: 'refresh-rotated',
     });
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -195,7 +195,7 @@ test('a later rotation is persisted before the response that caused it returns',
     assert.equal(calls.writes, 1);
     assert.equal(stored(rows).refreshToken, 'refresh-rotated');
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -228,7 +228,7 @@ test('a persist failure rejects the request that rotated, and a later rotation i
     assert.deepEqual(data, { ok: true });
     assert.equal(stored(rows).refreshToken, 'refresh-again');
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -244,7 +244,7 @@ test('a grant Google will not refresh is reported as revoked and never written',
     );
     assert.equal(calls.writes, 0);
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -268,7 +268,7 @@ test('a missing or malformed grant names its ref', async () => {
       GoogleGrantMissingError,
     );
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -293,7 +293,7 @@ test('concurrent opens of one ref and scope set share a single read and refresh'
     assert.equal(calls.reads, 2);
     assert.equal(tokenRequests.length, 2);
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -319,7 +319,7 @@ test('concurrent opens with different scopes never share a session or a token', 
       [HEALTH, SEARCH_CONSOLE].sort(),
     );
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -337,7 +337,7 @@ test('the re-authentication refusal counts as revoked too', async () => {
       GoogleGrantRevokedError,
     );
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -351,6 +351,6 @@ test('other token-endpoint refusals pass through unchanged', async () => {
       message: 'invalid_client',
     });
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });

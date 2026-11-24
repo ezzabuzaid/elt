@@ -109,7 +109,7 @@ function gaps(started: readonly number[]) {
 
 test('cancelling a crawl while it waits out a slowdown rejects at once with the signal reason', async () => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
@@ -154,7 +154,7 @@ test('cancelling a crawl while it waits out a slowdown rejects at once with the 
 test('a refusal slows the requests to its own origin and not to another origin', async (t) => {
   const time = clock(0);
   const started = new Map<string, number[]>();
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://:host/*', ({ request }) => {
       const { origin, pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -191,7 +191,7 @@ test('after a 429 block ends, the next read spaces its requests to that origin',
   const time = clock(0);
   let blocking = true;
   const started: { path: string; at: number }[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       started.push({ path: pathname, at: time.performance.now() });
@@ -240,7 +240,7 @@ test('each 5xx answer slows the next request to its origin by one second', async
   const time = clock(0);
   const statuses = [500, 501, 503, 504, 599];
   const started = new Map<string, number[]>();
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://:host/*', ({ request }) => {
       const { host, origin, pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -275,7 +275,7 @@ test('each 5xx answer slows the next request to its origin by one second', async
 test('Got retries no refusal: a 503 is answered once, and its slowdown spaces the next requests', async (t) => {
   const time = clock(0);
   const started: { path: string; at: number }[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -350,7 +350,7 @@ test('a page whose connection dropped and then answered 503 counts one refusal, 
 test('a 408 that Got retried away does not slow the origin', async (t) => {
   const requests: string[] = [];
   let timeouts = 1;
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
@@ -380,7 +380,7 @@ test('a 408 that Got retried away does not slow the origin', async (t) => {
 test('each further refusal doubles the slowdown', async (t) => {
   const time = clock(0);
   const started: number[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -411,7 +411,7 @@ test('answers that are not refusals shorten the slowdown step by step, until it 
     ...Array.from({ length: 24 }, (_, index) => `/${index + 1}`),
   ];
   const started: number[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -454,7 +454,7 @@ async function readAgain(pages: readonly string[], signal: AbortSignal) {
   const time = clock(0);
   const started: { path: string; at: number }[] = [];
   let again = false;
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       started.push({ path: pathname, at: time.performance.now() });
@@ -545,7 +545,7 @@ test('a slowdown adds to the Crawl-delay, as Nutch adds its back-off to the serv
     ['other.test', ['/a', '/b']],
   ]);
   const started = new Map<string, number[]>();
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://:host/*', ({ request }) => {
       const { host, origin, pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -582,7 +582,7 @@ test('a robots.txt that answers 503 also slows its origin after the block', asyn
   const time = clock(0);
   let refusing = true;
   const started: { path: string; at: number }[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       started.push({ path: pathname, at: time.performance.now() });
@@ -623,7 +623,7 @@ test('a robots.txt that answers 503 also slows its origin after the block', asyn
 test('repeated refusals never make the slowdown longer than one minute', async (t) => {
   const time = clock(0);
   const started: number[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       started.push(time.performance.now());
       return new HttpResponse(null, { status: 503 });
@@ -658,7 +658,7 @@ test('repeated refusals never make the slowdown longer than one minute', async (
 
 test('Got retries no refusal of robots.txt: one 503 blocks and slows its origin', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);

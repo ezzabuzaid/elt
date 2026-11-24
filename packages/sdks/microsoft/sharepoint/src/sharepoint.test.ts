@@ -92,7 +92,7 @@ function microsoft(
       clientSecret: 'client-secret',
       clock,
     }),
-    [Symbol.dispose]: () => server.cleanup(),
+    [Symbol.asyncDispose]: () => server.cleanup(),
   };
 }
 
@@ -119,7 +119,7 @@ function refusal(
 }
 
 test('a Graph call carries the bearer token that the client credentials of the app get', async (t) => {
-  using microsoftSide = microsoft(() => Response.json(sales));
+  await using microsoftSide = microsoft(() => Response.json(sales));
 
   const site = await microsoftSide.client.site(SITE_URL, t.signal);
 
@@ -286,7 +286,7 @@ test('the site, its drives, lists, columns, pages and text web parts come back a
       verticalSection: { emphasis: 'none', webparts: [contacts] },
     },
   };
-  using microsoftSide = microsoft((url) => {
+  await using microsoftSide = microsoft((url) => {
     const site = `/v1.0/sites/${SITE_ID}`;
     switch (url.pathname) {
       case '/v1.0/sites/contoso.sharepoint.com:/sites/Sales':
@@ -360,7 +360,7 @@ test('the site, its drives, lists, columns, pages and text web parts come back a
 
 test('a client secret that Entra ID refuses fails with a SharePointCredentialsError, and no Graph request is sent', async (t) => {
   const { clock } = fakeClock();
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.post(
       `https://login.microsoftonline.com/${TENANT}/oauth2/v2.0/token`,
       () =>
@@ -396,7 +396,7 @@ test('a client secret that Entra ID refuses fails with a SharePointCredentialsEr
 
 test('a 429 waits the Retry-After on the clock, then the request is sent again', async (t) => {
   let served = 0;
-  using microsoftSide = microsoft(() =>
+  await using microsoftSide = microsoft(() =>
     served++ === 0
       ? refusal(429, 'TooManyRequests', 'Too many requests', {
           'retry-after': '7',
@@ -417,7 +417,7 @@ for (const [status, code] of [
 ] as const) {
   test(`a ${status} waits on the clock, then the request is sent again`, async (t) => {
     let served = 0;
-    using microsoftSide = microsoft(() =>
+    await using microsoftSide = microsoft(() =>
       served++ === 0
         ? refusal(status, code, 'The service is busy')
         : Response.json(sales),
@@ -435,7 +435,7 @@ for (const [status, code] of [
 }
 
 test('a request that Graph answers 429 every time fails with a GraphError after five tries', async (t) => {
-  using microsoftSide = microsoft(() =>
+  await using microsoftSide = microsoft(() =>
     refusal(429, 'TooManyRequests', 'Too many requests', {
       'retry-after': '1',
     }),
@@ -455,7 +455,7 @@ test('a request that Graph answers 429 every time fails with a GraphError after 
 });
 
 test('a Retry-After of more than 60 seconds fails at once, with no wait', async (t) => {
-  using microsoftSide = microsoft(() =>
+  await using microsoftSide = microsoft(() =>
     refusal(429, 'TooManyRequests', 'Too many requests', {
       'retry-after': '61',
     }),
@@ -476,7 +476,7 @@ test('a Retry-After of more than 60 seconds fails at once, with no wait', async 
 test('a Retry-After given as an HTTP date waits until that date on the clock', async (t) => {
   let served = 0;
   // The fake clock's Date.now is 2026-11-17T12:00:00Z.
-  using microsoftSide = microsoft(() =>
+  await using microsoftSide = microsoft(() =>
     served++ === 0
       ? refusal(503, 'serviceNotAvailable', 'The service is busy', {
           'retry-after': 'Tue, 17 Nov 2026 12:00:30 GMT',
@@ -492,7 +492,7 @@ test('a Retry-After given as an HTTP date waits until that date on the clock', a
 });
 
 test('a site that the app holds no grant on fails with a SharePointAccessError that names the site URL', async (t) => {
-  using microsoftSide = microsoft(() =>
+  await using microsoftSide = microsoft(() =>
     refusal(403, 'accessDenied', 'Access denied'),
   );
 
@@ -518,7 +518,7 @@ test('a site that the app holds no grant on fails with a SharePointAccessError t
 });
 
 test('a token that Graph refuses fails with a SharePointAccessError too', async (t) => {
-  using microsoftSide = microsoft(() =>
+  await using microsoftSide = microsoft(() =>
     refusal(401, 'InvalidAuthenticationToken', 'Access token is empty.'),
   );
 
@@ -540,7 +540,7 @@ test('a token that Graph refuses fails with a SharePointAccessError too', async 
 });
 
 test('a site URL that no site is at fails with a SharePointSiteNotFoundError', async (t) => {
-  using microsoftSide = microsoft(() =>
+  await using microsoftSide = microsoft(() =>
     refusal(404, 'itemNotFound', 'Requested site could not be found'),
   );
 
@@ -606,7 +606,7 @@ test('a drive delta follows each nextLink and ends at the deltaLink', async (t) 
   };
   const nextLink = `${GRAPH}/drives/drive-1/root/delta?token=page-2`;
   const deltaLink = `${GRAPH}/drives/drive-1/root/delta?token=after-page-2`;
-  using microsoftSide = microsoft((url) =>
+  await using microsoftSide = microsoft((url) =>
     url.searchParams.get('token') === 'page-2'
       ? Response.json({ value: [gone], '@odata.deltaLink': deltaLink })
       : Response.json({ value: [folder, file], '@odata.nextLink': nextLink }),
@@ -644,7 +644,7 @@ test('a list items delta gives the fields of each item', async (t) => {
     },
   };
   const deltaLink = `${GRAPH}/sites/${SITE_ID}/lists/events/items/delta?token=after`;
-  using microsoftSide = microsoft((url) =>
+  await using microsoftSide = microsoft((url) =>
     url.searchParams.get('$expand') === 'fields'
       ? Response.json({ value: [item], '@odata.deltaLink': deltaLink })
       : refusal(400, 'invalidRequest', 'Fields were not expanded'),
@@ -672,7 +672,7 @@ test('a list items delta follows each nextLink and ends at the deltaLink', async
   const path = `/v1.0/sites/${SITE_ID}/lists/events/items/delta`;
   const nextLink = `${GRAPH}/sites/${SITE_ID}/lists/events/items/delta?$expand=fields&token=page-2`;
   const deltaLink = `${GRAPH}/sites/${SITE_ID}/lists/events/items/delta?token=after-page-2`;
-  using microsoftSide = microsoft((url) => {
+  await using microsoftSide = microsoft((url) => {
     if (url.pathname !== path) return refusal(404, 'itemNotFound', 'Not found');
     if (url.searchParams.get('token') === 'page-2')
       return Response.json({ value: [second], '@odata.deltaLink': deltaLink });
@@ -703,7 +703,7 @@ test('a list read in full gives every item of each page, for a list that Graph s
     fields: { Title: title },
   });
   const second = `${GRAPH}/sites/${SITE_ID}/lists/requests/items?$expand=fields&$skiptoken=2`;
-  using microsoftSide = microsoft((url) => {
+  await using microsoftSide = microsoft((url) => {
     // The hidden accessRequest list answers its item delta so at each try.
     if (url.pathname.endsWith('/delta'))
       return refusal(503, 'serviceNotAvailable', 'Service not available');
@@ -735,7 +735,7 @@ test('a list read in full gives every item of each page, for a list that Graph s
 });
 
 test('a delta link outside Graph is refused before the token is sent anywhere', async (t) => {
-  using microsoftSide = microsoft(
+  await using microsoftSide = microsoft(
     () => refusal(500, 'unexpected', 'Graph was not asked'),
     http.get('https://attacker.example/*', () => Response.json({ value: [] })),
   );
@@ -758,7 +758,7 @@ test('a delta link outside Graph is refused before the token is sent anywhere', 
 });
 
 test('a link from a host that only starts like Graph is refused before any request', async (t) => {
-  using microsoftSide = microsoft(
+  await using microsoftSide = microsoft(
     () => refusal(500, 'unexpected', 'Graph was not asked'),
     http.get('https://graph.microsoft.com.evil.example/*', () =>
       Response.json({ value: [] }),
@@ -789,7 +789,7 @@ test('a nextLink outside Graph in a page of a collection is refused before the r
     createdDateTime: '2024-01-02T03:04:05Z',
     lastModifiedDateTime: '2026-11-16T08:00:00Z',
   };
-  using microsoftSide = microsoft(
+  await using microsoftSide = microsoft(
     (url) =>
       url.pathname === `/v1.0/sites/${SITE_ID}/drives`
         ? Response.json({
@@ -815,7 +815,7 @@ test('a nextLink outside Graph in a page of a collection is refused before the r
 
 test('a delta link that Graph no longer serves fails with a DeltaExpiredError', async (t) => {
   const expired = `${GRAPH}/drives/drive-1/root/delta?token=from-last-year`;
-  using microsoftSide = microsoft((url) =>
+  await using microsoftSide = microsoft((url) =>
     url.searchParams.get('token') === 'from-last-year'
       ? refusal(410, 'resyncRequired', 'Resync required.', {
           location: `${GRAPH}/drives/drive-1/root/delta`,
@@ -837,7 +837,7 @@ test('a delta link that Graph no longer serves fails with a DeltaExpiredError', 
 });
 
 test('a malformed delta link fails with a GraphError that keeps the status and code of Graph', async (t) => {
-  using microsoftSide = microsoft(() =>
+  await using microsoftSide = microsoft(() =>
     refusal(400, 'invalidRequest', 'Invalid request'),
   );
 
@@ -863,7 +863,7 @@ test('a download writes the bytes of the file to the path', async (t) => {
   const bytes = Uint8Array.from({ length: 300_000 }, (_, index) => index % 251);
   const signed =
     'https://contoso.sharepoint.com/sites/Sales/_layouts/15/download.aspx';
-  using microsoftSide = microsoft(
+  await using microsoftSide = microsoft(
     (url) =>
       url.pathname === '/v1.0/drives/drive-1/items/01FILE/content'
         ? new Response(null, {
@@ -892,7 +892,7 @@ test('a download whose connection breaks before the body arrives rejects', async
   const signed =
     'https://contoso.sharepoint.com/sites/Sales/_layouts/15/download.aspx';
   let sent = false;
-  using microsoftSide = microsoft(
+  await using microsoftSide = microsoft(
     (url) =>
       url.pathname === '/v1.0/drives/drive-1/items/01FILE/content'
         ? new Response(null, {
@@ -932,7 +932,7 @@ test('a download whose connection breaks before the body arrives rejects', async
 test('a download whose file cannot be written rejects, so no file passes as stored', async (t) => {
   const signed =
     'https://contoso.sharepoint.com/sites/Sales/_layouts/15/download.aspx';
-  using microsoftSide = microsoft(
+  await using microsoftSide = microsoft(
     (url) =>
       url.pathname === '/v1.0/drives/drive-1/items/01FILE/content'
         ? new Response(null, {
@@ -978,7 +978,7 @@ test('a site version changes when the lastModifiedDateTime of a list changes', a
     webUrl: `${SITE_URL}/SitePages/Home.aspx`,
     lastModifiedDateTime: '2026-11-10T08:00:00Z',
   };
-  using microsoftSide = microsoft((url) => {
+  await using microsoftSide = microsoft((url) => {
     if (url.pathname === '/v1.0/sites/contoso.sharepoint.com:/sites/Sales')
       return Response.json(sales);
     if (url.pathname === `/v1.0/sites/${SITE_ID}/lists`)
@@ -1040,7 +1040,7 @@ test('a site version changes when the lastModifiedDateTime of a page changes, an
     webUrl: `${SITE_URL}/SitePages/Home.aspx`,
     lastModifiedDateTime: '2026-11-10T08:00:00Z',
   };
-  using microsoftSide = microsoft((url) => {
+  await using microsoftSide = microsoft((url) => {
     if (url.pathname === '/v1.0/sites/contoso.sharepoint.com:/sites/Sales')
       return Response.json(sales);
     if (url.pathname === `/v1.0/sites/${SITE_ID}/lists`)
@@ -1099,7 +1099,7 @@ test('the item at a path asks Graph for each name of the path whole, so a name w
     lastModifiedDateTime: '2026-11-15T10:00:00Z',
     eTag: '"{0A1B2C3D-0000-4000-8000-000000000009},1"',
   };
-  using graph = microsoft((url) =>
+  await using graph = microsoft((url) =>
     url.pathname === '/v1.0/drives/drive-1/root:/Bids/R%26D%20%232%20100%25'
       ? Response.json(folder)
       : refusal(404, 'itemNotFound', 'The resource could not be found.'),

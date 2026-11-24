@@ -60,7 +60,7 @@ function crawler() {
 }
 
 test('a crawl publishes its start, each URL it requested with its lane, roles and listing, and its end', async (t) => {
-  using server = new Msw().intercept(site());
+  await using server = new Msw().intercept(site());
   using listened = listen();
 
   for await (const _ of crawler().crawl(['https://site.test/'], null, {
@@ -101,7 +101,7 @@ test('a crawl publishes its start, each URL it requested with its lane, roles an
 });
 
 test("a request publishes how long the crawl waited for its origin's delay", async (t) => {
-  using server = new Msw().intercept(site());
+  await using server = new Msw().intercept(site());
   using listened = listen();
 
   for await (const _ of crawler().crawl(['https://site.test/'], null, {
@@ -124,7 +124,7 @@ test("a request publishes how long the crawl waited for its origin's delay", asy
 });
 
 test("a crawl publishes its consumer's time with each entry as the entry's hand-off", async (t) => {
-  using server = new Msw().intercept(site());
+  await using server = new Msw().intercept(site());
   using listened = listen();
 
   for await (const entry of crawler().crawl(['https://site.test/'], null, {
@@ -147,7 +147,7 @@ test("a crawl publishes its consumer's time with each entry as the entry's hand-
 });
 
 test('an origin that answers 429 publishes its block until its Retry-After', async (t) => {
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site((path) =>
       path === '/a'
         ? new HttpResponse(null, {
@@ -173,7 +173,7 @@ test('an origin that answers 429 publishes its block until its Retry-After', asy
 });
 
 test('a request that gets no answer publishes its error', async (t) => {
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site((path) => (path === '/b' ? HttpResponse.error() : undefined)),
   );
   using listened = listen();
@@ -191,7 +191,7 @@ test('a request that gets no answer publishes its error', async (t) => {
 });
 
 test('two crawls of one read that run at the same time put their own crawl on every message', async (t) => {
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site(),
     http.get('https://other.test/*', ({ request }) =>
       new URL(request.url).pathname === '/robots.txt'

@@ -56,7 +56,7 @@ function google(reply: (request: Request, url: URL) => unknown) {
   return {
     api: new GoogleHealthApi(signedIn()),
     received,
-    [Symbol.dispose]: () => server.cleanup(),
+    [Symbol.asyncDispose]: () => server.cleanup(),
   };
 }
 
@@ -104,7 +104,7 @@ function steps(startTime: string, count: string) {
 }
 
 test('paging follows nextPageToken to its end, even past a page shorter than the page size', async () => {
-  using health = google((_request, url) => {
+  await using health = google((_request, url) => {
     switch (url.searchParams.get('pageToken')) {
       case null:
         return {
@@ -132,7 +132,7 @@ test('paging follows nextPageToken to its end, even past a page shorter than the
 });
 
 test('a data type with no data reads as no points', async () => {
-  using health = google(() => ({}));
+  await using health = google(() => ({}));
 
   assert.deepEqual(
     await Array.fromAsync(
@@ -144,7 +144,7 @@ test('a data type with no data reads as no points', async () => {
 
 test('a 503 on a later page is retried and the read continues from that page', async () => {
   let failures = 1;
-  using health = google((_request, url) => {
+  await using health = google((_request, url) => {
     if (url.searchParams.get('pageToken') !== 'page-2')
       return {
         dataPoints: [steps('2026-10-14T10:00:00Z', '12')],
@@ -187,7 +187,7 @@ test('a retry waits for room under the per-minute quota, as a first try does', a
   };
   // The 300th request of the minute is refused, so its retry is the 301st.
   const sentAt: number[] = [];
-  using health = google(() => {
+  await using health = google(() => {
     sentAt.push(now);
     if (sentAt.length < 300)
       return { dataPoints: [], nextPageToken: `page-${sentAt.length}` };
@@ -213,7 +213,7 @@ test('a 429 waits for Retry-After and then reads on', async () => {
   let failures = 1;
   // Two seconds is longer than the first backoff could be, so only the
   // header can explain the wait.
-  using health = google(() =>
+  await using health = google(() =>
     failures-- > 0
       ? refusal(429, 'RESOURCE_EXHAUSTED', 'Quota exceeded or rate limited.', {
           'retry-after': '2',
@@ -232,7 +232,7 @@ test('a 429 waits for Retry-After and then reads on', async () => {
 
 test('a 429 that outlasts every retry fails as a rate limit naming the call, and a 503 that does fails as itself', async () => {
   {
-    using limited = google(() =>
+    await using limited = google(() =>
       refusal(429, 'RESOURCE_EXHAUSTED', 'Quota exceeded or rate limited.'),
     );
     await assert.rejects(
@@ -245,7 +245,7 @@ test('a 429 that outlasts every retry fails as a rate limit naming the call, and
     );
   }
 
-  using unavailable = google(() =>
+  await using unavailable = google(() =>
     refusal(503, 'UNAVAILABLE', 'The service is currently unavailable.'),
   );
   await assert.rejects(
@@ -257,7 +257,7 @@ test('a 429 that outlasts every retry fails as a rate limit naming the call, and
 // Google Health names its quota in an ErrorInfo detail, so only its own
 // reason makes a 403 a rate limit to send again.
 test('a 403 quota refusal that never clears is sent five times and fails as a rate limit', async () => {
-  using health = google(() =>
+  await using health = google(() =>
     refusal(403, 'RESOURCE_EXHAUSTED', 'Quota exceeded or rate limited.'),
   );
 
@@ -273,7 +273,7 @@ test('a 403 quota refusal that never clears is sent five times and fails as a ra
 });
 
 test('an account with no Google Health profile is refused with a typed error that names the fix', async () => {
-  using health = google(() =>
+  await using health = google(() =>
     refusal(
       400,
       'ACCOUNT_NOT_LINKED',
@@ -307,7 +307,7 @@ const iso = (civil: CivilDate | undefined) =>
 test('a daily rollup over a long range comes back for every day, though each request may cover only the days the type allows', async () => {
   // As live on 2026-10-15: total-calories answers at most 14 days per
   // request, and a request's page must cover its whole range.
-  using health = google(async (request) => {
+  await using health = google(async (request) => {
     const body: {
       range: { start: CivilDate; end: CivilDate };
       pageSize?: number;

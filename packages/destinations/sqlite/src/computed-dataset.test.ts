@@ -981,14 +981,8 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
   files.parser().holding.set('slow.txt', released);
   const controller = new AbortController();
   const watching = files.pipeline.watch({ signal: controller.signal });
-  // A pass that waits on the held read never comes; the bound ends the wait.
-  const pass = () =>
-    Promise.race([
-      watching.next(),
-      sleep(5000, undefined, { ref: false }).then(() =>
-        assert.fail('the pass waited on the held read'),
-      ),
-    ]);
+  // A pass that waits on the held read never comes, and the test fails at its limit.
+  const pass = () => untilAborted(watching.next(), t.signal);
 
   try {
     const first = await pass();

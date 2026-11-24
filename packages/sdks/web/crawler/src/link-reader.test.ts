@@ -45,7 +45,7 @@ async function results(crawl: Crawl) {
 
 test('depth and page limits bound which pages contribute links, while every found page is handed back', async (t) => {
   const requests: string[] = [];
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       const path = new URL(request.url).pathname;
       requests.push(path);
@@ -88,7 +88,7 @@ test('invalid link limits fail on construction', () => {
 
 test('Markdown pages contribute their links on the starting origin', async (t) => {
   const requests: string[] = [];
-  using server = mockWeb(
+  await using server = mockWeb(
     http.get('https://site.test/*', ({ request }) => {
       const path = new URL(request.url).pathname;
       requests.push(path);

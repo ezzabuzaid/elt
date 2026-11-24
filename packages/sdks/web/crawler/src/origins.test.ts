@@ -87,7 +87,7 @@ async function crawled(crawl: Crawl, time: Clock) {
 test('a redirect to another origin whose robots.txt disallows the target is not requested', async (t) => {
   const time = clock(0);
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://*.test/*', ({ request }) => {
       requests.push(request.url);
       const { host, pathname } = new URL(request.url);
@@ -126,7 +126,7 @@ test('a redirect to another origin whose robots.txt disallows the target is not 
 test('a redirect target waits the delay of its own origin, not of the origin that redirected', async (t) => {
   const time = clock(0);
   const started = new Map<string, number>();
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://*.test/*', ({ request }) => {
       started.set(request.url, time.performance.now());
       const { host, pathname } = new URL(request.url);
@@ -175,7 +175,7 @@ test('a redirect target waits the delay of its own origin, not of the origin tha
 test('without a Crawl-delay, two requests to one origin start one second apart', async (t) => {
   const time = clock(0);
   const started: number[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -201,7 +201,7 @@ test('without a Crawl-delay, two requests to one origin start one second apart',
 test('the rules of robots.txt are read again 24 hours after they were read, and not before', async (t) => {
   const time = clock(10 * day);
   const robots: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt') {
@@ -239,7 +239,7 @@ test('the rules of robots.txt are read again 24 hours after they were read, and 
 test('a 503 with Retry-After holds its origin until then, as a 429 does', async (t) => {
   const time = clock(0);
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
@@ -276,7 +276,7 @@ test('a 503 with Retry-After holds its origin until then, as a 429 does', async 
 test('two crawls of one read share the expansion budget of each origin', async (t) => {
   const time = clock(0);
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://*.test/*', ({ request }) => {
       requests.push(request.url);
       const { host, pathname } = new URL(request.url);
@@ -348,7 +348,7 @@ test('two crawls of one read share the expansion budget of each origin', async (
 test('a redirect whose target stays is scheduled as unchanged, and one whose target moves as changed', async (t) => {
   const time = clock(0);
   let target = '/b';
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')

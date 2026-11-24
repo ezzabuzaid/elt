@@ -143,6 +143,6 @@ test('revoke hands the refresh token to Google', async () => {
 
     assert.deepEqual(revoked, ['refresh-token']);
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });

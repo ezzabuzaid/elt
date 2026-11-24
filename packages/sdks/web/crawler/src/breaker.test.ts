@@ -90,7 +90,7 @@ async function crawled(crawl: Crawl) {
 test('a 429 with Retry-After stops requests to its origin, reports the block once and makes the crawl due when the block ends', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     sites(requests, {
       path: 'site.test/b',
       status: 429,
@@ -130,7 +130,7 @@ test('a crawl resumed before its block ends requests nothing there, and one resu
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
   let blocking = true;
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/b', ({ request }) => {
       if (!blocking) return undefined;
       requests.push(where(request.url));
@@ -182,7 +182,7 @@ test('a crawl resumed before its block ends requests nothing there, and one resu
 test('three 403s in a row without Retry-After block their origin for an hour', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
@@ -216,7 +216,7 @@ test('three 403s in a row without Retry-After block their origin for an hour', a
 test('a single 403 is a failure of its page, not a block, so the rest of its origin still downloads', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     sites(requests, { path: 'site.test/a', status: 403 }),
   );
 
@@ -244,7 +244,7 @@ test('a single 403 is a failure of its page, not a block, so the rest of its ori
 test('a 429 with an HTTP-date Retry-After blocks its origin until that date', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     sites(requests, {
       path: 'site.test/a',
       status: 429,
@@ -265,7 +265,7 @@ test('a 429 with an HTTP-date Retry-After blocks its origin until that date', as
 test('a block reached through a redirect stops requests to the origin that answered, and not to the origin that redirected', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('http://site.test/*', ({ request }) => {
       requests.push(request.url);
       const { pathname } = new URL(request.url);
@@ -324,7 +324,7 @@ test('a block reached through a redirect stops requests to the origin that answe
 test('a tolerated 404 opens no breaker, so the rest of its origin still downloads', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       requests.push(where(request.url));
       const { pathname } = new URL(request.url);

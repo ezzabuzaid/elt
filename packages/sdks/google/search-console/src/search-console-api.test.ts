@@ -46,7 +46,7 @@ function google({ reply }: { reply: () => unknown }) {
   return {
     calls,
     requester: signedIn(),
-    [Symbol.dispose]: () => server.cleanup(),
+    [Symbol.asyncDispose]: () => server.cleanup(),
   };
 }
 
@@ -88,7 +88,7 @@ const serverError = () =>
 
 test('a rate limit waits for the Retry-After the server asks for', async () => {
   let served = 0;
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () =>
       served++ === 0
         ? refusal(429, 'rateLimitExceeded', 'Rate Limit Exceeded', {
@@ -109,7 +109,7 @@ test('a rate limit waits for the Retry-After the server asks for', async () => {
 });
 
 test('a Retry-After longer than a minute fails without waiting', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () =>
       refusal(429, 'rateLimitExceeded', 'Rate Limit Exceeded', {
         'retry-after': '120',
@@ -131,7 +131,7 @@ test('a Retry-After longer than a minute fails without waiting', async () => {
 });
 
 test('rate limits that never clear end after five attempts and say so', async () => {
-  using searchConsole = google({ reply: () => quotaExceeded() });
+  await using searchConsole = google({ reply: () => quotaExceeded() });
 
   await assert.rejects(
     new SearchConsoleApi(searchConsole.requester).sites({ clock: globalThis }),
@@ -147,7 +147,7 @@ test('rate limits that never clear end after five attempts and say so', async ()
 
 test('a rate-limit 403 that never clears ends after five attempts as a quota error', async () => {
   for (const reason of ['rateLimitExceeded', 'userRateLimitExceeded']) {
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: () => refusal(403, reason, 'Rate Limit Exceeded', RETRY_NOW),
     });
 
@@ -185,7 +185,7 @@ test('a rate-limit 403 is retried but a scope 403 is not', async () => {
       ),
   ];
   let served = 0;
-  using searchConsole = google({ reply: () => replies[served++]?.() });
+  await using searchConsole = google({ reply: () => replies[served++]?.() });
   const api = new SearchConsoleApi(searchConsole.requester);
 
   assert.deepEqual(await api.sites({ clock: globalThis }), { siteEntry: [] });
@@ -205,7 +205,7 @@ test('a rate-limit 403 is retried but a scope 403 is not', async () => {
 test('a server error is retried, and one that persists passes through as Google sent it', async () => {
   let failing = false;
   let served = 0;
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => {
       served += 1;
       if (failing) return serverError();

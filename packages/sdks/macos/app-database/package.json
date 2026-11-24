@@ -10,13 +10,13 @@
     }
   },
   "dependencies": {
-    "@zukhruf/async": "^0.8.82",
-    "@zukhruf/fs": "^0.8.82",
-    "@zukhruf/sqlite-data-version": "^0.8.82",
-    "@zukhruf/sqlite-snapshot": "^0.8.82"
+    "@zukhruf/async": "^0.8.105",
+    "@zukhruf/fs": "^0.8.105",
+    "@zukhruf/sqlite-data-version": "^0.8.105",
+    "@zukhruf/sqlite-snapshot": "^0.8.105"
   },
   "devDependencies": {
-    "@zukhruf/sqlite-open": "^0.8.82",
-    "@zukhruf/testing": "^0.8.82"
+    "@zukhruf/sqlite-open": "^0.8.105",
+    "@zukhruf/testing": "^0.8.105"
   }
 }

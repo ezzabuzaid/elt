@@ -75,7 +75,7 @@ function instagram(api: (call: Call) => Response) {
       return api(call);
     }),
   );
-  return { calls, [Symbol.dispose]: () => server.cleanup() };
+  return { calls, [Symbol.asyncDispose]: () => server.cleanup() };
 }
 
 // What instagram.com answers a signed-out GraphQL query for stories: its
@@ -87,7 +87,7 @@ const webPage = () =>
 
 test('a GraphQL answer sent as text/javascript, as Instagram sends one to a signed-in session, is read', async () => {
   // The content type a signed-in session got from /graphql/query on 2026-10-15.
-  using _ = instagram(
+  await using _ = instagram(
     () =>
       new HttpResponse(
         JSON.stringify({
@@ -124,7 +124,7 @@ test('a GraphQL answer sent as text/javascript, as Instagram sends one to a sign
 
 // Shapes the live sync met on 2026-10-15 that the first schemas refused.
 test('a reel whose play count Instagram leaves out is read with no count', async () => {
-  using _ = instagram(() =>
+  await using _ = instagram(() =>
     Response.json({
       data: {
         fetch__XDTUserDict: {
@@ -192,7 +192,7 @@ test('a repost and a tagged post whose caption has no date are read', async () =
     },
     carousel_media: null,
   };
-  using _ = instagram(({ name }) =>
+  await using _ = instagram(({ name }) =>
     Response.json(
       name === 'PolarisProfileRepostsTabContentQuery'
         ? {
@@ -228,7 +228,7 @@ test('a repost and a tagged post whose caption has no date are read', async () =
 });
 
 test('a story whose video renditions carry no size is read', async () => {
-  using _ = instagram(() =>
+  await using _ = instagram(() =>
     Response.json({
       data: {
         xdt_api__v1__feed__reels_media__connection: {
@@ -280,7 +280,7 @@ test('a story whose video renditions carry no size is read', async () => {
 });
 
 test('a GraphQL query answered with a web page, as Instagram answers a signed-out session, fails as a lost login', async () => {
-  using _ = instagram(() => webPage());
+  await using _ = instagram(() => webPage());
   const web = await InstagramWeb.open(session);
 
   await assert.rejects(
@@ -302,7 +302,7 @@ test('a post whose first comments page ends with more headload comments gives th
   });
   // The shape of the answer that the probe of 2026-11-15 recorded.
   const cursor = JSON.stringify({ bifilter_token: 'KDcBDQBgAC4AKAAg' });
-  using wire = instagram(({ query }) => {
+  await using wire = instagram(({ query }) => {
     const minId = new URLSearchParams(query).get('min_id');
     return minId === null
       ? Response.json({
@@ -344,7 +344,7 @@ test('a post whose first comments page ends with more headload comments gives th
 });
 
 test('a REST call that Instagram redirects to its login page fails as a lost login', async () => {
-  using _ = instagram(
+  await using _ = instagram(
     ({ path }) =>
       new HttpResponse(null, {
         status: 302,
@@ -362,7 +362,7 @@ test('a REST call that Instagram redirects to its login page fails as a lost log
 });
 
 test('a 429 fails at once as a rate limit, and the request is not sent again', async () => {
-  using wire = instagram(
+  await using wire = instagram(
     () =>
       new HttpResponse(
         '<!DOCTYPE html><html><body>Please wait a few minutes before you try again.</body></html>',
@@ -380,7 +380,7 @@ test('a 429 fails at once as a rate limit, and the request is not sent again', a
 
 test('a 401 that asks to wait a few minutes fails as a rate limit, not a lost login', async () => {
   // Verbatim, as Instagram answered a busy client on 2026-10-15.
-  using _ = instagram(() =>
+  await using _ = instagram(() =>
     Response.json(
       {
         message: 'Please wait a few minutes before you try again.',
@@ -401,7 +401,7 @@ test('a 401 that asks to wait a few minutes fails as a rate limit, not a lost lo
 
 test('a query Instagram refuses fails naming the query', async () => {
   // Verbatim, as Instagram refused a persisted query on 2026-10-15.
-  using _ = instagram(() =>
+  await using _ = instagram(() =>
     Response.json(
       {
         message: 'invalid request',
@@ -432,7 +432,7 @@ test('a query Instagram refuses fails naming the query', async () => {
 });
 
 test('an answer missing a field the SDK reads fails naming the query and the field', async () => {
-  using _ = instagram(() =>
+  await using _ = instagram(() =>
     Response.json({
       data: {
         xdt_api__v1__feed__user_timeline_graphql_connection: {
@@ -529,7 +529,7 @@ test('a grid page whose answer carries field errors on a field the SDK does not 
   // As Instagram answered page 5 of this grid on 2026-10-15, to the web
   // client and to Node alike: every post, and a field error for a location's
   // picture, which the answer leaves null.
-  using _ = instagram(() =>
+  await using _ = instagram(() =>
     Response.json({
       data: {
         xdt_api__v1__feed__user_timeline_graphql_connection: {
@@ -582,7 +582,7 @@ test('a grid page whose answer carries field errors on a field the SDK does not 
 
 test('a grid post whose like and view count flag Instagram sends as null is read', async () => {
   // Instagram sent null for one post of this grid on 2026-10-15.
-  using _ = instagram(() =>
+  await using _ = instagram(() =>
     Response.json({
       data: {
         xdt_api__v1__feed__user_timeline_graphql_connection: {

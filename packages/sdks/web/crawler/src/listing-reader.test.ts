@@ -465,7 +465,7 @@ test('failures name the upstream while the rest of the listing still arrives', a
         ),
     },
   ]) {
-    using upstream = site(
+    await using upstream = site(
       http.get(failure.url, failure.reply),
       http.get(
         index,
@@ -501,7 +501,7 @@ test('cancellation stops requests and preserves the caller reason', async () => 
     const controller = new AbortController();
     const reason = new Error('caller stopped discovery');
     const requests: string[] = [];
-    using upstream = site(
+    await using upstream = site(
       http.get(index, ({ request }) => {
         requests.push(request.url);
         if (stage === 'input') controller.abort(reason);
@@ -533,7 +533,7 @@ test('arbitrary sites retain every candidate path, URL identity and raw hints', 
   for (const origin of ['https://biology.example', 'https://city.example']) {
     const listingUrl = `${origin}/maps/current.xml`;
     const requests: string[] = [];
-    using upstream = site(
+    await using upstream = site(
       http.get(
         `${origin}/`,
         () =>
@@ -608,7 +608,7 @@ test('direct listings support sitemap, text, RSS, Atom, RDF and JSON Feed with p
     '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://feeds.example/"><title>Science</title><link>https://feeds.example/</link></channel><item rdf:about="https://feeds.example/paper"><title>Paper</title><link>../paper</link></item></rdf:RDF>',
     '{"version":"https://jsonfeed.org/version/1.1","title":"Science","items":[{"id":"1","url":"../paper","date_published":"2026-10-20T00:00:00Z"},{"id":"2","content_text":"No URL"}]}',
   ]) {
-    using upstream = site(
+    await using upstream = site(
       http.get('https://feeds.example/start', () =>
         Response.redirect('https://feeds.example/archive/feed'),
       ),
@@ -636,7 +636,7 @@ test('direct listings support sitemap, text, RSS, Atom, RDF and JSON Feed with p
 
 test('autodiscovery follows HTML base and HTTP feed links despite absent robots, then probes a sitemap', async (t) => {
   for (const status of [404, 410]) {
-    using upstream = site(
+    await using upstream = site(
       http.get('https://start.example/blog', () =>
         Response.redirect('https://journal.example/blog/'),
       ),
@@ -706,7 +706,7 @@ test('autodiscovery follows HTML base and HTTP feed links despite absent robots,
     );
   }
   for (const mapExists of [true, false]) {
-    using upstream = site(
+    await using upstream = site(
       http.get(
         'https://bare.example/',
         () =>
@@ -740,7 +740,7 @@ test('autodiscovery follows HTML base and HTTP feed links despite absent robots,
 });
 
 test('an unreadable /sitemap.xml guess, such as a soft 404 page, is ignored', async (t) => {
-  using server = site(
+  await using server = site(
     http.get('https://soft.example/', () => HttpResponse.html('<p>Home</p>')),
     http.get(
       'https://soft.example/robots.txt',
@@ -759,7 +759,7 @@ test('an unreadable /sitemap.xml guess, such as a soft 404 page, is ignored', as
 test('traversal follows nested gzip maps, deduplicates candidates and terminates cycles', async (t) => {
   let indexReads = 0;
   let mapReads = 0;
-  using upstream = site(
+  await using upstream = site(
     http.get('https://maps.example/index.xml', () => {
       // Make a repeated cycle fail promptly rather than leaving a hung test.
       if (++indexReads > 1) return new Response('repeat', { status: 503 });
@@ -945,7 +945,7 @@ test('feeds declared on crawled pages are read completely, and each page is down
 
 test('feeds and sitemaps a starting page declares are read completely, and a listing replaces a link provenance', async (t) => {
   const requests: string[] = [];
-  using server = site(
+  await using server = site(
     http.get('https://site.test/*', ({ request }) => {
       const path = new URL(request.url).pathname;
       requests.push(path);
@@ -1000,7 +1000,7 @@ test('feeds and sitemaps a starting page declares are read completely, and a lis
 });
 
 test('reads Atom, RDF and gzip sitemaps declared in headers, following their pagination and child listings', async (t) => {
-  using server = site(
+  await using server = site(
     http.get('https://site.test/*', ({ request }) => {
       const path = new URL(request.url).pathname;
       if (path === '/')
@@ -1069,7 +1069,7 @@ test('reads Atom, RDF and gzip sitemaps declared in headers, following their pag
 
 test('a URL declared as both a page and a feed is fetched once and serves both roles', async (t) => {
   const requests: string[] = [];
-  using server = site(
+  await using server = site(
     http.get('https://site.test/*', ({ request }) => {
       const path = new URL(request.url).pathname;
       requests.push(path);
@@ -1103,7 +1103,7 @@ test('a URL declared as both a page and a feed is fetched once and serves both r
 
 test('an invalid feed hint still remains an ordinary linked page', async (t) => {
   const requests: string[] = [];
-  using server = site(
+  await using server = site(
     http.get('https://site.test/*', ({ request }) => {
       const path = new URL(request.url).pathname;
       requests.push(path);
@@ -1136,7 +1136,7 @@ test('an invalid feed hint still remains an ordinary linked page', async (t) => 
 
 test('declared remote feeds contribute pages without expanding the remote origin', async (t) => {
   const requests: string[] = [];
-  using server = site(
+  await using server = site(
     http.get('https://site.test/', () =>
       HttpResponse.html(`
       <a href="https://remote.test/wiki/Atom_(standard)">Atom</a>
@@ -1282,7 +1282,7 @@ test('declared sitemap failures and malformed listings are handed out with their
   const bytes = new Uint8Array([0, 255, 1, 128]);
   for (const listing of ['missing', 'malformed']) {
     const requests: string[] = [];
-    using server = site(
+    await using server = site(
       http.get('https://site.test/*', ({ request }) => {
         const path = new URL(request.url).pathname;
         requests.push(path);

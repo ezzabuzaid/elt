@@ -58,7 +58,7 @@ function marketplace(requests: string[]) {
 
 test('a crawl that only reads its starting pages requests none of the pages they link', async (t) => {
   const requests: string[] = [];
-  using server = mockWeb(marketplace(requests));
+  await using server = mockWeb(marketplace(requests));
 
   const handed = await pages(
     new Origins(noRetries, null, globalThis)
@@ -80,7 +80,7 @@ test('a crawl that only reads its starting pages requests none of the pages they
 
 test('each starting page is handed back as a page of its own provenance', async (t) => {
   const requests: string[] = [];
-  using server = mockWeb(marketplace(requests));
+  await using server = mockWeb(marketplace(requests));
 
   const handed = await pages(
     new Origins(noRetries, null, globalThis)

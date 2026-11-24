@@ -63,7 +63,7 @@ async function crawled(crawl: Crawl) {
 const starts = ['https://site.test/sitemap.xml'];
 test('a URL that robots.txt disallows is not requested, and the other pages are handed back', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site(requests, () =>
       HttpResponse.text('User-agent: *\nDisallow: /private/\n'),
     ),
@@ -82,7 +82,7 @@ test('a URL that robots.txt disallows is not requested, and the other pages are 
 
 test("one download of a starting page's robots.txt gives both its rules and its sitemaps", async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site(requests, () =>
       HttpResponse.text(
         'User-agent: *\nDisallow: /private/\nSitemap: https://site.test/sitemap.xml\n',
@@ -107,7 +107,7 @@ test("one download of a starting page's robots.txt gives both its rules and its 
 
 test('a read whose rules an earlier read left downloads robots.txt once for its sitemaps', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site(requests, () =>
       HttpResponse.text(
         'User-agent: *\nDisallow: /private/\nSitemap: https://site.test/sitemap.xml\n',
@@ -141,7 +141,7 @@ test('a read whose rules an earlier read left downloads robots.txt once for its 
 
 test('two crawls of one read on one website read its one robots.txt download', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site(requests, () =>
       HttpResponse.text(
         'User-agent: *\nDisallow: /private/\nSitemap: https://site.test/sitemap.xml\n',
@@ -180,7 +180,7 @@ test('rules for another user agent do not apply, and rules for the client user a
       'User-agent: OtherBot\nDisallow: /a\n\nUser-agent: ExampleBot\nDisallow: /c\n',
     );
   const requests: string[] = [];
-  using server = new Msw().intercept(site(requests, robots));
+  await using server = new Msw().intercept(site(requests, robots));
 
   const result = await crawled(
     crawler({ 'user-agent': 'ExampleBot/1.0' }).crawl(starts, null, {
@@ -194,7 +194,7 @@ test('rules for another user agent do not apply, and rules for the client user a
 
 test('a robots.txt that answers 404 allows every URL', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site(requests, () => new HttpResponse(null, { status: 404 })),
   );
 
@@ -209,7 +209,7 @@ test('a robots.txt that answers 404 allows every URL', async (t) => {
 test('a robots.txt that answers 503 holds its origin until Retry-After, and the crawl ends unfinished', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site(
       requests,
       () =>
@@ -238,7 +238,7 @@ test('a robots.txt that answers 503 holds its origin until Retry-After, and the 
 
 test('a link that robots.txt disallows spends no LinkReader budget', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(pathname);
@@ -271,7 +271,7 @@ test('a link that robots.txt disallows spends no LinkReader budget', async (t) =
 
 test('a start that redirects to another origin spends no LinkReader budget on a link that robots.txt there disallows', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://a.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       requests.push(`a.test${pathname}`);
@@ -314,7 +314,7 @@ test('a start that redirects to another origin spends no LinkReader budget on a 
 });
 
 test('a link that the crawl does not select is dropped, not held, on a website whose robots.txt answers 503', async (t) => {
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://list.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -354,7 +354,7 @@ test('a link that the crawl does not select is dropped, not held, on a website w
 
 test('a link that the crawl does not select asks its website nothing, so a website whose robots.txt answers 503 fails nothing', async (t) => {
   const flaky: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://list.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')
@@ -393,7 +393,7 @@ test('a link that the crawl does not select asks its website nothing, so a websi
 test('a robots.txt that answers 429 holds its origin as a 5xx does, not allowing everything as other 4xx answers do', async (t) => {
   t.mock.timers.enable({ apis: ['Date'], now: 0 });
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     site(
       requests,
       () =>
@@ -415,7 +415,7 @@ test('a robots.txt that answers 429 holds its origin as a 5xx does, not allowing
 
 test('Crawl-delay spaces the requests to its origin', async (t) => {
   const started: number[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const { pathname } = new URL(request.url);
       if (pathname === '/robots.txt')

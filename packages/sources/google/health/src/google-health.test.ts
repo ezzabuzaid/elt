@@ -179,7 +179,7 @@ function google(account: Account) {
       });
     }),
   );
-  return { requests, [Symbol.dispose]: () => server.cleanup() };
+  return { requests, [Symbol.asyncDispose]: () => server.cleanup() };
 }
 
 // Loads every stream the source offers into its own table, overwriting it.
@@ -310,7 +310,7 @@ test('every stream loads into a table of its own, and a type the account has no 
       url: database.connectionString,
     }),
   };
-  using _google = google({ profile });
+  await using _google = google({ profile });
   const source = new GoogleHealthSource({ requester: signedIn() });
   const { streams } = await source.discover();
 
@@ -387,7 +387,7 @@ test('a point deleted or changed upstream is gone or changed after the next run,
     profile,
   };
   {
-    using _google = google(account);
+    await using _google = google(account);
     await load(warehouse);
   }
 
@@ -397,7 +397,7 @@ test('a point deleted or changed upstream is gone or changed after the next run,
   };
   account.devices = [];
   {
-    using _google = google(account);
+    await using _google = google(account);
     await load(warehouse);
   }
 
@@ -449,7 +449,7 @@ test('an Apple Watch point relayed from Apple Health and a Fitbit point at the s
     physicalTime: '2026-10-14T07:05:00Z',
     utcOffset: '10800s',
   };
-  using _google = google({
+  await using _google = google({
     points: {
       'heart-rate': [
         {
@@ -502,7 +502,7 @@ test('a daily type and the rollups start on the day the user joined, and the rol
       url: database.connectionString,
     }),
   };
-  using _google = google({
+  await using _google = google({
     everyDay: {
       'daily-heart-rate-zones': (date) => ({
         dailyHeartRateZones: {
@@ -559,7 +559,7 @@ test('a day that lists one heart rate zone twice loads both entries, each at its
   };
   // The Health API documents caloriesInHeartRateZones only as a list of the
   // calories in each zone; it does not make a zone unique within the list.
-  using _google = google({
+  await using _google = google({
     profile,
     rollups: {
       'calories-in-heart-rate-zone': (date) =>
@@ -601,7 +601,7 @@ test('an account with no Google Health profile fails the run as a config failure
       url: database.connectionString,
     }),
   };
-  using _google = google({
+  await using _google = google({
     profile,
     answer: () =>
       Response.json(
@@ -644,7 +644,7 @@ test('a rate limit that outlasts the retries fails the run as a system failure, 
       url: database.connectionString,
     }),
   };
-  using _google = google({
+  await using _google = google({
     profile,
     answer: () =>
       Response.json(
@@ -702,7 +702,7 @@ test('a measured instant to the microsecond, a session instant to the nanosecond
   const workout = exercise('e1', 'Morning walk');
   // As live on 2026-10-15: an exercise an app wrote, to the nanosecond.
   workout.exercise.interval.startTime = '2026-07-01T15:55:06.688527107Z';
-  using _google = google({
+  await using _google = google({
     points: {
       exercise: [workout],
       steps: [
@@ -809,7 +809,7 @@ test('a stream whose read fails keeps the rows its last run loaded, while the ot
     profile,
   };
   {
-    using _google = google(account);
+    await using _google = google(account);
     await load(warehouse);
   }
 
@@ -837,7 +837,7 @@ test('a stream whose read fails keeps the rows its last run loaded, while the ot
           { status: 400 },
         )
       : undefined;
-  using _google = google(account);
+  await using _google = google(account);
   const error = await load(warehouse).then(
     () => assert.fail('heart rate failed'),
     (failure: unknown) => failure,
@@ -875,7 +875,7 @@ test("each exercise's TCX export loads beside it, and an exercise Google keeps n
     }),
   };
   const tcx = '<?xml version="1.0"?><TrainingCenterDatabase/>';
-  using _google = google({
+  await using _google = google({
     points: {
       exercise: [
         exercise('e2', 'Evening walk'),
@@ -916,7 +916,7 @@ test(
     const devices = [
       { lastSyncTime: '2026-10-15T08:00:00Z', name: 'users/1/pairedDevices/1' },
     ];
-    using wire = google({ devices, profile });
+    await using wire = google({ devices, profile });
     // A clock on which each wait takes a thousandth of its time, so a check
     // comes each 300 ms. The API counts its quota of 300 calls a minute on
     // the time of the process, and each check makes six calls, so the checks
@@ -1038,7 +1038,7 @@ test('a value Google could not compute, which it sends as the string NaN, loads 
     }),
   };
   // As live on 2026-10-15: a night before the baseline exists.
-  using _google = google({
+  await using _google = google({
     points: {
       'daily-sleep-temperature-derivations': [
         {
@@ -1093,7 +1093,7 @@ test('a read Google failed for one stream is asked for again by the next stream 
     ['/dataTypes/sleep/dataPoints', 1],
     ['/users/me/profile', 2],
   ]);
-  using wire = google({
+  await using wire = google({
     answer: (url) => {
       const refusal = [...refusals].find(
         ([end, left]) => left > 0 && url.pathname.endsWith(end),
@@ -1172,7 +1172,7 @@ test('a child list comes from the same read as its parent, though Google answers
     { minutesAsleep: '480', stage: 'REM' },
   ];
   let reads = 0;
-  using _google = google({
+  await using _google = google({
     answer: (url) => {
       if (!url.pathname.endsWith('/dataTypes/sleep/dataPoints'))
         return undefined;

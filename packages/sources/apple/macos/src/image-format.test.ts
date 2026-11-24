@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { createClock } from '@sinonjs/fake-timers';
-import type { Clock } from '@zukhruf/async';
+import { type Clock, untilAborted } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import {
   DisposedError,
@@ -606,12 +606,8 @@ test(
     const worker = Number((await lines.next()).value);
     try {
       // The ready line puts the main thread in that read. A warm-up that hangs
-      // never says it and blocks the main thread just the same, so the wait
-      // ends after a cold compile's 195 s and the kill goes ahead.
-      await Promise.race([
-        lines.next(),
-        setTimeout(200_000, undefined, { ref: false }),
-      ]);
+      // never says it, and the test fails at its limit.
+      await untilAborted(lines.next(), t.signal);
       // A warm-up that failed already ended the worker, which would prove nothing.
       process.kill(worker, 0);
       parent.kill('SIGKILL');

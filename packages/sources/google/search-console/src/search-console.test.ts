@@ -127,7 +127,7 @@ function google({
       waiting.add({ done, resolve });
       return promise;
     },
-    [Symbol.dispose]: () => server.cleanup(),
+    [Symbol.asyncDispose]: () => server.cleanup(),
   };
 }
 
@@ -198,23 +198,25 @@ const reads = ({ calls }: Google) =>
 
 /**
  * Half a second of a watch whose next pass was asked for, cut short by the
- * first read: what it probed and what it read meanwhile. A watch that reloads
- * an unchanged property reads within it.
+ * first read: asserts that the watch read nothing in it, and gives what it
+ * probed meanwhile. A watch that reloads an unchanged property reads within it.
  */
 async function quietly(searchConsole: Google) {
   const { calls, until } = searchConsole;
   const probed = calls.filter(isProbe);
   const read = reads(searchConsole).length;
-  await Promise.race([
-    sleep(500),
+  const outcome = await Promise.race([
+    sleep(500, 'quiet'),
     until(
       (received) => received.filter((call) => !isProbe(call)).length > read,
     ),
   ]);
-  return {
-    probed: calls.filter(isProbe).slice(probed.length),
-    read: reads(searchConsole).slice(read),
-  };
+  assert.equal(
+    outcome,
+    'quiet',
+    `the watch read ${JSON.stringify(reads(searchConsole).slice(read))}`,
+  );
+  return calls.filter(isProbe).slice(probed.length);
 }
 
 // A sitemaps.list entry as the API returns it live.
@@ -315,7 +317,7 @@ async function inspectionRows({ sql }: Warehouse, table = 'urlInspection') {
 }
 
 test('Search Console maps positional analytics keys onto its dimensions', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => ({
       metadata: { firstIncompleteDate: day(0) },
       rows: [
@@ -396,7 +398,7 @@ test('Search Console maps positional analytics keys onto its dimensions', async 
 test('a restated day replaces the loaded row, and the next read starts at the last settled day', async () => {
   let clicks = 12;
   let firstIncompleteDate = day(0);
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => ({
       metadata: { firstIncompleteDate },
       rows: [
@@ -502,7 +504,7 @@ test('a re-read deletes the query rows and days Google stopped reporting, and ke
     [day(-2), 'dropped'],
     [day(-1), 'emptied'],
   ];
-  using searchConsole = google({
+  await using searchConsole = google({
     // Like Google, it answers only the days the request asks for.
     reply: ({ body }) => ({
       metadata: { firstIncompleteDate },
@@ -594,7 +596,7 @@ test('a re-read deletes the query rows and days Google stopped reporting, and ke
 
 test('a re-read day keeps its unchanged query and page rows beside the ones that changed', async () => {
   let restated = 1;
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => ({
       metadata: { firstIncompleteDate: day(-1) },
       rows: [
@@ -683,7 +685,7 @@ test('a re-read day keeps its unchanged query and page rows beside the ones that
 
 test('a search type whose re-read day reports nothing loses that day’s total, while the other types keep theirs', async () => {
   let discover = [day(-2), day(-1)];
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: ({ body }) => ({
       metadata: { firstIncompleteDate: day(-1) },
       rows:
@@ -764,7 +766,7 @@ test('a search type whose re-read day reports nothing loses that day’s total, 
 });
 
 test('a fractional click count is refused rather than stored', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => ({
       rows: [
         { clicks: 1.5, ctr: 0.5, impressions: 3, keys: [day(-1)], position: 2 },
@@ -803,7 +805,7 @@ test('a fractional click count is refused rather than stored', async () => {
 });
 
 test('an analytics row whose keys do not match the requested dimensions fails the read rather than vanish', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => ({
       rows: [
         { clicks: 1, ctr: 0.5, impressions: 2, keys: [day(-1)], position: 2 },
@@ -849,7 +851,7 @@ test('analytics pagination follows startRow until a short page', async () => {
       keys: [days[(start + index) % days.length], `q-${start + index}`],
       position: 1,
     }));
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: ({ body }) => {
       const rowLimit = Number(body.rowLimit);
       return {
@@ -902,7 +904,7 @@ test('analytics pagination follows startRow until a short page', async () => {
 });
 
 test('sitemaps convert int64 text and second-precision times', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => ({
       sitemap: [
         {
@@ -986,7 +988,7 @@ test('sitemaps convert int64 text and second-precision times', async () => {
 
 test('a sitemap that reports one content type twice loads both entries, keyed by their place in its list', async () => {
   // The Sitemaps API does not document type as unique within contents[].
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => ({
       sitemap: [
         {
@@ -1063,7 +1065,7 @@ test('a sitemap that reports one content type twice loads both entries, keyed by
 test('a sitemaps list Google failed for one stream is asked for again by the next stream of the read', async () => {
   // Five 500s use up the policy's five tries for the first stream's call.
   let failures = 5;
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => {
       if (failures > 0) {
         failures -= 1;
@@ -1139,7 +1141,7 @@ test('a sitemaps list Google failed for one stream is asked for again by the nex
 });
 
 test('inspection covers every sitemap and search URL once, shared by all three streams', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: ({ path }) => {
       if (path.endsWith('/sitemaps'))
         return { sitemap: [sitemapEntry('https://example.com/sitemap.xml')] };
@@ -1260,7 +1262,7 @@ test(
   { timeout: 10_000 },
   async () => {
     let clicks = 12;
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: () => ({
         metadata: { firstIncompleteDate: day(0) },
         rows: [
@@ -1311,9 +1313,8 @@ test(
       // Asked for its next pass, the watch probes the unchanged property and
       // reads nothing.
       const next = watching.next();
-      const { probed, read } = await quietly(searchConsole);
+      const probed = await quietly(searchConsole);
       assert.ok(probed.length >= 3, `probed ${probed.length} times`);
-      assert.deepEqual(read, []);
       clicks = 19;
       assert.deepEqual((await next).value?.outcomes, [
         { copy, count: 1, deleted: 0, failures: [], cancelled: false },
@@ -1329,7 +1330,7 @@ test(
 );
 
 test('a feed report keeps an absent position as unknown, not as rank one', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: ({ body }) =>
       // Google's Discover and Google News responses omit position on every
       // row, including zero-traffic rows.
@@ -1412,7 +1413,7 @@ test('the country breakdown is a trailing snapshot, diffed rather than resumed b
       position: 7,
     },
   ];
-  using searchConsole = google({ reply: () => ({ rows }) });
+  await using searchConsole = google({ reply: () => ({ rows }) });
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const warehouse = {
@@ -1534,7 +1535,7 @@ test('two properties share tables through one source without deleting each other
     [A]: ['https://a.example/sitemap.xml'],
     [B]: ['https://b.example/sitemap.xml'],
   };
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: ({ path, site, body }) => {
       if (path.endsWith('/sitemaps'))
         return { sitemap: sitemaps[String(site)]?.map(sitemapEntry) };
@@ -1626,7 +1627,7 @@ test('two properties share tables through one source without deleting each other
 });
 
 test('an unverified property is not offered as a readable site', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: () => ({
       siteEntry: [
         { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:owned.example' },
@@ -1694,7 +1695,7 @@ test(
   { timeout: 5000 },
   async () => {
     let loaded = false;
-    using searchConsole = google({
+    await using searchConsole = google({
       // Every probe and the read of the first pass succeed; from then on
       // Google asks the watcher to come back in 45 seconds.
       reply: () =>
@@ -1771,7 +1772,7 @@ test(
   async () => {
     let clicks = 1;
     let probes = 0;
-    using searchConsole = google({
+    await using searchConsole = google({
       // The second probe is asked to come back in 45 seconds.
       reply: (call) =>
         isProbe(call) && ++probes === 2
@@ -1877,7 +1878,7 @@ test(
   async () => {
     let probes = 0;
     const hung: AbortSignal[] = [];
-    using searchConsole = google({
+    await using searchConsole = google({
       // The first probe and the read are answered; the next probe never is.
       reply: (call, signal) =>
         isProbe(call) && probes++ > 0
@@ -1947,7 +1948,7 @@ test(
   'aborting a watch while it waits for its next poll ends it at once',
   { timeout: 5000 },
   async () => {
-    using searchConsole = google({ reply: () => ({ rows: [] }) });
+    await using searchConsole = google({ reply: () => ({ rows: [] }) });
     await using database = await databases.database();
     const warehouse = {
       history: new PostgresSyncHistory({ url: database.connectionString }),
@@ -1995,7 +1996,7 @@ test('an incremental sites copy deletes a property that is no longer listed', as
     { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:a.example' },
     { permissionLevel: 'siteOwner', siteUrl: 'sc-domain:b.example' },
   ];
-  using searchConsole = google({ reply: () => ({ siteEntry }) });
+  await using searchConsole = google({ reply: () => ({ siteEntry }) });
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
   const warehouse = {
@@ -2054,7 +2055,7 @@ test('an incremental sites copy deletes a property that is no longer listed', as
 test('one source loads every property; a newly listed one backfills while the others resume', async () => {
   const A = 'sc-domain:a.example';
   const B = 'sc-domain:b.example';
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: ({ path, site, body }) => {
       if (path.endsWith('/sitemaps')) return {};
       if (path.endsWith('index:inspect'))
@@ -2172,7 +2173,7 @@ test('a property without permission is reported by name while the others load an
   const A = 'sc-domain:a.example';
   const B = 'sc-domain:b.example';
   let denied = true;
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: ({ site }) =>
       denied && site === B
         ? forbidden(B)
@@ -2285,7 +2286,7 @@ test('a property Google refuses to the user is a config failure, and a quota ref
       refusal(403, 'rateLimitExceeded', 'Rate Limit Exceeded', RETRY_NOW),
     'sc-domain:broken.example': serverError,
   };
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: ({ site }) => refusals[String(site)]?.(),
   });
   await using database = await databases.database();
@@ -2426,7 +2427,7 @@ test('a grant Google no longer refreshes is a config failure, asked once', async
     assert.equal(refreshes, 1);
     assert.deepEqual(calls, []);
   } finally {
-    server.cleanup();
+    await server.cleanup();
   }
 });
 
@@ -2437,7 +2438,7 @@ test(
     const A = 'sc-domain:a.example';
     const B = 'sc-domain:b.example';
     const clicks: Record<string, number> = { [A]: 3, [B]: 7 };
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: ({ site }) => ({
         metadata: { firstIncompleteDate: day(0) },
         rows: [
@@ -2497,13 +2498,12 @@ test(
       // Asked for its next pass, the watch probes both unchanged properties
       // and reads nothing.
       const next = watching.next();
-      const { probed, read } = await quietly(searchConsole);
+      const probed = await quietly(searchConsole);
       assert.deepEqual(
         [...new Set(probed.map(({ site }) => site))].toSorted(),
         [A, B],
         'every property is probed',
       );
-      assert.deepEqual(read, []);
       clicks[B] = 9;
       assert.deepEqual((await next).value?.outcomes, [
         { copy, count: 2, deleted: 0, failures: [], cancelled: false },
@@ -2536,7 +2536,7 @@ test(
     const B = 'sc-domain:b.example';
     const clicks: Record<string, number> = { [A]: 3, [B]: 7 };
     let denied = true;
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: ({ site }) =>
         denied && site === B
           ? forbidden(B)
@@ -2663,7 +2663,7 @@ test(
 );
 
 test('sitemaps in every format feed the inspection universe', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: property({ sitemaps: ['https://example.com/index.xml'] }),
     files: {
       'https://example.com/index.xml':
@@ -2756,7 +2756,7 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
     ],
   ];
   for (const [label, broken, reason] of cases) {
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: property({
         pages: ['https://example.com/p'],
         sitemaps: ['https://example.com/s.xml', 'https://example.com/good.xml'],
@@ -2836,7 +2836,7 @@ test(
   'watching with a poll longer than a Node timer can hold sleeps without overflowing it',
   { timeout: 10_000 },
   async () => {
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: () => ({
         siteEntry: [{ permissionLevel: 'siteOwner', siteUrl: SITE }],
       }),
@@ -2887,7 +2887,7 @@ test(
 );
 
 test('an RSS item without a link lists no page', async () => {
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: property({ sitemaps: ['https://example.com/feed.rss'] }),
     files: {
       'https://example.com/feed.rss':
@@ -2957,7 +2957,7 @@ test('a pass that cannot read a sitemap deletes no URL it may list, and the next
   };
   // The host builds a source for every run.
   const pass = async (sitemap: string | number, pages: string[]) => {
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: property({ sitemaps: [SITEMAP], pages }),
       files: { [SITEMAP]: sitemap },
     });
@@ -2998,7 +2998,7 @@ test('a pass that cannot read a sitemap deletes no URL it may list, and the next
 
 test('rolling refresh inspects new URLs first, then the stalest, and skips fresh ones', async (t) => {
   const pages = ['https://example.com/a', 'https://example.com/b'];
-  using searchConsole = google({ reply: property({ pages }) });
+  await using searchConsole = google({ reply: property({ pages }) });
   await using database = await databases.database();
   const warehouse = {
     history: new PostgresSyncHistory({ url: database.connectionString }),
@@ -3047,7 +3047,7 @@ test('rolling refresh inspects new URLs first, then the stalest, and skips fresh
 
 test('the daily quota stops inspection cleanly, and no inspection stream makes a call before the quota resets', async () => {
   let allowed = 2;
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: property({
       pages: ['a', 'b', 'c', 'd'].map((page) => `https://example.com/${page}`),
       inspect: () => (allowed-- > 0 ? { verdict: 'PASS' } : quotaExceeded()),
@@ -3098,7 +3098,7 @@ test('with inspections in flight the daily quota keeps what loaded, and a source
     (page) => `https://example.com/${page}`,
   );
   let allowed = 2;
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: property({
       pages,
       inspect: () => (allowed-- > 0 ? { verdict: 'PASS' } : quotaExceeded()),
@@ -3173,7 +3173,7 @@ test(
   async () => {
     const pages = ['https://example.com/a', 'https://example.com/b'];
     let referrers = 2;
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: property({
         pages,
         inspect: (url) => ({
@@ -3255,7 +3255,7 @@ test('the three inspection streams read together inspect each URL once', async (
       referringUrls: [`${url}/r0`],
     }),
   });
-  using searchConsole = google({
+  await using searchConsole = google({
     // Slow inspections keep one stream's calls in flight while the others plan.
     reply: async (call) => {
       if (call.path.endsWith('index:inspect')) await sleep(20);
@@ -3314,7 +3314,7 @@ test('inspections run concurrently, and a URL Google rejects becomes a row', asy
         ? refusal(400, 'badRequest', 'Invalid URL')
         : { verdict: 'PASS' },
   });
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: async (call) => {
       if (!call.path.endsWith('index:inspect')) return answer(call);
       inFlight++;
@@ -3371,7 +3371,7 @@ test('inspections run concurrently, and a URL Google rejects becomes a row', asy
 test('a server error during inspection fails the run and keeps none of its inspections', async () => {
   const pages = Array.from({ length: 7 }, (_, n) => `https://example.com/${n}`);
   let failing = true;
-  using searchConsole = google({
+  await using searchConsole = google({
     reply: property({
       pages,
       inspect: (url) =>
@@ -3441,7 +3441,7 @@ test(
   async () => {
     let clicks = 1;
     const answer = property({ pages: ['https://example.com/a'] });
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: (call) =>
         String(call.body.dimensions) === 'date'
           ? {
@@ -3549,7 +3549,7 @@ test(
   async () => {
     const listed = ['https://example.com/a.xml'];
     let clicks = 1;
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: ({ path }) => {
         if (path.endsWith('/v3/sites'))
           return {
@@ -3656,7 +3656,7 @@ test(
   async () => {
     let denied = true;
     const answer = property({ pages: ['https://example.com/a'] });
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: (call) => (denied ? forbidden(SITE) : answer(call)),
     });
     const source = new SearchConsoleSource({
@@ -3738,7 +3738,7 @@ test(
   'under a watch, an inspection that falls due sooner than the next poll is made when it falls due',
   { timeout: 15_000 },
   async () => {
-    using searchConsole = google({
+    await using searchConsole = google({
       reply: property({ pages: ['https://example.com/a'] }),
     });
     const source = new SearchConsoleSource({

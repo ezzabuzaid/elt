@@ -54,7 +54,7 @@ async function results(crawl: Crawl) {
 test('crawls links itself and preserves URL identity, provenance and Got responses', async (t) => {
   const requests: string[] = [];
   const responses = new Map<string, Response>();
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -132,7 +132,7 @@ test('crawls links itself and preserves URL identity, provenance and Got respons
 
 test('each found URL is requested once for each role it adds, and a redirect is a request of its own, so a target that two URLs reach downloads once', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -188,7 +188,7 @@ test('each found URL is requested once for each role it adds, and a redirect is 
 test('failures are handed out with their URL while independent pages continue, and a new crawl retries', async (t) => {
   let broken = true;
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -238,7 +238,7 @@ test('failures are handed out with their URL while independent pages continue, a
 });
 
 test('a failed starting URL is handed out as a failure', async (t) => {
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     noRobots,
     http.get(
       'https://site.test/missing',
@@ -264,7 +264,7 @@ test('a failed starting URL is handed out as a failure', async (t) => {
 
 test('consumer backpressure and early break stop fetching, and crawls remain isolated', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -319,7 +319,7 @@ test(
   async (t) => {
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
-    using server = new Msw().intercept(
+    await using server = new Msw().intercept(
       noRobots,
       http.get('https://site.test/slow', async () => {
         entered.resolve();
@@ -384,7 +384,7 @@ test('validates readers and starting URLs and accepts an empty crawl', async (t)
 
 test('include hands back only matching pages and never requests non-matching pages beyond the link limits', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -419,7 +419,7 @@ test('include hands back only matching pages and never requests non-matching pag
 });
 
 test('Got hooks see options.context.page only for handed-back pages that no reader reads as a document', async (t) => {
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/')
@@ -477,7 +477,7 @@ test('Got hooks see options.context.page only for handed-back pages that no read
 
 test('a snapshot resumes the crawl without repeating finished work and hands out the last entry again', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     noRobots,
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
@@ -524,7 +524,7 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
 });
 
 test('a failure is marked as a page only for a page include matches, not for a starting URL or a declared listing', async (t) => {
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/')
@@ -595,7 +595,7 @@ function progressCrawler(origins: Origins) {
 
 test('every downloaded URL that is not handed back as a page or failure is handed out once as progress', async (t) => {
   const requests: string[] = [];
-  using server = progressSite(requests);
+  await using server = progressSite(requests);
   const entries = await Array.fromAsync(
     progressCrawler(new Origins(noRetries, null, globalThis)).crawl(
       ['https://site.test/'],
@@ -628,7 +628,7 @@ test('every downloaded URL that is not handed back as a page or failure is hande
 
 test('a snapshot taken at a progress entry resumes without downloading the documents read before it', async (t) => {
   const requests: string[] = [];
-  using server = progressSite(requests);
+  await using server = progressSite(requests);
   const options: CrawlOptions = {
     signal: t.signal,
     include: [new URLPattern({ pathname: '/keep/*' })],
@@ -675,7 +675,7 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
 
 test('a page labeled Latin-1 in its Content-Type is handed back, and every reader reads it by that charset', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -730,7 +730,7 @@ test('a page labeled Latin-1 in its Content-Type is handed back, and every reade
 
 test('a page labeled only by its <meta charset> is read by that charset', async (t) => {
   const requests: string[] = [];
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       requests.push(path);
@@ -761,7 +761,7 @@ test('a page labeled only by its <meta charset> is read by that charset', async 
 });
 
 test('an unlabeled page is read as UTF-8, and one that is not valid UTF-8 is still handed back with its links followed', async (t) => {
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/')
@@ -814,7 +814,7 @@ test('a reader that throws on a response does not stop the readers after it or d
       throw new Error('The reader broke');
     }
   }
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/') return HttpResponse.html('<a href="/page">Page</a>');
@@ -859,7 +859,7 @@ test('a reader that throws on a response does not stop the readers after it or d
 });
 
 test('a declared listing that one reader cannot read keeps what the other readers find in it', async (t) => {
-  using server = new Msw().intercept(
+  await using server = new Msw().intercept(
     http.get('https://site.test/*', ({ request }) => {
       const path = pathOf(request.url);
       if (path === '/')

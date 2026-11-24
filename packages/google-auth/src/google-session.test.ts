@@ -246,15 +246,13 @@ function googleAccount() {
       );
       await fetch(redirect);
     },
-    [Symbol.dispose]() {
-      server.cleanup();
-    },
+    [Symbol.asyncDispose]: () => server.cleanup(),
   };
 }
 
 test('a session asks Google for a token with only its own scopes, so Health answers on a grant that also holds Drive, Gmail and Search Console', async () => {
   await using scratch = await new TemporaryFiles().directory('gsc-narrow-');
-  using account = googleAccount();
+  await using account = googleAccount();
   const options = {
     ...client,
     directory: scratch.path,
@@ -296,7 +294,7 @@ test('a failed browser opener rejects consent and closes the callback listener',
 
 test('the first session runs consent and stores the grant; the next reuses it', async () => {
   await using scratch = await new TemporaryFiles().directory('gsc-session-');
-  using account = googleAccount();
+  await using account = googleAccount();
   const options = {
     ...client,
     directory: scratch.path,
@@ -330,7 +328,7 @@ test('the first session runs consent and stores the grant; the next reuses it', 
 test('a grant that lacks a newly needed scope asks for consent again', async () => {
   const analytics = 'https://www.googleapis.com/auth/analytics.readonly';
   await using scratch = await new TemporaryFiles().directory('gsc-upgrade-');
-  using account = googleAccount();
+  await using account = googleAccount();
   const options = {
     ...client,
     directory: scratch.path,
@@ -355,7 +353,7 @@ test('a grant that lacks a newly needed scope asks for consent again', async () 
 
 test('a grant Google no longer honors is replaced through consent', async () => {
   await using scratch = await new TemporaryFiles().directory('gsc-revoked-');
-  using account = googleAccount();
+  await using account = googleAccount();
   const options = {
     ...client,
     directory: scratch.path,
@@ -374,7 +372,7 @@ test('a grant Google no longer honors is replaced through consent', async () => 
 
 test('sessions with different scopes reuse one grant without consent, and each calls its API with its own token', async () => {
   await using scratch = await new TemporaryFiles().directory('gsc-shared-');
-  using account = googleAccount();
+  await using account = googleAccount();
   const options = {
     ...client,
     directory: scratch.path,
@@ -400,7 +398,7 @@ test('sessions with different scopes reuse one grant without consent, and each c
 
 test('a refresh token Google rotates is kept, so the next session refreshes without consent', async () => {
   await using scratch = await new TemporaryFiles().directory('gsc-rotate-');
-  using account = googleAccount();
+  await using account = googleAccount();
   const options = {
     ...client,
     directory: scratch.path,

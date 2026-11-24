@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { spawnSync } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
+import { promisify } from 'node:util';
 
 import { type Check, Gauge, Latch, untilAborted } from '@zukhruf/async';
 import { waitFor } from '@zukhruf/testing/async';
@@ -2638,19 +2639,20 @@ if (process.env.SCENARIO === 'early-timers')
   await new Promise((resolve) => setTimeout(resolve, 500));
 else now -= 3_600_000;
 monotonic += 10_000;
-const loaded = await Promise.race([
-  retried,
-  new Promise((resolve) => setTimeout(() => resolve('late'), 2000).unref()),
-]);
+const loaded = await retried;
 controller.abort();
 await watching.return(undefined);
-console.log(JSON.stringify({ failed: failures(failed), early, loaded: loaded === 'late' ? loaded : failures(loaded) }));
+console.log(JSON.stringify({ failed: failures(failed), early, loaded: failures(loaded) }));
 `;
 
 // Runs retryWatch in a process of its own, as a loop that starves the
-// timers of its process would starve the test's.
-function watchRetry(scenario: 'early-timers' | 'clock-set-back') {
-  const run = spawnSync(
+// timers of its process would starve the test's. The signal of the test ends
+// the process at the test's limit.
+async function watchRetry(
+  scenario: 'early-timers' | 'clock-set-back',
+  signal: AbortSignal,
+) {
+  const { stdout } = await promisify(execFile)(
     process.execPath,
     ['--input-type=module', '-e', retryWatch],
     {
@@ -2660,27 +2662,22 @@ function watchRetry(scenario: 'early-timers' | 'clock-set-back') {
         SCENARIO: scenario,
       },
       encoding: 'utf8',
-      timeout: 10_000,
+      signal,
     },
   );
-  assert.equal(
-    run.status,
-    0,
-    `${run.signal ?? ''} ${run.error?.message ?? ''}\n${run.stderr.slice(0, 1000)}`,
-  );
-  return JSON.parse(run.stdout);
+  return JSON.parse(stdout);
 }
 
-test('a watch whose stream failed for a system reason keeps yielding to the process while its timers fire before the retry is due, and loads the stream again once it is', () => {
-  assert.deepEqual(watchRetry('early-timers'), {
+test('a watch whose stream failed for a system reason keeps yielding to the process while its timers fire before the retry is due, and loads the stream again once it is', async (t) => {
+  assert.deepEqual(await watchRetry('early-timers', t.signal), {
     failed: [['system']],
     early: false,
     loaded: [[]],
   });
 });
 
-test('a wall clock set back an hour while a stream waits for its retry does not delay the retry: it is due on the monotonic clock', () => {
-  assert.deepEqual(watchRetry('clock-set-back'), {
+test('a wall clock set back an hour while a stream waits for its retry does not delay the retry: it is due on the monotonic clock', async (t) => {
+  assert.deepEqual(await watchRetry('clock-set-back', t.signal), {
     failed: [['system']],
     early: false,
     loaded: [[]],

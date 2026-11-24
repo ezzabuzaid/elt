@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { type TestContext, test } from 'node:test';
+import { setImmediate } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
@@ -579,7 +580,7 @@ function microsoft(world: World) {
         }),
         sites,
       }),
-    [Symbol.dispose]: () => server.cleanup(),
+    [Symbol.asyncDispose]: () => server.cleanup(),
   };
 }
 
@@ -719,7 +720,7 @@ async function wordDocument(markdown: string): Promise<Uint8Array> {
 
 test('a first run loads every stream of the site, with Graph values in the forms elt keeps', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
-  using graph = microsoft({ sites: [salesSite()], pageSize: 200 });
+  await using graph = microsoft({ sites: [salesSite()], pageSize: 200 });
 
   await (await warehouse(graph.source(), dir.path)).run();
 
@@ -841,7 +842,7 @@ test('a first run loads every stream of the site, with Graph values in the forms
 
 test('a second run with no change in SharePoint writes nothing', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
-  using graph = microsoft({ sites: [salesSite()], pageSize: 200 });
+  await using graph = microsoft({ sites: [salesSite()], pageSize: 200 });
   const pipeline = await warehouse(graph.source(), dir.path);
   await pipeline.run();
 
@@ -862,7 +863,7 @@ test('a second run with no change in SharePoint writes nothing', async () => {
 test('a change that the delta reports updates its row, and a deleted file and a deleted list item remove theirs', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
   const sales = salesSite();
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
   const pipeline = await warehouse(graph.source(), dir.path);
   await pipeline.run();
   const [documents] = sales.drives;
@@ -904,7 +905,7 @@ test('a delta link that Graph no longer serves reloads the site, and a reload th
       driveFile('b!documents', `file-${name}`, `${name}.docx`),
     );
   const world: World = { sites: [sales], pageSize: 2 };
-  using graph = microsoft(world);
+  await using graph = microsoft(world);
   const pipeline = await warehouse(graph.source(), dir.path);
   await pipeline.run();
   documents.feed.remove('file-a');
@@ -946,7 +947,7 @@ test('a first load that fails resumes at the next link it saved, without reading
       driveFile('b!documents', `file-${name}`, `${name}.docx`),
     );
   const world: World = { sites: [sales], pageSize: 2 };
-  using graph = microsoft(world);
+  await using graph = microsoft(world);
   const pipeline = await warehouse(graph.source(), dir.path);
   world.intercept = (url) =>
     url.searchParams.get('token')?.endsWith('.4') === true
@@ -1006,7 +1007,7 @@ test('a stored Word document gets its text and a damaged one an error, and no ph
   );
   sales.contents.set('file-broken', Buffer.from('not a zip archive'));
   sales.contents.set('file-photo', Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
 
   await (await warehouse(graph.source(), dir.path, { documents: true })).run();
 
@@ -1045,7 +1046,7 @@ test('a file deleted after the delta listed it loads without its content', async
   assert.ok(documents !== undefined);
   // Its content answers 404: no content is stubbed for it.
   documents.feed.put(driveFile('b!documents', 'file-gone', 'Gone.docx'));
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
 
   await (await warehouse(graph.source(), dir.path, { documents: true })).run();
 
@@ -1066,7 +1067,10 @@ test('a site that refuses the app fails only its own partition, as a config fail
     id: 'contoso.sharepoint.com,1,2',
     refusal: 403,
   };
-  using graph = microsoft({ sites: [salesSite(), marketing], pageSize: 200 });
+  await using graph = microsoft({
+    sites: [salesSite(), marketing],
+    pageSize: 200,
+  });
 
   const failed = await failedRun(
     (await warehouse(graph.source([MARKETING, SALES]), dir.path)).run(),
@@ -1088,7 +1092,7 @@ test('a site that refuses the app fails only its own partition, as a config fail
 
 test('a site URL where SharePoint has no site fails only its own partition, as a config failure', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
-  using graph = microsoft({ sites: [salesSite()], pageSize: 200 });
+  await using graph = microsoft({ sites: [salesSite()], pageSize: 200 });
 
   const failed = await failedRun(
     (await warehouse(graph.source([MARKETING, SALES]), dir.path)).run(),
@@ -1118,7 +1122,10 @@ test('a site that Graph fails with 500 fails only its own partition, as a system
     id: 'contoso.sharepoint.com,1,2',
     refusal: 500,
   };
-  using graph = microsoft({ sites: [salesSite(), marketing], pageSize: 200 });
+  await using graph = microsoft({
+    sites: [salesSite(), marketing],
+    pageSize: 200,
+  });
 
   const failed = await failedRun(
     (await warehouse(graph.source([MARKETING, SALES]), dir.path)).run(),
@@ -1141,7 +1148,7 @@ test('a site that Graph fails with 500 fails only its own partition, as a system
 
 test('a client secret that Entra ID refuses fails every stream as a config failure', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
-  using graph = microsoft({
+  await using graph = microsoft({
     sites: [salesSite()],
     pageSize: 200,
     refusesSecret: true,
@@ -1162,7 +1169,7 @@ test('a client secret that Entra ID refuses fails every stream as a config failu
 test('a change to the version of a site wakes the streams of a watch', async (t: TestContext) => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
   const sales = salesSite();
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
   const clock = createClock(Date.UTC(2026, 10, 17, 9, 0));
   const controller = new AbortController();
   const watch = (await warehouse(graph.source(), dir.path, { clock })).watch({
@@ -1180,8 +1187,7 @@ test('a change to the version of a site wakes the streams of a watch', async (t:
     // The watch has armed its next check once a timer of the clock waits.
     await untilAborted(
       (async () => {
-        while (clock.countTimers() === 0)
-          await new Promise((resolve) => setImmediate(resolve));
+        while (clock.countTimers() === 0) await setImmediate();
       })(),
       t.signal,
     );
@@ -1213,7 +1219,7 @@ test('a change to the version of a site wakes the streams of a watch', async (t:
 
 test('the root folder that a drive delta repeats on each page loads no row', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
-  using graph = microsoft({ sites: [salesSite()], pageSize: 1 });
+  await using graph = microsoft({ sites: [salesSite()], pageSize: 1 });
 
   await (await warehouse(graph.source(), dir.path)).run();
 
@@ -1229,7 +1235,7 @@ test('the items of a list of access requests load through their own snapshot str
   const access = sales.lists.find(({ id }) => id === 'list-access');
   assert.ok(access !== undefined);
   access.feed.put(listItem('8', { Title: 'Request from Lee' }));
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
   const pipeline = await warehouse(graph.source(), dir.path);
   await pipeline.run();
   const first = column(
@@ -1267,7 +1273,7 @@ test('a library that SharePoint removed takes its files with it', async () => {
     name: 'Archive',
     feed: new Feed([driveFile('b!archive', 'file-old', 'Old.docx')]),
   });
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
   const pipeline = await warehouse(graph.source(), dir.path);
   await pipeline.run();
   const before = column(dir.path, 'SELECT name FROM driveItems ORDER BY name');
@@ -1285,7 +1291,7 @@ test('a library that SharePoint removed takes its files with it', async () => {
 test('a library and a list that SharePoint added start their own first load, and the other collections load no row again', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
   const sales = salesSite();
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
   const pipeline = await warehouse(graph.source(), dir.path);
   await pipeline.run();
   sales.drives.push({
@@ -1349,7 +1355,7 @@ test('an edited page updates its row, and a deleted page, list and column remove
     feed: new Feed(),
     lastModifiedDateTime: MODIFIED,
   });
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
   const pipeline = await warehouse(graph.source(), dir.path);
   await pipeline.run();
   sales.pages = [
@@ -1405,7 +1411,10 @@ test('two sites whose libraries, lists and items have the same IDs keep a row ea
   const projects = marketing.lists.find(({ id }) => id === 'list-projects');
   assert.ok(projects !== undefined);
   projects.feed.put(listItem('1', { Title: 'Campaign', Status: 'Done' }));
-  using graph = microsoft({ sites: [salesSite(), marketing], pageSize: 200 });
+  await using graph = microsoft({
+    sites: [salesSite(), marketing],
+    pageSize: 200,
+  });
 
   await (await warehouse(graph.source([SALES, MARKETING]), dir.path)).run();
 
@@ -1465,7 +1474,7 @@ test('a full refresh over feeds that give a deleted item sends no deletion and l
   // which is the only read of a full refresh.
   documents.feed.put({ id: 'file-old', deleted: { state: 'deleted' } });
   projects.feed.put({ id: '9', deleted: { state: 'deleted' } });
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
 
   const results = await (
     await warehouse(graph.source(), dir.path, { fullRefresh: true })
@@ -1483,7 +1492,7 @@ test('a full refresh over feeds that give a deleted item sends no deletion and l
 test('a field that a stream gained after its checkpoint was saved starts the site over with a RESET', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
   const sales = salesSite();
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
   const source = graph.source();
   const pipeline = await warehouse(source, dir.path);
   await pipeline.run();
@@ -1575,7 +1584,7 @@ test('an item that the pages of a list of access requests give twice loads once,
       return undefined;
     },
   };
-  using graph = microsoft(world);
+  await using graph = microsoft(world);
 
   await (await warehouse(graph.source(), dir.path)).run();
 
@@ -1722,7 +1731,7 @@ test('a scope folder URL where the site has no folder fails only that site, as a
   ]) {
     await using dir = await new TemporaryFiles().directory('sharepoint-');
     const marketing = { ...salesSite(), url: MARKETING, id: 'marketing-id' };
-    using graph = microsoft({
+    await using graph = microsoft({
       sites: [proposalsSite(), marketing],
       pageSize: 200,
     });
@@ -1757,7 +1766,7 @@ test('a scope folder URL where the site has no folder fails only that site, as a
 test('a scope folder that someone renamed fails its site as a config failure, and keeps the rows of the pass before', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
   const sales = proposalsSite();
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
   const pipeline = await warehouse(
     graph.source([{ url: SALES, folders: [PROPOSALS] }]),
     dir.path,
@@ -1792,7 +1801,7 @@ test('a scoped site loads only its scope folders and what they hold, downloads o
   const sales = proposalsSite();
   for (const id of ['file-brief', 'file-bid', 'file-cv', 'file-logo'])
     sales.contents.set(id, await wordDocument(`# ${id}`));
-  using graph = microsoft({ sites: [sales], pageSize: 1 });
+  await using graph = microsoft({ sites: [sales], pageSize: 1 });
 
   await (
     await warehouse(
@@ -1884,7 +1893,7 @@ async function scopedRun(
     graph,
     pipeline,
     async [Symbol.asyncDispose]() {
-      graph[Symbol.dispose]();
+      await graph[Symbol.asyncDispose]();
       await dir[Symbol.asyncDispose]();
     },
   };
@@ -1895,7 +1904,7 @@ test('a later read of a scoped site loads nothing of what changed outside its sc
   for (const id of ['file-cv', 'file-cv-2', 'file-logo'])
     sales.contents.set(id, await wordDocument(`# ${id}`));
   await using dir = await new TemporaryFiles().directory('sharepoint-');
-  using graph = microsoft({ sites: [sales], pageSize: 200 });
+  await using graph = microsoft({ sites: [sales], pageSize: 200 });
   const pipeline = await warehouse(
     graph.source([{ url: SALES, folders: [PROPOSALS] }]),
     dir.path,
@@ -2049,7 +2058,7 @@ test('a folder deleted inside a scope folder takes everything under it', async (
 test('a scoped first read that fails partway loads every item of the scope folders on the next run', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
   const world: World = { sites: [proposalsSite()], pageSize: 200 };
-  using graph = microsoft(world);
+  await using graph = microsoft(world);
   const pipeline = await warehouse(
     graph.source([{ url: SALES, folders: [PROPOSALS] }]),
     dir.path,
@@ -2073,7 +2082,7 @@ test('a scoped first read that fails partway keeps the files it stored, so the n
   for (const id of ['file-brief', 'file-bid'])
     sales.contents.set(id, await wordDocument(`# ${id}`));
   const world: World = { sites: [sales], pageSize: 200 };
-  using graph = microsoft(world);
+  await using graph = microsoft(world);
   let saves = 0;
   const files = new (class extends LocalFiles {
     override async save(scope: string, content: FileContent) {
@@ -2131,7 +2140,7 @@ test('a scoped first read that fails inside a folder lists that folder on from t
   // One child a page: Proposals gives Brief.docx, Proposals 2025, and then
   // Proposals 2026, whose page fails, while Proposals 2025 waits to be listed.
   const world: World = { sites: [sales], pageSize: 1 };
-  using graph = microsoft(world);
+  await using graph = microsoft(world);
   const pipeline = await warehouse(
     graph.source([{ url: SALES, folders: [PROPOSALS] }]),
     dir.path,
@@ -2182,7 +2191,7 @@ test('a file added to a listed folder while a scoped first read is open loads th
   const [documents] = sales.drives;
   assert.ok(documents !== undefined);
   const world: World = { sites: [sales], pageSize: 200 };
-  using graph = microsoft(world);
+  await using graph = microsoft(world);
   const pipeline = await warehouse(
     graph.source([{ url: SALES, folders: [PROPOSALS] }]),
     dir.path,
@@ -2244,7 +2253,7 @@ test('a delta link that Graph no longer serves reloads a scoped site', async () 
 
 test('a site read in full and then limited to folders keeps no row outside them in any stream', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
-  using graph = microsoft({ sites: [proposalsSite()], pageSize: 200 });
+  await using graph = microsoft({ sites: [proposalsSite()], pageSize: 200 });
   await (await warehouse(graph.source([SALES]), dir.path)).run();
   assert.ok(itemIds(dir.path).includes('file-cv'));
 
@@ -2269,7 +2278,7 @@ test('a site read in full and then limited to folders keeps no row outside them 
 
 test('other scope folders start the site over: the rows of the old folder go, and the new folder loads', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
-  using graph = microsoft({ sites: [proposalsSite()], pageSize: 200 });
+  await using graph = microsoft({ sites: [proposalsSite()], pageSize: 200 });
   await (
     await warehouse(
       graph.source([{ url: SALES, folders: [PROPOSALS] }]),
@@ -2320,7 +2329,7 @@ test('a scope folder loads from the library that its URL names, when another lib
 test('a site named by its URL beside a scoped site still loads all of it', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
   const marketing = { ...proposalsSite(), url: MARKETING, id: 'marketing-id' };
-  using graph = microsoft({
+  await using graph = microsoft({
     sites: [proposalsSite(), marketing],
     pageSize: 200,
   });
