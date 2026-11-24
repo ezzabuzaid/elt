@@ -16,6 +16,10 @@ _Avoid_: Sync mode (a sync mode is elt's `incremental` or `full_refresh`), metho
 A value that a watch reads on each check, such as the statistics of one table or the Change Tracking version of the database. Each sync strategy names the gauges of its stream. A check wakes a stream when one of its gauges changed.
 _Avoid_: Change signal, probe, trigger, counter (a counter is one kind of value)
 
+**Phase**:
+What a read of a check waits on: `open` (the login of the session of the watch) or one query, `statistics`, `rowCounts`, `lastWrites` or `version`. A read that still waits when the check times out fails with an error that names its phase.
+_Avoid_: Step, stage
+
 **Position**:
 Where a Change Tracking stream is in the change history of its table: a Change Tracking version and the tracking generation of the table.
 _Avoid_: Cursor, offset, watermark, version (the version is one part of the position)

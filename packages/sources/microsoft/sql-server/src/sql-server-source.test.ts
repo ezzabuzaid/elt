@@ -219,19 +219,28 @@ async function sessionsOf(admin: sql.ConnectionPool, login: string) {
 }
 
 // A TCP hop to the server that can refuse every connection, as a server
-// that is down or fails over does, and can stop forwarding what the server
+// that is down or fails over does, can accept a connection and never answer
+// its login, as a busy gateway does, and can stop forwarding what the server
 // sends while both sockets stay open, as a stalled server or network does. It
 // is a stand-in because the test cannot take the shared server down or make it
 // stall in the middle of a read.
 async function relay(database: Database) {
   const sockets = new Set<Socket>();
-  // The bytes the server sent through the hop.
-  const hop = { reachable: true, received: 0 };
+  // The bytes the server sent through the hop, and the connections it holds
+  // with no answer.
+  const hop = { reachable: true, answering: true, received: 0, held: 0 };
   const links = new Map<Socket, Socket>();
   let stalling: { left: number; reached: () => void } | undefined;
   const server = createServer((client) => {
     if (!hop.reachable) {
       client.destroy();
+      return;
+    }
+    if (!hop.answering) {
+      sockets.add(client);
+      hop.held += 1;
+      client.on('error', () => client.destroy());
+      client.on('close', () => sockets.delete(client));
       return;
     }
     const upstream = connect(database.port, database.host);
@@ -1932,6 +1941,72 @@ test(
 );
 
 test(
+  'a check that times out while the server has not answered its login fails every stream with the open and its time',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin.request().batch(`
+    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
+    CREATE TABLE dbo.tracked (id int PRIMARY KEY);
+    ALTER TABLE dbo.tracked ENABLE CHANGE_TRACKING;
+    CREATE TABLE dbo.plain (id int PRIMARY KEY);`);
+    await using reader = await readOnlyLogin(
+      server,
+      admin,
+      'GRANT VIEW CHANGE TRACKING ON dbo.tracked TO {user};',
+    );
+    await using hop = await relay(server);
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(
+        reader.connectionString.replace(
+          `Server=${server.host},${server.port}`,
+          `Server=${hop.server}`,
+        ),
+      ),
+    );
+    hop.answering = false;
+    await using warehouse = await postgresServer.database();
+    const warehouseSql = clients.adopt(
+      postgres(warehouse.connectionString, { max: 1, onnotice: () => {} }),
+      (client) => client.end(),
+    );
+    using signals = signalFailures(source);
+    await using watch = watcher(t, source, warehouse.connectionString);
+    void watch.next();
+    await waitFor(() => assert.ok(hop.held > 0), { signal: t.signal });
+
+    await watch.clock.tickAsync(10_000);
+
+    await waitFor(() => assert.equal(signals.failures.length, 2), {
+      signal: t.signal,
+    });
+    assert.deepEqual(
+      signals.failures.map(({ error }) =>
+        Error.isError(error) && error.cause instanceof DOMException
+          ? error.cause.name
+          : error,
+      ),
+      ['TimeoutError', 'TimeoutError'],
+    );
+    assert.deepEqual(
+      [
+        ...(await warehouseSql`SELECT c.stream, a.error FROM _warehouse.sync_attempts AS a JOIN _warehouse.extraction_coverage AS c ON c.attempt_id = a.id WHERE a.status = 'failed' ORDER BY c.stream`),
+      ],
+      [
+        { stream: 'dbo.plain', error: 'timed out in open after 10000 ms' },
+        { stream: 'dbo.tracked', error: 'timed out in open after 10000 ms' },
+      ],
+    );
+  },
+);
+
+test(
   'a watch that stops closes the session its checks opened',
   { timeout: 120_000 },
   async (t) => {
@@ -1969,7 +2044,7 @@ test(
 );
 
 test(
-  'a check that times out while an open TRUNCATE blocks its queries stops them on the server, and the next check after the commit wakes every stream',
+  'a check that times out while an open TRUNCATE blocks its queries stops them on the server, fails each stream with the query it waited on and its time, and the next check after the commit wakes every stream',
   { timeout: 120_000 },
   async (t) => {
     await using server = await sqlServer.database();
@@ -2006,6 +2081,11 @@ test(
           )
       ).recordset[0]?.requests;
     await using warehouse = await postgresServer.database();
+    const warehouseSql = clients.adopt(
+      postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+      (client) => client.end(),
+    );
+    using signals = signalFailures(source);
     await using watch = watcher(t, source, warehouse.connectionString);
     assert.deepEqual(await watch.first(), [
       'dbo.other',
@@ -2028,6 +2108,38 @@ test(
 
       await watch.clock.tickAsync(10_000);
 
+      await waitFor(() => assert.equal(signals.failures.length, 3), {
+        signal: t.signal,
+      });
+      assert.deepEqual(
+        signals.failures.map(({ error }) =>
+          Error.isError(error) && error.cause instanceof DOMException
+            ? error.cause.name
+            : error,
+        ),
+        ['TimeoutError', 'TimeoutError', 'TimeoutError'],
+      );
+      // A whole-table stream waits on its statistics first, and the tracked
+      // table on its row count: its database version takes no lock.
+      assert.deepEqual(
+        [
+          ...(await warehouseSql`SELECT c.stream, a.error FROM _warehouse.sync_attempts AS a JOIN _warehouse.extraction_coverage AS c ON c.attempt_id = a.id WHERE a.status = 'failed' ORDER BY c.stream`),
+        ],
+        [
+          {
+            stream: 'dbo.other',
+            error: 'timed out in statistics after 10000 ms',
+          },
+          {
+            stream: 'dbo.plain',
+            error: 'timed out in statistics after 10000 ms',
+          },
+          {
+            stream: 'dbo.tracked',
+            error: 'timed out in rowCounts after 10000 ms',
+          },
+        ],
+      );
       await waitFor(async () => assert.equal(await requests(''), 0), {
         signal: t.signal,
       });

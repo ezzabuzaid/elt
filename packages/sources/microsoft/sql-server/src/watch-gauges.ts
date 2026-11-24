@@ -5,27 +5,39 @@ import {
   type Gauge,
   Period,
   type Sample,
+  untilAborted,
 } from '@zukhruf/async';
 
+import type { PipelineClock } from '@eltjs/elt';
 import type {
   SqlServerDatabase,
   SqlServerSession,
 } from '@eltjs/sdk-microsoft-sql-server';
 
+// What a read of a check waits on: the login of the session, or one query.
+type Phase = 'open' | TableQuery | 'version';
+
+type TableQuery = 'statistics' | 'rowCounts' | 'lastWrites';
+
 // A value of each table, by its quoted name, from one query, which a check
 // that times out cancels on the server.
 class TableValues extends Collector<string> {
-  readonly #read: (signal: AbortSignal) => Promise<ReadonlyMap<string, string>>;
+  readonly #session: WatchSession;
+  readonly #query: TableQuery;
 
-  constructor(
-    read: (signal: AbortSignal) => Promise<ReadonlyMap<string, string>>,
-  ) {
+  constructor(session: WatchSession, query: TableQuery) {
     super();
-    this.#read = read;
+    this.#session = session;
+    this.#query = query;
   }
 
-  protected collect(check: Check) {
-    return this.#read(check.signal);
+  protected async collect(check: Check) {
+    const session = await this.#session.open(check);
+    return this.#session.during(
+      this.#query,
+      check,
+      session[this.#query]({ signal: check.signal }),
+    );
   }
 }
 
@@ -40,10 +52,13 @@ class DatabaseVersion extends Collector<Version> {
     this.#session = session;
   }
 
-  protected async collect() {
-    const { changeTracking, rowversion } = await (
-      await this.#session.open()
-    ).version();
+  protected async collect(check: Check) {
+    const session = await this.#session.open(check);
+    const { changeTracking, rowversion } = await this.#session.during(
+      'version',
+      check,
+      session.version(),
+    );
     return new Map<Version, Sample>([
       ['changeTracking', changeTracking],
       ['rowversion', rowversion],
@@ -81,18 +96,12 @@ export class WatchGauges implements AsyncDisposable {
   readonly hour = new Period(60 * 60_000);
   readonly #session: WatchSession;
 
-  constructor(database: SqlServerDatabase) {
-    const session = new WatchSession(database);
+  constructor(database: SqlServerDatabase, clock: PipelineClock) {
+    const session = new WatchSession(database, clock);
     this.#session = session;
-    this.statistics = new TableValues(async (signal) =>
-      (await session.open()).statistics({ signal }),
-    );
-    this.rowCounts = new TableValues(async (signal) =>
-      (await session.open()).rowCounts({ signal }),
-    );
-    this.lastWrites = new TableValues(async (signal) =>
-      (await session.open()).lastWrites({ signal }),
-    );
+    this.statistics = new TableValues(session, 'statistics');
+    this.rowCounts = new TableValues(session, 'rowCounts');
+    this.lastWrites = new TableValues(session, 'lastWrites');
     const version = new DatabaseVersion(session);
     this.changeTracking = version.gauge('changeTracking');
     this.rowversion = version.gauge('rowversion');
@@ -108,20 +117,41 @@ export class WatchGauges implements AsyncDisposable {
 // again.
 class WatchSession implements AsyncDisposable {
   readonly #database: SqlServerDatabase;
+  readonly #clock: PipelineClock;
   #state: SessionState;
 
-  constructor(database: SqlServerDatabase) {
+  constructor(database: SqlServerDatabase, clock: PipelineClock) {
     this.#database = database;
+    this.#clock = clock;
     this.#state = new Closed(database);
   }
 
   // The reads of one check share one open.
-  open(): Promise<SqlServerSession> {
+  open(check: Check): Promise<SqlServerSession> {
     const state = this.#state.open(() => {
       if (this.#state === state) this.#state = new Closed(this.#database);
     });
     this.#state = state;
-    return state.session();
+    return this.during('open', check, state.session());
+  }
+
+  // Settles like work, or fails at the abort of the check with an error that
+  // names the phase and its time, with the reason of the signal as its cause.
+  // A check records its own error only for a read that fails in the turn of
+  // the abort (ADR 0019 of @zukhruf/async), so it fails from the abort
+  // listener, not when the server confirms the cancel. The work goes on, and
+  // a cancelled query frees its connection for the next check (ADR 0007).
+  async during<T>(phase: Phase, check: Check, work: Promise<T>): Promise<T> {
+    const started = this.#clock.Date.now();
+    try {
+      return await untilAborted(work, check.signal);
+    } catch (error) {
+      if (!check.signal.aborted || error !== check.signal.reason) throw error;
+      throw new Error(
+        `timed out in ${phase} after ${this.#clock.Date.now() - started} ms`,
+        { cause: error },
+      );
+    }
   }
 
   // Each stream's gauge of the watch closes the session when the pipeline

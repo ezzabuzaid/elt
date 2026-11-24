@@ -171,8 +171,8 @@ export class SqlServerSource extends Source<OpenRead> {
   // Checks the gauges of the streams every 30 s. A refused login fails
   // every stream as config, and the pipeline reads its gauges no more in
   // this watch.
-  override changeSignals(streams: readonly Stream[]) {
-    const gauges = new WatchGauges(this.#database);
+  override changeSignals(streams: readonly Stream[], clock: PipelineClock) {
+    const gauges = new WatchGauges(this.#database, clock);
     return streams.map((stream) => ({
       gauge: new StreamGroup(this.#reader(stream).gauges(gauges), gauges),
       streams: [stream],
