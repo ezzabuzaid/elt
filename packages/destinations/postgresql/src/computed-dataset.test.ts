@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
@@ -8,7 +9,7 @@ import { TemporaryFiles } from '@zukhruf/fs';
 import { waitFor } from '@zukhruf/testing/async';
 import { Postgres } from '@zukhruf/testing/postgres';
 import { Vector } from '@zukhruf/vectors';
-import { fromSql } from '@zukhruf/vectors/sqlite';
+import { fromSql } from 'pgvector';
 import postgres from 'postgres';
 
 import {
@@ -16,6 +17,7 @@ import {
   Connection,
   Copy,
   type CopyConfiguration,
+  DerivedDatasetError,
   DocumentParser,
   DocumentText,
   type LoadedRow,
@@ -33,8 +35,11 @@ import {
 import {
   ComputedDataset,
   PostgresDestination,
+  type PostgresIndex,
+  PostgresSetupError,
   PostgresSyncHistory,
   View,
+  hnsw,
 } from './index.ts';
 
 const databases = new Postgres({ environment: process.env });
@@ -673,23 +678,31 @@ test('the view of a computed dataset, read as of a position, shows the rows it h
   );
 });
 
-// A size and a vector of 3 dimensions for each file, as a model that measures
+// A size and a vector of dimensions for each file, as a model that measures
 // files gives them; the test sets the answer for each ref.
-const measured = {
-  size: { type: 'integer', description: 'The size of the file.' },
-  vector: {
-    type: 'vector',
-    dimensions: 3,
-    description: 'The file as a vector.',
-  },
-} as const;
+const measured = (dimensions: number) =>
+  ({
+    size: { type: 'integer', description: 'The size of the file.' },
+    vector: {
+      type: 'vector',
+      dimensions,
+      description: 'The file as a vector.',
+    },
+  }) as const;
 
-class Measure extends Rule<string, typeof measured> {
+type Measured = ReturnType<typeof measured>;
+
+class Measure extends Rule<string, Measured> {
   override readonly key = { name: 'ref', description: 'The file.' };
-  override readonly output = measured;
+  override readonly output: Measured;
   override readonly batch = 10;
   override readonly concurrency = 1;
-  readonly answers = new Map<string, RuleValues<typeof measured>>();
+  readonly answers = new Map<string, RuleValues<Measured>>();
+
+  constructor(dimensions: number) {
+    super();
+    this.output = measured(dimensions);
+  }
 
   override read(row: LoadedRow) {
     return typeof row.ref === 'string'
@@ -703,21 +716,29 @@ class Measure extends Rule<string, typeof measured> {
 
   override async compute(
     refs: readonly string[],
-  ): Promise<readonly RuleResult<RuleValues<typeof measured>>[]> {
+  ): Promise<readonly RuleResult<RuleValues<Measured>>[]> {
     return refs.map((ref) => ({ value: this.answers.get(ref) ?? {} }));
   }
 }
 
-test('an integer column keeps each value as a bigint, and a vector column keeps as bytea the bytes that fromSql of @zukhruf/vectors/sqlite reads back', async () => {
-  await using database = await databases.database();
-  await using clients = new AsyncDisposableStack();
-  const url = database.connectionString;
-  const sql = client(url, clients);
-  const source = new Files();
-  const destination = new PostgresDestination({ url });
+// The servers of the vector tests: the default image has no pgvector, and
+// each database of this one starts with no extension vector.
+const vectorDatabases = new Postgres({
+  environment: process.env,
+  image: 'pgvector/pgvector:pg18',
+});
+
+// A pipeline that copies the rows of source into _warehouse.raw_files and
+// measures each file into marts.measures.
+function measuresPipeline(
+  destination: PostgresDestination,
+  url: string,
+  source: Files,
+  measure: Measure,
+  indexes: readonly PostgresIndex[] = [],
+) {
   const target = destination.table('files');
-  const measure = new Measure();
-  const pipeline = new Pipeline({
+  return new Pipeline({
     clock: globalThis,
     history: new PostgresSyncHistory({ url }),
     connections: [
@@ -735,61 +756,446 @@ test('an integer column keeps each value as a bigint, and a vector column keeps 
         description: 'The size and vector of each file a row names.',
         from: [target],
         compute: measure,
+        indexes,
       }),
     ],
   });
+}
+
+// The type of each column of _warehouse.raw_measures that a rule adds.
+const ruleColumnTypes = async (sql: postgres.Sql) => [
+  ...(await sql`
+    SELECT attname AS name, format_type(atttypid, atttypmod) AS type
+    FROM pg_attribute
+    WHERE attrelid = '_warehouse.raw_measures'::regclass
+      AND attname IN ('size', 'vector')
+    ORDER BY attname`),
+];
+
+// Each index of _warehouse.raw_measures but its primary key, as
+// pg_get_indexdef gives it, with each derived name in place of its hash.
+const indexesOfMeasures = async (sql: postgres.Sql) =>
+  (
+    await sql<{ definition: string }[]>`
+      SELECT pg_get_indexdef(i.indexrelid) AS definition
+      FROM pg_index i
+      WHERE i.indrelid = '_warehouse.raw_measures'::regclass
+        AND NOT i.indisprimary`
+  )
+    .map(({ definition }) =>
+      definition.replace(/ix_elt_[0-9a-f]{16}/, 'ix_elt_<hash>'),
+    )
+    .sort();
+
+const hasVectorExtension = async (sql: postgres.Sql) =>
+  (await sql`SELECT 1 FROM pg_extension WHERE extname = 'vector'`).length === 1;
+
+test('a vector column of a rule is a vector(n) of pgvector that keeps each float32 value, and the destination creates the extension vector in a database that has none', async () => {
+  await using database = await vectorDatabases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const source = new Files();
+  const measure = new Measure(3);
   source.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
   measure.answers.set('a.txt', {
     size: Number.MAX_SAFE_INTEGER,
-    vector: Vector.from([0.5, -1, 2]),
+    vector: Vector.from([1 / 3, -1, 2]),
   });
+  const before = await hasVectorExtension(sql);
 
-  await pipeline.run();
+  await measuresPipeline(
+    new PostgresDestination({ url }),
+    url,
+    source,
+    measure,
+  ).run();
 
   assert.deepEqual(
     {
+      before,
+      after: await hasVectorExtension(sql),
       rows: (
         await sql<
           {
             ref: string;
             status: string;
             size: string | null;
-            vector: Buffer | null;
+            vector: string | null;
           }[]
-        >`SELECT ref, status, size, vector FROM marts.measures ORDER BY ref`
-      ).map(({ vector, ...row }) => ({
-        ...row,
-        vector: vector === null ? null : [...fromSql(Vector, vector).values],
-      })),
-      declared: [
-        ...(await sql`
-          SELECT attname AS name, format_type(atttypid, atttypmod) AS type
-          FROM pg_attribute
-          WHERE attrelid = '_warehouse.raw_measures'::regclass
-            AND attname IN ('size', 'vector')
-          ORDER BY attname`),
-      ],
+        >`SELECT ref, status, size, vector::text AS vector FROM marts.measures ORDER BY ref`
+      ).map(({ vector, ...row }) => {
+        const values = fromSql(vector);
+        assert.ok(values === null || Array.isArray(values), vector ?? '');
+        return {
+          ...row,
+          vector: values === null ? null : [...Vector.from(values).values],
+        };
+      }),
+      declared: await ruleColumnTypes(sql),
     },
     {
+      before: false,
+      after: true,
       rows: [
         {
           ref: 'a.txt',
           status: 'computed',
           size: String(Number.MAX_SAFE_INTEGER),
-          vector: [0.5, -1, 2],
+          vector: [Math.fround(1 / 3), -1, 2],
         },
         { ref: 'b.txt', status: 'computed', size: null, vector: null },
       ],
       declared: [
         { name: 'size', type: 'bigint' },
-        { name: 'vector', type: 'bytea' },
+        { name: 'vector', type: 'vector(3)' },
       ],
     },
   );
 });
+
+test('a declared HNSW index and a btree index are made at a refresh, and a changed declaration drops the index it no longer has and makes the new one in place, while an index of a person stays and each row keeps its commit', async () => {
+  await using database = await vectorDatabases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const source = new Files();
+  const measure = new Measure(3);
+  const destination = new PostgresDestination({ url });
+  source.rows = [{ id: '1', ref: 'a.txt' }];
+  measure.answers.set('a.txt', { size: 1, vector: Vector.from([1, 0, 0]) });
+  await measuresPipeline(destination, url, source, measure, [
+    { type: 'btree', columns: ['committed_in'] },
+    {
+      type: 'vector',
+      column: 'vector',
+      metric: 'cosine',
+      build: hnsw({ m: 8, efConstruction: 32 }),
+    },
+  ]).run();
+  const declared = await indexesOfMeasures(sql);
+  await sql`CREATE INDEX own_size ON _warehouse.raw_measures (size)`;
+  const commits = async () => [
+    ...(await sql`SELECT ref, committed_in FROM _warehouse.raw_measures`),
+  ];
+  const committed = await commits();
+
+  await measuresPipeline(destination, url, source, measure, [
+    { type: 'vector', column: 'vector', metric: 'euclidean', build: hnsw() },
+  ]).run();
+
+  assert.deepEqual(
+    {
+      declared,
+      changed: await indexesOfMeasures(sql),
+      committed: await commits(),
+    },
+    {
+      declared: [
+        'CREATE INDEX ix_elt_<hash> ON _warehouse.raw_measures USING btree (committed_in)',
+        "CREATE INDEX ix_elt_<hash> ON _warehouse.raw_measures USING hnsw (vector vector_cosine_ops) WITH (m='8', ef_construction='32')",
+      ],
+      changed: [
+        'CREATE INDEX ix_elt_<hash> ON _warehouse.raw_measures USING hnsw (vector vector_l2_ops)',
+        'CREATE INDEX own_size ON _warehouse.raw_measures USING btree (size)',
+      ],
+      committed,
+    },
+  );
+});
+
+test('a change of only the metric, only m or only efConstruction of a declared HNSW vector index makes the index again with the new declaration', async () => {
+  await using database = await vectorDatabases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const source = new Files();
+  const measure = new Measure(3);
+  const destination = new PostgresDestination({ url });
+  source.rows = [{ id: '1', ref: 'a.txt' }];
+  measure.answers.set('a.txt', { vector: Vector.from([1, 0, 0]) });
+  const declarations = [
+    { metric: 'cosine', m: 8, efConstruction: 32 },
+    { metric: 'euclidean', m: 8, efConstruction: 32 },
+    { metric: 'euclidean', m: 16, efConstruction: 32 },
+    { metric: 'euclidean', m: 16, efConstruction: 64 },
+  ] as const;
+  const made: string[][] = [];
+
+  for (const { metric, m, efConstruction } of declarations) {
+    await measuresPipeline(destination, url, source, measure, [
+      {
+        type: 'vector',
+        column: 'vector',
+        metric,
+        build: hnsw({ m, efConstruction }),
+      },
+    ]).run();
+    made.push(await indexesOfMeasures(sql));
+  }
+
+  assert.deepEqual(made, [
+    [
+      "CREATE INDEX ix_elt_<hash> ON _warehouse.raw_measures USING hnsw (vector vector_cosine_ops) WITH (m='8', ef_construction='32')",
+    ],
+    [
+      "CREATE INDEX ix_elt_<hash> ON _warehouse.raw_measures USING hnsw (vector vector_l2_ops) WITH (m='8', ef_construction='32')",
+    ],
+    [
+      "CREATE INDEX ix_elt_<hash> ON _warehouse.raw_measures USING hnsw (vector vector_l2_ops) WITH (m='16', ef_construction='32')",
+    ],
+    [
+      "CREATE INDEX ix_elt_<hash> ON _warehouse.raw_measures USING hnsw (vector vector_l2_ops) WITH (m='16', ef_construction='64')",
+    ],
+  ]);
+});
+
+test('a vector column that Postgres refuses for another reason than a missing type, such as more dimensions than pgvector allows, fails the dataset with the error of Postgres, of failure type system, and not with a PostgresSetupError', async () => {
+  await using database = await vectorDatabases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  // A person made the extension, as a destination with createExtension:
+  // false asks.
+  await sql`CREATE EXTENSION vector`;
+  const source = new Files();
+  const destination = new PostgresDestination({ url, createExtension: false });
+  source.rows = [{ id: '1', ref: 'a.txt' }];
+
+  const failed = await measuresPipeline(
+    destination,
+    url,
+    source,
+    new Measure(16_001),
+  )
+    .run()
+    .then(
+      () => assert.fail('the dataset reported no failure'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(failed instanceof DerivedDatasetError, String(failed));
+  assert.ok(
+    failed.cause instanceof postgres.PostgresError,
+    String(failed.cause),
+  );
+  assert.deepEqual(
+    {
+      code: failed.cause.code,
+      failureType: destination.failureType(failed.cause),
+    },
+    { code: '22023', failureType: 'system' },
+  );
+});
+
+test('a change of the dimensions of a vector column makes the table again with the new vector(n), and the refresh makes its declared HNSW index on the new table', async () => {
+  await using database = await vectorDatabases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const source = new Files();
+  const destination = new PostgresDestination({ url });
+  const indexes = [
+    { type: 'vector', column: 'vector', metric: 'cosine', build: hnsw() },
+  ] as const;
+  source.rows = [{ id: '1', ref: 'a.txt' }];
+  const three = new Measure(3);
+  three.answers.set('a.txt', { vector: Vector.from([1, 0, 0]) });
+  await measuresPipeline(destination, url, source, three, indexes).run();
+  // The table is made again, not altered: pgvector does not cast the vector
+  // of a row to other dimensions, and the index must come back on the new
+  // table.
+  const before =
+    await sql`SELECT '_warehouse.raw_measures'::regclass::oid AS oid`;
+  const four = new Measure(4);
+  four.answers.set('a.txt', { vector: Vector.from([0, 1, 0, 0]) });
+
+  await measuresPipeline(destination, url, source, four, indexes).run();
+
+  assert.deepEqual(
+    {
+      remade:
+        (await sql`SELECT '_warehouse.raw_measures'::regclass::oid AS oid`)[0]
+          ?.oid !== before[0]?.oid,
+      declared: await ruleColumnTypes(sql),
+      indexes: await indexesOfMeasures(sql),
+      rows: [
+        ...(await sql`SELECT ref, vector::text AS vector FROM marts.measures`),
+      ],
+    },
+    {
+      remade: true,
+      declared: [
+        { name: 'size', type: 'bigint' },
+        { name: 'vector', type: 'vector(4)' },
+      ],
+      indexes: [
+        'CREATE INDEX ix_elt_<hash> ON _warehouse.raw_measures USING hnsw (vector vector_cosine_ops)',
+      ],
+      rows: [{ ref: 'a.txt', vector: '[0,1,0,0]' }],
+    },
+  );
+});
+
+test('a destination that may not create the extension fails a dataset with a vector column in a database with no type vector, with a PostgresSetupError of failure type config, and creates nothing', async () => {
+  await using database = await vectorDatabases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const source = new Files();
+  const measure = new Measure(3);
+  const destination = new PostgresDestination({ url, createExtension: false });
+  source.rows = [{ id: '1', ref: 'a.txt' }];
+
+  const failed = await measuresPipeline(destination, url, source, measure)
+    .run()
+    .then(
+      () => assert.fail('the dataset reported no failure'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(failed instanceof DerivedDatasetError, String(failed));
+  assert.ok(failed.cause instanceof PostgresSetupError, String(failed.cause));
+  assert.deepEqual(
+    {
+      message: failed.cause.message,
+      failureType: destination.failureType(failed.cause),
+      extension: await hasVectorExtension(sql),
+      table: (
+        await sql`SELECT to_regclass('_warehouse.raw_measures') IS NULL AS missing`
+      )[0]?.missing,
+    },
+    {
+      message:
+        'Computed dataset measures has a vector column, and the database has no type vector: run CREATE EXTENSION vector in it, or let the PostgresDestination create it (createExtension: true)',
+      failureType: 'config',
+      extension: false,
+      table: true,
+    },
+  );
+});
+
+test('a server with no pgvector installed fails a dataset with a vector column with a PostgresSetupError of failure type config, and creates nothing', async () => {
+  // The default image of the fixture has no pgvector: CREATE EXTENSION
+  // vector fails there with SQLSTATE 0A000.
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  const source = new Files();
+  const destination = new PostgresDestination({ url });
+  source.rows = [{ id: '1', ref: 'a.txt' }];
+
+  const failed = await measuresPipeline(
+    destination,
+    url,
+    source,
+    new Measure(3),
+  )
+    .run()
+    .then(
+      () => assert.fail('the dataset reported no failure'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(failed instanceof DerivedDatasetError, String(failed));
+  assert.ok(failed.cause instanceof PostgresSetupError, String(failed.cause));
+  assert.deepEqual(
+    {
+      message: failed.cause.message,
+      failureType: destination.failureType(failed.cause),
+      table: (
+        await sql`SELECT to_regclass('_warehouse.raw_measures') IS NULL AS missing`
+      )[0]?.missing,
+    },
+    {
+      message:
+        'Computed dataset measures has a vector column, and the server has no pgvector to create the extension vector from: install pgvector on the server',
+      failureType: 'config',
+      table: true,
+    },
+  );
+});
+
+test('a role that may not create the extension vector fails a dataset with a vector column with the SQLSTATE 42501 of Postgres, of failure type config', async () => {
+  await using database = await vectorDatabases.database();
+  await using clients = new AsyncDisposableStack();
+  const url = database.connectionString;
+  const sql = client(url, clients);
+  // pgvector 0.8.7 is not a trusted extension: only a superuser creates it,
+  // also in a database that the role owns. Roles belong to the whole server,
+  // which other tests share.
+  const role = `owner_${randomUUID().replaceAll('-', '')}`;
+  const password = randomUUID();
+  const name = new URL(url).pathname.slice(1);
+  await sql.unsafe(`CREATE ROLE ${role} LOGIN PASSWORD '${password}'`);
+  clients.defer(async () => {
+    await sql.unsafe(
+      `REASSIGN OWNED BY ${role} TO CURRENT_USER; DROP OWNED BY ${role}; DROP ROLE ${role}`,
+    );
+  });
+  await sql.unsafe(`ALTER DATABASE "${name}" OWNER TO ${role}`);
+  const owner = new URL(url);
+  owner.username = role;
+  owner.password = password;
+  const destination = new PostgresDestination({ url: owner.href });
+  const source = new Files();
+  source.rows = [{ id: '1', ref: 'a.txt' }];
+
+  const failed = await measuresPipeline(
+    destination,
+    owner.href,
+    source,
+    new Measure(3),
+  )
+    .run()
+    .then(
+      () => assert.fail('the dataset reported no failure'),
+      (error: unknown) => error,
+    );
+
+  assert.ok(failed instanceof DerivedDatasetError, String(failed));
+  assert.ok(
+    failed.cause instanceof postgres.PostgresError,
+    String(failed.cause),
+  );
+  assert.deepEqual(
+    {
+      code: failed.cause.code,
+      failureType: destination.failureType(failed.cause),
+      extension: await hasVectorExtension(sql),
+    },
+    { code: '42501', failureType: 'config', extension: false },
+  );
+});
+
+for (const [index, error] of [
+  [
+    { type: 'vector', column: 'size', metric: 'cosine', build: hnsw() },
+    'Computed dataset measures declares a vector index on size, which is bigint, not a vector',
+  ],
+  [
+    { type: 'btree', columns: ['size', 'missing'] },
+    'Computed dataset measures declares an index on missing, which "_warehouse"."raw_measures" does not have',
+  ],
+] as const)
+  test(`an index ${JSON.stringify(index)} is refused when the dataset is constructed`, () => {
+    assert.throws(
+      () =>
+        new ComputedDataset({
+          into: new PostgresDestination({ url: 'postgres://localhost/none' }),
+          name: 'measures',
+          description: 'The size and vector of each file a row names.',
+          from: [],
+          compute: new Measure(3),
+          indexes: [index],
+        }),
+      new TypeError(error),
+    );
+  });
 
 // A rule that only names its columns: the dataset checks them when it is
 // constructed, before any input reaches compute.

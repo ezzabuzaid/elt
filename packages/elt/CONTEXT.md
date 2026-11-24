@@ -200,6 +200,10 @@ _Avoid_: Transform, mapper (a mapper changes records while they load), function.
 A column that a rule adds to each output, with its kind: `text`, `blob`, `integer` (a safe integer) or `vector` (a `Vector` of `@zukhruf/vectors` with a fixed number of dimensions). The kind sets the type of the value, and each destination keeps each kind in its own form.
 _Avoid_: Field (a stream has fields), output column (the dataset adds its own columns too)
 
+**Declared index**:
+An index that a computed dataset declares on one of its tables, of the type `DatasetIndex`: an ordinary index over key columns, or a vector index over one vector column with its metric (`cosine`, `euclidean` or `dot`). The destination makes it at each refresh and drops it when the declaration no longer has it, so an index of another name, such as a person's own, stays.
+_Avoid_: Hook, post-hook (dbt's word), physical property (SQLMesh's word for more than indexes)
+
 **Input**:
 What a rule reads from one row that a copy loaded.
 _Avoid_: Source (a source reads an upstream), record

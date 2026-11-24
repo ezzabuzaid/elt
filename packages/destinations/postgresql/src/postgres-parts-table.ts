@@ -13,7 +13,7 @@ import { TargetHistory, rowHash } from './postgres-history.ts';
 import { rawTable } from './postgres-identifiers.ts';
 import type { Transaction } from './postgres-load.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
-import { ruleColumnTypes, ruleValue } from './postgres-rule-columns.ts';
+import { ruleColumnType, ruleValue } from './postgres-rule-columns.ts';
 import { inWarehouse, marts, warehouse } from './postgres-schemas.ts';
 
 // The parts of a computed dataset whose rule is a table rule, in the table
@@ -62,9 +62,9 @@ export class PostgresPartsTable {
       { name: rule.key.name, type: 'text', constraint: ' NOT NULL' },
       { name: 'seq', type: 'integer', constraint: ' NOT NULL' },
       { name: 'part_hash', type: 'text', constraint: ' NOT NULL' },
-      ...Object.entries(ruleColumns).map(([column, { type }]) => ({
+      ...Object.entries(ruleColumns).map(([column, declared]) => ({
         name: column,
-        type: ruleColumnTypes[type],
+        type: ruleColumnType(declared),
         constraint: '',
       })),
       { name: 'committed_in', type: 'integer', constraint: ' NOT NULL' },

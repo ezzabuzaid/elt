@@ -139,9 +139,10 @@ class ComputedDataset<Input> {
   );
 }
 
-type SqlServerIndex =
-  | { type: 'nonclustered'; columns: readonly [string, ...string[]] }
-  | { type: 'vector'; column: string; metric: 'cosine' | 'euclidean' | 'dot' }; // DiskANN
+// DatasetIndex and VectorMetric ('cosine' | 'euclidean' | 'dot') are of @eltjs/elt.
+type SqlServerIndex = DatasetIndex<'nonclustered', Record<never, never>>;
+// = { type: 'nonclustered'; columns: readonly [string, ...string[]] }
+//   | { type: 'vector'; column: string; metric: VectorMetric }  // DiskANN
 
 class SqlServerCheckpointStore {
   constructor(options: { login: SqlServerLogin });

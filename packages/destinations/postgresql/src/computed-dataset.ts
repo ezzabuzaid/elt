@@ -29,12 +29,14 @@ import { PostgresDestination } from './postgres-destination.ts';
 import { storedColumns } from './postgres-fit.ts';
 import { TargetHistory, rowHash } from './postgres-history.ts';
 import { identifiers, rawTable } from './postgres-identifiers.ts';
+import { type PostgresIndex, TableIndexes } from './postgres-indexes.ts';
 import { PostgresLoad, type Transaction } from './postgres-load.ts';
 import { PostgresPartsTable } from './postgres-parts-table.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
-import { ruleColumnTypes, ruleValue } from './postgres-rule-columns.ts';
+import { ruleColumnType, ruleValue } from './postgres-rule-columns.ts';
 import { inMarts, inWarehouse, marts, warehouse } from './postgres-schemas.ts';
 import { makeSchema } from './postgres-session.ts';
+import { PostgresSetupError } from './postgres-setup-error.ts';
 import type { PostgresTable } from './postgres-table.ts';
 import { View, made } from './view.ts';
 
@@ -66,6 +68,15 @@ type DeclaredTable = Pick<
 // raw_<name>_parts, which readers query through the view <name>_parts. The
 // commit that writes an output row writes its parts, and the two tables are
 // one declaration, so a change to either makes both again.
+// A vector column is the vector type of pgvector. The first make of a table
+// with one, in a database with no type vector (SQLSTATE 42704), runs CREATE
+// EXTENSION IF NOT EXISTS vector and makes the table again, unless the
+// destination may not create the extension, or the server has no pgvector
+// to create it from (0A000): then the dataset fails with a
+// PostgresSetupError. A role that may not create it fails the dataset with
+// SQLSTATE 42501; both are of failure type config.
+// indexes declares the indexes of raw_<name>, which each refresh brings in
+// place, in the transaction that makes the tables (elt-sqlserver ADR 0013).
 export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
   readonly name: string;
   // The database the dataset lives in.
@@ -82,6 +93,10 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
   // The rule columns of an output row: none for a table rule, whose columns
   // are the parts'.
   readonly #ruleColumns: RuleColumns;
+  readonly #indexes: TableIndexes;
+  // Whether a table of the dataset has a vector column, so a missing type
+  // is the type vector of pgvector.
+  readonly #vectors: boolean;
 
   constructor({
     into,
@@ -89,6 +104,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     description,
     from,
     compute,
+    indexes = [],
   }: {
     into: PostgresDestination;
     name: string;
@@ -96,6 +112,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     from: readonly (PostgresTable | View)[];
     compute:
       Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
+    indexes?: readonly PostgresIndex[];
   }) {
     super();
     this.name = identifier(name, 'computed dataset name');
@@ -133,15 +150,26 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
         type: 'text',
         constraint: column === 'error' ? '' : ' NOT NULL',
       })),
-      ...Object.entries(this.#ruleColumns).map(([column, { type }]) => ({
+      ...Object.entries(this.#ruleColumns).map(([column, declared]) => ({
         name: column,
-        type: ruleColumnTypes[type],
+        type: ruleColumnType(declared),
         constraint: '',
       })),
       { name: 'committed_in', type: 'integer', constraint: ' NOT NULL' },
       { name: '_elt_row_hash', type: 'text', constraint: ' NOT NULL' },
     ]);
     const table = inWarehouse(this.#table);
+    this.#indexes = new TableIndexes({
+      dataset: name,
+      table,
+      columns: declared,
+      indexes,
+    });
+    this.#vectors = Object.values(
+      compute instanceof TableRule
+        ? { ...compute.output, ...compute.place }
+        : compute.output,
+    ).some(({ type }) => type === 'vector');
     const history = new TargetHistory(hash('sha256', table).slice(0, 40));
     this.#output = Object.freeze({
       table,
@@ -273,6 +301,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     const stored = await load.transaction(async (sql) => {
       const commit = commits(sql);
       await this.#declare(sql, commit);
+      await this.#indexes.reconcile(sql);
       const rows = new Map<string, StoredOutput>();
       const gone: string[] = [];
       for (const row of await sql.unsafe<
@@ -394,7 +423,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
     );
     if (missing || fits) {
       for (const { table, statement, history, view } of tables) {
-        if (missing) await sql.unsafe(statement);
+        if (missing) await this.#make(sql, statement);
         await history.create(sql, table, commit);
         await view.describe(sql);
       }
@@ -425,12 +454,51 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
           await sql.unsafe(`DROP TABLE IF EXISTS ${table}`);
         }
         for (const { table, statement, history, view } of tables) {
-          await sql.unsafe(statement);
+          await this.#make(sql, statement);
           await history.create(sql, table, commit);
           await view.describe(sql);
         }
       },
     );
+  }
+
+  // Makes a table of the dataset. When the table has a vector column and the
+  // database has no type vector (42704), it creates the extension of
+  // pgvector and makes the table again, or fails with a PostgresSetupError
+  // when the destination may not create it, or when the server has no
+  // pgvector to create it from (0A000). A savepoint keeps the transaction
+  // usable after the first try fails.
+  async #make(sql: Transaction, statement: string): Promise<void> {
+    if (!this.#vectors) {
+      await sql.unsafe(statement);
+      return;
+    }
+    await sql.unsafe('SAVEPOINT elt_make');
+    try {
+      await sql.unsafe(statement);
+      await sql.unsafe('RELEASE SAVEPOINT elt_make');
+      return;
+    } catch (error) {
+      if (!(error instanceof postgres.PostgresError && error.code === '42704'))
+        throw error;
+      await sql.unsafe('ROLLBACK TO SAVEPOINT elt_make');
+      if (!this.into.createExtension)
+        throw new PostgresSetupError(
+          `Computed dataset ${this.name} has a vector column, and the database has no type vector: run CREATE EXTENSION vector in it, or let the PostgresDestination create it (createExtension: true)`,
+          { cause: error },
+        );
+    }
+    try {
+      await sql.unsafe('CREATE EXTENSION IF NOT EXISTS vector');
+    } catch (error) {
+      if (!(error instanceof postgres.PostgresError && error.code === '0A000'))
+        throw error;
+      throw new PostgresSetupError(
+        `Computed dataset ${this.name} has a vector column, and the server has no pgvector to create the extension vector from: install pgvector on the server`,
+        { cause: error },
+      );
+    }
+    await sql.unsafe(statement);
   }
 
   // Each input by key, from the rows of each relation of from that exists

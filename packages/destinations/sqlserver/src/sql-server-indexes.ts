@@ -1,5 +1,6 @@
 import { hash } from 'node:crypto';
 
+import type { DatasetIndex } from '@eltjs/elt';
 import type { SqlServerConnection } from '@eltjs/sdk-microsoft-sql-server';
 
 import { TargetDescriptions } from './sql-server-descriptions.ts';
@@ -7,20 +8,11 @@ import { identifiers, quote } from './sql-server-identifiers.ts';
 import type { Declared } from './sql-server-rule-columns.ts';
 import { inMarts, marts } from './sql-server-schemas.ts';
 
-// An index that a computed dataset declares on one of its tables: an
-// ordinary nonclustered index over key columns, or a DiskANN vector index
-// over one vector column with the metric of its search, as SQL Server names
-// it.
-export type SqlServerIndex =
-  | {
-      readonly type: 'nonclustered';
-      readonly columns: readonly [string, ...string[]];
-    }
-  | {
-      readonly type: 'vector';
-      readonly column: string;
-      readonly metric: 'cosine' | 'euclidean' | 'dot';
-    };
+// An index that a computed dataset declares on one of its tables, in the
+// declaration of elt: an ordinary nonclustered index over key columns, or a
+// DiskANN vector index over one vector column with the metric of its search.
+// SQL Server takes no options for the build of a DiskANN index.
+export type SqlServerIndex = DatasetIndex<'nonclustered', Record<never, never>>;
 
 // The start of the name of each index that the destination manages. A
 // person's own index has another name, so the destination never drops it.

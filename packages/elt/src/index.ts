@@ -121,6 +121,7 @@ export {
   type IterableStreamDeclaration,
   type SnapshotStreamDeclaration,
 } from './core/iterable-source.ts';
+export type { DatasetIndex, VectorMetric } from './core/dataset-index.ts';
 export {
   type DeleteMessage,
   type ExtractionCoverage,

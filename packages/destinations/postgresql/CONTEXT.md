@@ -28,6 +28,10 @@ _Avoid_: Documented view, reader view (a reader view is the view of one raw tabl
 A derived dataset that a rule computes on write, one row for each input key, in the table `raw_<name>` with the view `<name>`, such as `marts.document_text`.
 _Avoid_: Materialized view (Postgres refreshes a materialized view whole)
 
+**Declared index**:
+An index that a computed dataset declares on its raw table (`indexes`): a btree index over key columns, or an HNSW vector index over a vector column with its metric. The destination names it `ix_elt_<hash>` from the statement that makes it, which holds the table, and reconciles the declared indexes with `pg_index` at each refresh, so an index of another name, such as a person's own, stays.
+_Avoid_: Hook, post-hook (dbt's word)
+
 **Comment**:
 The native Postgres description of a table, view or column. The descriptions of the source become comments.
 _Avoid_: Annotation, metadata

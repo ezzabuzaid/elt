@@ -262,7 +262,7 @@ const text = new ComputedDataset({
 
 `documents` is the target of a copy, and `from` can name more than one. The rule reads each row that those copies loaded, through the reader view of each target. `from` can also name a `View` that comes before the computed dataset in `derived`. See [Write a rule](../../elt/README.md#write-a-rule) in elt.
 
-A computed dataset keeps one output row for each key, in the table `_warehouse.raw_<name>`, beside its history. Readers query the view `marts.<name>`. A computed dataset that has the name of a reader view of a copy is refused before the pipeline reads. Its columns are the same as in [elt-sqlite](../sqlite/README.md#declare-a-computed-dataset): the key, `input_hash`, `rule`, `status` (`computed`, `empty` or `failed`), `error`, and the columns of the rule. A `text` column of a rule is `TEXT`, a `blob` column is `BYTEA`, and an `integer` column is `BIGINT`. A `vector` column is `BYTEA` that holds the bytes of `toSql` of `@zukhruf/vectors/sqlite`, float32 values little-endian, as in elt-sqlite; `fromSql(Vector, bytes)` of the same package reads them back. The driver `postgres` gives a `BIGINT` as a string by default.
+A computed dataset keeps one output row for each key, in the table `_warehouse.raw_<name>`, beside its history. Readers query the view `marts.<name>`. A computed dataset that has the name of a reader view of a copy is refused before the pipeline reads. Its columns are the same as in [elt-sqlite](../sqlite/README.md#declare-a-computed-dataset): the key, `input_hash`, `rule`, `status` (`computed`, `empty` or `failed`), `error`, and the columns of the rule. A `text` column of a rule is `TEXT`, a `blob` column is `BYTEA`, and an `integer` column is `BIGINT`. A `vector` column is a `vector(n)` of [pgvector](https://github.com/pgvector/pgvector), with the dimensions of the column (see [Store vectors](#store-vectors)). The driver `postgres` gives a `BIGINT` as a string by default.
 
 At each refresh, the computed dataset compares the inputs with the output rows:
 
@@ -300,13 +300,53 @@ A computed dataset whose rule is a `TableRule` keeps two tables in `_warehouse`.
 - `raw_<name>_parts` has `committed_in` and `_elt_row_hash` after the place columns. The view `<name>_parts` shows the key, `seq`, `part_hash`, the content columns and the place columns.
 - A column of the rule, in `output` or in `place`, cannot have the name of the key, `seq`, `part_hash`, an engine column, `committed_in`, `_elt_row_hash` or `replaced_in`, and a name cannot be in both `output` and `place`. Postgres keeps the case of a quoted name, so these names are compared as they are written. The constructor of `ComputedDataset` refuses such a rule with a `TypeError` that names the column and the dataset. A pipeline whose copy makes `marts.<name>_parts` or `_warehouse.raw_<name>_parts` is refused before it reads.
 
+### Store vectors
+
+A `vector` column of a rule, such as the vector of an `Embedding` of `@eltjs/embedding`, is a `vector(n)` of pgvector. The destination writes each vector with `toSql` of the npm package [`pgvector`](https://github.com/pgvector/pgvector-node), which has each float32 value in full. `fromSql` of the same package reads the text of the column back.
+
+The first make of a table with a vector column needs the type `vector`. When the database does not have it (SQLSTATE `42704`), the destination runs `CREATE EXTENSION IF NOT EXISTS vector` and makes the table again, as Haystack, LangChain (`create_extension=True`) and pgai do. To keep the extensions in the hands of a person, construct the destination with `createExtension: false`:
+
+```ts
+const marts = new PostgresDestination({ url, createExtension: false });
+```
+
+Then a computed dataset with a vector column, in a database with no type `vector`, fails with a `PostgresSetupError` that tells what to run. A server that has no pgvector installed refuses `CREATE EXTENSION` with SQLSTATE `0A000`, and the dataset fails with a `PostgresSetupError` too. A role that may not create the extension (pgvector is not a trusted extension, so only a superuser can) fails the dataset with SQLSTATE `42501`. Each of these is of failure type `config`.
+
+`indexes` declares the indexes of `_warehouse.raw_<name>`, after dbt's `indexes` config and pgai's `indexing_hnsw`:
+
+```ts
+import { ComputedDataset, hnsw } from '@eltjs/elt-postgresql';
+
+const vectors = new ComputedDataset({
+  into: marts,
+  name: 'chunk_vectors',
+  description: 'The vector of each chunk text.',
+  from: [chunkTexts],
+  compute: embedding,
+  indexes: [
+    { type: 'vector', column: 'vector', metric: 'cosine', build: hnsw() },
+    { type: 'btree', columns: ['committed_in'] },
+  ],
+});
+```
+
+- An index is a `PostgresIndex`: `{ type: 'btree', columns }`, or `{ type: 'vector', column, metric, build }`. It is the index declaration of elt, `DatasetIndex`, which elt-sqlserver also takes.
+- The metric gives the operator class of pgvector, and thus the operator of the search: `cosine` is `vector_cosine_ops` (`<=>`), `euclidean` is `vector_l2_ops` (`<->`), and `dot` is `vector_ip_ops` (`<#>`).
+- `hnsw({ m, efConstruction })` is the build of an HNSW index. pgvector uses its own default for each option that is not given.
+- The constructor refuses, with a `TypeError`, an index on a column that the table does not have, and a vector index on a column that is not a vector.
+- The destination names each index `ix_elt_` and the first 16 hex digits of the SHA-256 of the part of its `CREATE INDEX` statement after the name. That part holds the table and each option, so each change of the declaration is another name. An index name is unique in its schema in Postgres, so the table must be part of the name.
+- Each refresh, in the transaction that makes the tables, drops each `ix_elt_` index of the table that is no longer declared, and makes each declared index that is missing. No row is computed again, and each row keeps its commit. An index of another name, such as one that a person made, stays.
+- When the declaration of the table changes, for example the dimensions of a vector column, the refresh makes the table again, and the same refresh makes its declared indexes on the new table.
+
+See [ADR 0011](./docs/adr/0011-a-vector-column-is-a-pgvector-vector-with-declared-indexes.md).
+
 ## When something fails
 
 - **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the refresh after the next pass tries the input again.
 - **A dataset failure**, for example a query that Postgres refuses, fails only its dataset: its row of `marts.derived_status` has the state `failed` and the error, the other datasets still refresh, and the refresh after the next pass tries it again. A watch yields it as a `DatasetFailure`, and a run rejects with the `DerivedDatasetError` of the failed dataset, or a `DerivedDatasetsError` when more than one failed. See [elt ADR 0031](../../elt/docs/adr/0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md).
 - **A table that is gone**, for example one that a person dropped by hand, is no failure. A computed dataset that reads it waits and keeps its output rows. When the copy loads the table again, the dataset asks the rule only for inputs that changed.
 - **A copy that failed** keeps its last committed rows. The derived datasets read those rows.
-- **The [failure type](../../elt/README.md#failure-types)** of an error of the destination or of `PostgresCheckpointStore` is `config` when Postgres refuses the setup with one of these SQLSTATE codes: `42501` (the role does not have a privilege that a statement needs, for example to make the schemas `_warehouse` and `marts`, or the table `_warehouse._elt_checkpoints`), `28P01` (a wrong password), `28000` (a role that cannot log in) and `3D000` (a database that is not there). Each other error, for example a server that the load cannot reach, is `system`.
+- **The [failure type](../../elt/README.md#failure-types)** of an error of the destination or of `PostgresCheckpointStore` is `config` when Postgres refuses the setup with one of these SQLSTATE codes: `42501` (the role does not have a privilege that a statement needs, for example to make the schemas `_warehouse` and `marts`, or the table `_warehouse._elt_checkpoints`), `28P01` (a wrong password), `28000` (a role that cannot log in) and `3D000` (a database that is not there). A `PostgresSetupError`, such as a database with no type `vector` while the destination may not create the extension, or a server with no pgvector installed, is `config` too. Each other error, for example a server that the load cannot reach, is `system`.
 
 ## Sync history
 
@@ -368,6 +408,7 @@ Each [view](#declare-a-view) and [computed dataset](#declare-a-computed-dataset)
 - [ADR 0008](./docs/adr/0008-derived-datasets-follow-elt-sqlite.md): derived datasets follow elt-sqlite.
 - [ADR 0009](./docs/adr/0009-a-running-attempt-holds-a-lock-of-its-session.md): a running attempt holds a lock of its session.
 - [ADR 0010](./docs/adr/0010-readers-look-in-marts-and-elt-keeps-its-tables-in-warehouse.md): readers look in `marts`, and elt keeps its tables in `_warehouse`.
+- [ADR 0011](./docs/adr/0011-a-vector-column-is-a-pgvector-vector-with-declared-indexes.md): a vector column is a `vector(n)` of pgvector, with declared indexes.
 
 ## Development
 

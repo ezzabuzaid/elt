@@ -37,20 +37,28 @@ export class PostgresDestination extends Destination<PostgresTable> {
   // Delta Lake keeps its log. The destinations of one database share one
   // numbering, so the shortest retention among them decides.
   readonly retention: Temporal.Duration;
+  // Whether a computed dataset with a vector column runs CREATE EXTENSION IF
+  // NOT EXISTS vector when the database has no type vector, as Haystack's
+  // and LangChain's create_extension do: true unless set. When false, such a
+  // dataset fails with a PostgresSetupError, of failure type config.
+  readonly createExtension: boolean;
   readonly #url: string;
 
   constructor({
     url,
     retention = Temporal.Duration.from({ days: 30 }),
+    createExtension = true,
   }: {
     url: string;
     retention?: Temporal.Duration;
+    createExtension?: boolean;
   }) {
     super();
     if (retention.sign < 0)
       throw new RangeError(`Retention ${retention} must not be negative`);
     this.#url = connectionUrl(url);
     this.retention = retention;
+    this.createExtension = createExtension;
     Object.freeze(this);
   }
 

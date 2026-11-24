@@ -37,6 +37,15 @@ The leaders:
 - A DiskANN index made on an empty table starts as an exact (KNN) index, and Azure SQL builds its graph after the rows come (`@zukhruf/vectors` README, "SQL Server: what the probes found"). An index on 3 rows stayed exact; after 1,200 more rows its graph was built (the Azure probe below).
 - An `NVARCHAR(MAX)` column, such as `status`, cannot be an index key (error 1919), so the engine columns of a dataset are not index keys; `committed_in` is.
 - The declaration type lives in this package only (strike 1). It moves into elt when a second destination needs indexes.
+
+## Amendment (2026-11-24): the declaration moved into elt
+
+elt-postgresql declares indexes too (its ADR 0011, backlog #5403). That is strike 2, the trigger that this ADR named. Thus the type moved into `@eltjs/elt` as `DatasetIndex<Ordinary, Build>`, with `VectorMetric`:
+
+- The two destinations share the shape: an ordinary index over key columns, or a vector index over one column with the metric `cosine`, `euclidean` or `dot`.
+- `Ordinary` is the name of the ordinary index in the engine: `nonclustered` here, `btree` in Postgres. `Build` is the options of the build of a vector index: none here, as SQL Server takes no options for DiskANN; `build: hnsw(...)` in Postgres.
+- `SqlServerIndex` is now `DatasetIndex<'nonclustered', Record<never, never>>`. A declaration of this package is the same as before, and each index keeps its name.
+- The refusals, the names of the indexes and the reconcile stay in this package: they read `sys.indexes` and follow the rules of SQL Server, such as error 574. In Postgres an index name is unique in its schema, so elt-postgresql hashes its statement, which holds the table, and this package does not.
 - Azure SQL Database makes the DiskANN index on the `bigint` `_elt_row`, with no preview feature, and the `MERGE` of each commit and its `OUTPUT deleted.*` work on the indexed table (the Azure probe below).
 - `VECTOR_SEARCH` uses the index only when its `TABLE` is the raw table and its result is not joined in the same query block. Through the reader view `marts.<name>`, a `UNION ALL` of the raw table and its history, it runs as an exact scan. Thus an approximate search reads `_warehouse.raw_<name>` as it is now, through the search function `marts.<name>_nearest` that the destination makes for the vector index ([ADR 0014](./0014-each-vector-index-has-a-search-function-in-marts.md)). A search as of a position reads `marts.<name>` in a reading, with no index.
 
