@@ -39,6 +39,7 @@ import {
   catalog,
   checks,
   coverage,
+  keyOf,
   syncHistoryTables,
   syncHistoryViews,
 } from './sql-server-sync-history-schema.ts';
@@ -88,7 +89,7 @@ export class SqlServerSyncHistory extends SyncHistory<SqlServerTable> {
     await transaction(session, async () => {
       for (const { stream, at } of streamChecks)
         await session.query(
-          `UPDATE ${checks} SET [checked_at] = CAST(@at AS datetimeoffset(3)) WHERE [connector] = @connector AND [stream] = @stream;
+          `UPDATE ${checks} SET [checked_at] = CAST(@at AS datetimeoffset(3)) WHERE [connector_key] = ${keyOf('@connector')} AND [stream_key] = ${keyOf('@stream')};
            IF @@ROWCOUNT = 0
              INSERT INTO ${checks} ([connector], [stream], [checked_at]) VALUES (@connector, @stream, CAST(@at AS datetimeoffset(3)));`,
           { connector: connection.name, stream, at: at.toISOString() },

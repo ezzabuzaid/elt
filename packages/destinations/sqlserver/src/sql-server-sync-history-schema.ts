@@ -14,9 +14,14 @@ const derivedStatus = inWarehouse('derived_status');
 
 // A name of a connection or a stream compares by its code points, as in
 // Postgres. A key of text of any length is unique by its SHA-256 (ADR 0004).
+// A statement finds the row of a name by keyOf of its parameter, so it seeks
+// the primary key and locks only that row: a statement that compares the
+// names reads each row of the table with an update lock, and two connections
+// that record at the same time wait for the rows of each other (error 1205).
 const name = 'nvarchar(max) COLLATE Latin1_General_100_BIN2';
-const keyOf = (column: string) =>
-  `CAST(HASHBYTES('SHA2_256', [${column}]) AS binary(32)) PERSISTED NOT NULL`;
+export const keyOf = (value: string) =>
+  `CAST(HASHBYTES('SHA2_256', ${value}) AS binary(32))`;
+const key = (column: string) => `${keyOf(`[${column}]`)} PERSISTED NOT NULL`;
 const statuses = `(N'running', N'succeeded', N'partial', N'failed', N'cancelled')`;
 
 export const syncHistoryTables = `
@@ -34,7 +39,7 @@ export const syncHistoryTables = `
   IF OBJECT_ID(N'${coverage}', N'U') IS NULL
     CREATE TABLE ${coverage} (
       [attempt_id] bigint NOT NULL REFERENCES ${attempts} ([id]),
-      [stream] ${name} NOT NULL, [stream_key] AS ${keyOf('stream')}, [target_table] nvarchar(128) NOT NULL,
+      [stream] ${name} NOT NULL, [stream_key] AS ${key('stream')}, [target_table] nvarchar(128) NOT NULL,
       [sync_mode] nvarchar(20) NOT NULL, [destination_sync_mode] nvarchar(20) NOT NULL,
       [description] nvarchar(max) NOT NULL CHECK (TRIM([description]) <> N''), [selection] json NOT NULL,
       [status] nvarchar(20) NOT NULL DEFAULT N'running' CHECK ([status] IN ${statuses}),
@@ -43,8 +48,8 @@ export const syncHistoryTables = `
       PRIMARY KEY ([attempt_id], [stream_key]));
   IF OBJECT_ID(N'${checks}', N'U') IS NULL
     CREATE TABLE ${checks} (
-      [connector] ${name} NOT NULL, [connector_key] AS ${keyOf('connector')},
-      [stream] ${name} NOT NULL, [stream_key] AS ${keyOf('stream')},
+      [connector] ${name} NOT NULL, [connector_key] AS ${key('connector')},
+      [stream] ${name} NOT NULL, [stream_key] AS ${key('stream')},
       [checked_at] datetimeoffset(3) NOT NULL,
       PRIMARY KEY ([connector_key], [stream_key]));
   ${derivedStatusTable}`;

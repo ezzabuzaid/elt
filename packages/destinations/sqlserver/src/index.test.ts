@@ -550,6 +550,48 @@ test('a commit that applies the retention while another connection opens its loa
   );
 });
 
+test('connections of one watch that record their checks at the same time each record every stream, and none is chosen as a deadlock victim', async () => {
+  await using database = await scratch();
+  const { login, admin } = database;
+  const warehouse = new SqlServerDestination({ login });
+  const history = new SqlServerSyncHistory({ login });
+  const connections = ['notes_0', 'notes_1', 'notes_2', 'notes_3'].map(
+    (name) => notesConnection(name, warehouse, login).connection,
+  );
+  const streams = Array.from({ length: 20 }, (_, index) => `stream_${index}`);
+  await history.install();
+  // A watch records the checks of a connection at most once a minute.
+  const minutes = Array.from(
+    { length: 10 },
+    (_, minute) => new Date(Date.UTC(2026, 10, 24, 9, minute)),
+  );
+
+  const failures = [];
+  for (const at of minutes) {
+    const recorded = await Promise.allSettled(
+      connections.map((connection) =>
+        history.checked(connection, at, async (at) =>
+          streams.map((stream) => ({ stream, at })),
+        ),
+      ),
+    );
+    for (const outcome of recorded)
+      if (outcome.status === 'rejected') failures.push(outcome.reason);
+  }
+
+  assert.deepEqual(failures, []);
+  assert.deepEqual(
+    await admin.query(
+      'SELECT [connector], COUNT(*) AS [streams], MIN([checked_at]) AS [checked_at] FROM _warehouse.stream_checks GROUP BY [connector] ORDER BY [connector]',
+    ),
+    connections.map(({ name }) => ({
+      connector: name,
+      streams: streams.length,
+      checked_at: minutes.at(-1),
+    })),
+  );
+});
+
 test('a commit after the window deletes the commits before the oldest position it keeps and the closed loads left with none, keeps an open load, and a reading before that position is expired while that position reads', async () => {
   await using database = await scratch();
   const { login, admin } = database;
