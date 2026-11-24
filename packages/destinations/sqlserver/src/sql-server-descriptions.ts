@@ -7,7 +7,12 @@ const mostBytes = 7500;
 // A target's descriptions as SQL Server keeps them: one MS_Description
 // extended property on the table, its view or its function, and one on each
 // column, the property that SQL Server Management Studio and the SQL Server
-// source of elt read. A null description removes the property.
+// source of elt read. A null description removes the property. A property
+// whose value has the bytes of its description stays as it is: SQL Server
+// keeps no versions of metadata, so each write of one fails the SNAPSHOT
+// transactions that began before it and read the object with error 3961
+// (ADR 0017). It compares bytes, as the collation of the database ignores
+// case and trailing spaces.
 export class TargetDescriptions {
   readonly #table: string;
   readonly #columns: Readonly<Record<string, string | null>>;
@@ -34,7 +39,7 @@ export class TargetDescriptions {
   ): Promise<void> {
     await connection.query(
       `DECLARE @object int = OBJECT_ID(QUOTENAME(@schema) + N'.' + QUOTENAME(@name));
-       DECLARE @column sysname, @description nvarchar(4000), @level2 varchar(10), @has bit;
+       DECLARE @column sysname, @description nvarchar(4000), @level2 varchar(10), @has bit, @stored nvarchar(4000);
        DECLARE descriptions CURSOR LOCAL FAST_FORWARD FOR
          SELECT [column], [description] FROM OPENJSON(@descriptions) WITH ([column] sysname '$[0]', [description] nvarchar(4000) '$[1]');
        OPEN descriptions;
@@ -42,13 +47,14 @@ export class TargetDescriptions {
        WHILE @@FETCH_STATUS = 0
        BEGIN
          SET @level2 = IIF(@column IS NULL, NULL, 'COLUMN');
-         SET @has = IIF(EXISTS (SELECT 1 FROM sys.extended_properties WHERE [class] = 1 AND [major_id] = @object
-           AND [minor_id] = IIF(@column IS NULL, 0, COLUMNPROPERTY(@object, @column, 'ColumnId')) AND [name] = N'MS_Description'), 1, 0);
+         SELECT @has = 0, @stored = NULL;
+         SELECT @has = 1, @stored = CAST([value] AS nvarchar(4000)) FROM sys.extended_properties WHERE [class] = 1 AND [major_id] = @object
+           AND [minor_id] = IIF(@column IS NULL, 0, COLUMNPROPERTY(@object, @column, 'ColumnId')) AND [name] = N'MS_Description';
          IF @has = 1 AND @description IS NULL
            EXEC sp_dropextendedproperty N'MS_Description', 'SCHEMA', @schema, @kind, @name, @level2, @column;
-         ELSE IF @has = 1
+         ELSE IF @has = 1 AND CAST(@stored AS varbinary(8000)) <> CAST(@description AS varbinary(8000))
            EXEC sp_updateextendedproperty N'MS_Description', @description, 'SCHEMA', @schema, @kind, @name, @level2, @column;
-         ELSE IF @description IS NOT NULL
+         ELSE IF @has = 0 AND @description IS NOT NULL
            EXEC sp_addextendedproperty N'MS_Description', @description, 'SCHEMA', @schema, @kind, @name, @level2, @column;
          FETCH NEXT FROM descriptions INTO @column, @description;
        END;
