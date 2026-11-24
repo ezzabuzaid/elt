@@ -4,8 +4,8 @@ import { isDeepStrictEqual } from 'node:util';
 import {
   type Clearing,
   type CopyConfiguration,
+  type DeleteOperation,
   type FieldValues,
-  type KeyValue,
   type Partition,
   type ReloadMode,
   type Reloads,
@@ -156,11 +156,9 @@ export abstract class PostgresWriter extends Writer {
     return this.table.columns.map((column) => column.encode(record));
   }
 
-  // Only a load that identifies rows by key can remove one: the key's values,
-  // at their columns, and null elsewhere.
-  protected deletionRow(
-    _key: Readonly<Record<string, KeyValue>>,
-  ): EncodedValue[] {
+  // The stage row of a deletion. Only a load that identifies rows by key can
+  // remove one.
+  protected deletionRow(_operation: DeleteOperation): EncodedValue[] {
     throw new TypeError('Only deduplicating loads can apply deletions');
   }
 
@@ -875,7 +873,7 @@ export abstract class PostgresWriter extends Writer {
         const row =
           operation.type === 'RECORD'
             ? this.encode(data)
-            : this.deletionRow(operation.key);
+            : this.deletionRow(operation);
         const hashed =
           operation.type === 'RECORD' ? rowHash(columns, row) : null;
         const text = this.#serialize(

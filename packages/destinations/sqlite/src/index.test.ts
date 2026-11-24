@@ -3928,10 +3928,13 @@ const checkpoint = (stream: string, state: unknown) => ({
   stream,
   state,
 });
-const removal = (stream: string, id: string) => ({
+// A deletion of a cursor_newer copy carries its cursor; one of a replace
+// copy carries none.
+const removal = (stream: string, id: string, cursor?: number) => ({
   type: 'DELETE' as const,
   stream,
   key: { id },
+  ...(cursor === undefined ? {} : { cursor }),
 });
 
 test('two loads into one SQLite file commit side by side across their commits, and readers keep reading', async () => {
@@ -4313,7 +4316,7 @@ test('stored file references follow committed SQLite rows and the rows of their 
   // and so its file.
   assert.equal(await readFile(at(original), 'utf8'), 'original');
   source.scripts = {
-    docs: [removal('docs', 'a'), checkpoint('docs', { at: 4 })],
+    docs: [removal('docs', 'a', 4), checkpoint('docs', { at: 4 })],
   };
   await pipeline.run();
   assert.equal(await readFile(at(replacement), 'utf8'), 'replacement');
@@ -4685,12 +4688,12 @@ test('a staged unit merges like its operations applied one at a time, under repl
   const checkpoints = new SQLiteCheckpointStore({
     path: join(scratch.path, 'state.sqlite'),
   });
-  const script = (stream: string) => [
+  const script = (stream: string, versioned: boolean) => [
     record(stream, 'a', 1),
-    removal(stream, 'a'),
+    removal(stream, 'a', versioned ? 1 : undefined),
     record(stream, 'a', 2),
     record(stream, 'b', 1),
-    removal(stream, 'b'),
+    removal(stream, 'b', versioned ? 2 : undefined),
     record(stream, 'c', 5),
     record(stream, 'c', 3),
     record(stream, 'd', 4),
@@ -4701,8 +4704,8 @@ test('a staged unit merges like its operations applied one at a time, under repl
   // cursor_newer needs a cursor the copy selects, not a source-defined one.
   const guarded = scripted('guarded', { snapshot: false });
   const source = new ScriptedSource([replacing, guarded], {
-    replacing: script('replacing'),
-    guarded: script('guarded'),
+    replacing: script('replacing', false),
+    guarded: script('guarded', true),
   });
 
   await new Pipeline({
@@ -4738,8 +4741,11 @@ test('a staged unit merges like its operations applied one at a time, under repl
       .prepare(`SELECT id, version FROM ${table} ORDER BY id`)
       .all()
       .map(({ id, version }) => `${id}:${version}`);
-  // Sequentially: a is deleted then reloaded at 2; b ends deleted; replace
-  // keeps each key's last record, cursor_newer its greatest cursor.
+  // replace applies the operations in source order: a is deleted then
+  // reloaded at 2, b ends deleted, and each key keeps its last record.
+  // cursor_newer ranks a key's records and deletions by cursor, the first on
+  // ties: a@2 beats the deletion at 1, which ties a@1; the deletion at 2
+  // beats b@1; c keeps its greatest cursor.
   assert.deepEqual(rows('replacing'), ['a:2', 'c:3', 'd:4']);
   assert.deepEqual(rows('guarded'), ['a:2', 'c:5', 'd:4']);
 });
@@ -4769,22 +4775,23 @@ test('a key named last merges like its operations applied one at a time', async 
       sourceDefinedCursor: snapshot ? true : undefined,
       emitsDeletes: true,
     });
-  const script = (stream: string) => {
+  const script = (stream: string, versioned: boolean) => {
     const put = (last: string, version: number) => ({
       stream,
       data: { last, version },
     });
-    const remove = (last: string) => ({
+    const remove = (last: string, cursor: number) => ({
       type: 'DELETE' as const,
       stream,
       key: { last },
+      ...(versioned ? { cursor } : {}),
     });
     return [
       put('a', 1),
-      remove('a'),
+      remove('a', 1),
       put('a', 2),
       put('b', 1),
-      remove('b'),
+      remove('b', 2),
       put('c', 5),
       put('c', 3),
       checkpoint(stream, { page: 1 }),
@@ -4793,8 +4800,8 @@ test('a key named last merges like its operations applied one at a time', async 
   const replacing = keyed('replacing', true);
   const guarded = keyed('guarded', false);
   const source = new ScriptedSource([replacing, guarded], {
-    replacing: script('replacing'),
-    guarded: script('guarded'),
+    replacing: script('replacing', false),
+    guarded: script('guarded', true),
   });
 
   await new Pipeline({
@@ -4830,7 +4837,8 @@ test('a key named last merges like its operations applied one at a time', async 
       .prepare(`SELECT "last", version FROM ${table} ORDER BY "last"`)
       .all()
       .map(({ last, version }) => `${last}:${version}`);
-  // a is deleted, then loaded again at 2; b ends deleted.
+  // replace: a is deleted, then loaded again at 2; b ends deleted.
+  // cursor_newer: a@2 beats the deletion at 1, the deletion at 2 beats b@1.
   assert.deepEqual(rows('replacing'), ['a:2', 'c:3']);
   assert.deepEqual(rows('guarded'), ['a:2', 'c:5']);
 });
@@ -4862,22 +4870,23 @@ test('a key and cursor that sanitizing renames merge under their renamed columns
       sourceDefinedCursor: snapshot ? true : undefined,
       emitsDeletes: true,
     });
-  const script = (stream: string) => {
+  const script = (stream: string, versioned: boolean) => {
     const put = (line: string, version: number) => ({
       stream,
       data: { 'Line Id': line, 'Version No': version },
     });
-    const remove = (line: string) => ({
+    const remove = (line: string, cursor: number) => ({
       type: 'DELETE' as const,
       stream,
       key: { 'Line Id': line },
+      ...(versioned ? { cursor } : {}),
     });
     return [
       put('a', 1),
-      remove('a'),
+      remove('a', 1),
       put('a', 2),
       put('b', 1),
-      remove('b'),
+      remove('b', 2),
       put('c', 5),
       put('c', 3),
       checkpoint(stream, { page: 1 }),
@@ -4893,8 +4902,8 @@ test('a key and cursor that sanitizing renames merge under their renamed columns
       new Connection({
         name: 'test',
         source: new ScriptedSource([replacing, guarded], {
-          replacing: script('replacing'),
-          guarded: script('guarded'),
+          replacing: script('replacing', false),
+          guarded: script('guarded', true),
         }),
         destination,
         checkpoints: new SQLiteCheckpointStore({
@@ -4926,7 +4935,8 @@ test('a key and cursor that sanitizing renames merge under their renamed columns
       )
       .all()
       .map(({ line, version }) => `${line}:${version}`);
-  // a is deleted, then loaded again at 2; b ends deleted.
+  // replace: a is deleted, then loaded again at 2; b ends deleted.
+  // cursor_newer: a@2 beats the deletion at 1, the deletion at 2 beats b@1.
   assert.deepEqual(rows('replacing'), ['a:2', 'c:3']);
   assert.deepEqual(rows('guarded'), ['a:2', 'c:5']);
 });
@@ -5793,7 +5803,12 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
   }
 
   messages = [
-    { type: 'DELETE', stream: 'ledger', key: { id: '9007199254740993' } },
+    {
+      type: 'DELETE',
+      stream: 'ledger',
+      key: { id: '9007199254740993' },
+      cursor: '9007199254740994',
+    },
   ];
   await pipeline.run();
   assert.deepEqual(

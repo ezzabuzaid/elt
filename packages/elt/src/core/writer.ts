@@ -29,16 +29,27 @@ export type LoadFailure = {
   readonly failureType: FailureType;
 };
 
-// What a stage applies, in source order. A RESET of the whole stream opens a
-// reload (see Stage.reloading). A RESET of one partition drops what the stage
-// holds of it, and the next commit first empties that partition of the target.
+type KeyedDeletion = {
+  readonly type: 'DELETE';
+  readonly key: Readonly<Record<string, KeyValue>>;
+};
+
+// What a stage applies, in source order. A DELETE carries a cursor exactly
+// when the copy deduplicates with cursor_newer: the deletion then competes
+// with the records of its key by that cursor. A RESET of the whole stream
+// opens a reload (see Stage.reloading). A RESET of one partition drops what
+// the stage holds of it, and the next commit first empties that partition of
+// the target.
 export type WriteOperation =
   | { readonly type: 'RECORD'; readonly data: unknown }
-  | {
-      readonly type: 'DELETE';
-      readonly key: Readonly<Record<string, KeyValue>>;
-    }
+  | (KeyedDeletion & { readonly cursor?: never })
+  | (KeyedDeletion & { readonly cursor: string | number })
   | { readonly type: 'RESET'; readonly partition: Partition | null };
+
+export type DeleteOperation = Extract<
+  WriteOperation,
+  { readonly type: 'DELETE' }
+>;
 
 // Scalar values in a target field, without exposing storage mechanisms.
 export type FieldValues = (field: string) => AsyncIterable<unknown>;

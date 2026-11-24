@@ -304,7 +304,9 @@ test('Postgres stores per-field attachment references and reconciles only the fi
     );
     assert.equal((await storedFiles(directories[i])).length, 2);
   }
-  source.messages = [{ type: 'DELETE', stream: 'docs', key: { id: 'a' } }];
+  source.messages = [
+    { type: 'DELETE', stream: 'docs', key: { id: 'a' }, cursor: 4 },
+  ];
   await pipeline.run();
   for (const i of [0, 1] as const) {
     assert.equal(
@@ -726,7 +728,7 @@ test('file text survives replay, replacement and deletion with checkpoints', asy
   await writeFile(file, 'updated');
   source.messages = [
     { stream: stream.name, data: { id: 'note', version: 2 }, file },
-    { type: 'DELETE', stream: stream.name, key: { id: 'empty' } },
+    { type: 'DELETE', stream: stream.name, key: { id: 'empty' }, cursor: 2 },
   ];
   await pipeline.run();
   assert.equal(
@@ -2179,10 +2181,13 @@ const checkpoint = (stream: string, state: unknown) => ({
   stream,
   state,
 });
-const removal = (stream: string, id: string) => ({
+// A deletion of a cursor_newer copy carries its cursor; one of a replace
+// copy carries none.
+const removal = (stream: string, id: string, cursor?: number) => ({
   type: 'DELETE' as const,
   stream,
   key: { id },
+  ...(cursor === undefined ? {} : { cursor }),
 });
 // More records than one flush holds, so some already sit in the stage table.
 const flushed = (stream: string, prefix: string) =>
@@ -2387,12 +2392,12 @@ test('a staged unit merges like its operations applied one at a time, under repl
   const destination = new PostgresDestination({
     url: database.connectionString,
   });
-  const script = (stream: string) => [
+  const script = (stream: string, versioned: boolean) => [
     record(stream, 'a', 1),
-    removal(stream, 'a'),
+    removal(stream, 'a', versioned ? 1 : undefined),
     record(stream, 'a', 2),
     record(stream, 'b', 1),
-    removal(stream, 'b'),
+    removal(stream, 'b', versioned ? 2 : undefined),
     record(stream, 'c', 5),
     record(stream, 'c', 3),
     record(stream, 'd', 4),
@@ -2403,8 +2408,8 @@ test('a staged unit merges like its operations applied one at a time, under repl
   // cursor_newer needs a cursor the copy selects, not a source-defined one.
   const guarded = scripted('guarded', { snapshot: false });
   const source = new ScriptedSource([replacing, guarded], {
-    replacing: script('replacing'),
-    guarded: script('guarded'),
+    replacing: script('replacing', false),
+    guarded: script('guarded', true),
   });
 
   await new Pipeline({
@@ -2434,8 +2439,11 @@ test('a staged unit merges like its operations applied one at a time, under repl
     ],
   }).run();
 
-  // Sequentially: a is deleted then reloaded at 2; b ends deleted; replace
-  // keeps each key's last record, cursor_newer its greatest cursor.
+  // replace applies the operations in source order: a is deleted then
+  // reloaded at 2, b ends deleted, and each key keeps its last record.
+  // cursor_newer ranks a key's records and deletions by cursor, the first on
+  // ties: a@2 beats the deletion at 1, which ties a@1; the deletion at 2
+  // beats b@1; c keeps its greatest cursor.
   assert.deepEqual(await loaded(sql, 'replacing'), ['a:2', 'c:3', 'd:4']);
   assert.deepEqual(await loaded(sql, 'guarded'), ['a:2', 'c:5', 'd:4']);
 });
@@ -2605,22 +2613,23 @@ test('a key named last merges like its operations applied one at a time', async 
       sourceDefinedCursor: snapshot ? true : undefined,
       emitsDeletes: true,
     });
-  const script = (stream: string) => {
+  const script = (stream: string, versioned: boolean) => {
     const put = (last: string, version: number) => ({
       stream,
       data: { last, version },
     });
-    const remove = (last: string) => ({
+    const remove = (last: string, cursor: number) => ({
       type: 'DELETE' as const,
       stream,
       key: { last },
+      ...(versioned ? { cursor } : {}),
     });
     return [
       put('a', 1),
-      remove('a'),
+      remove('a', 1),
       put('a', 2),
       put('b', 1),
-      remove('b'),
+      remove('b', 2),
       put('c', 5),
       put('c', 3),
       checkpoint(stream, { page: 1 }),
@@ -2629,8 +2638,8 @@ test('a key named last merges like its operations applied one at a time', async 
   const replacing = keyed('replacing', true);
   const guarded = keyed('guarded', false);
   const source = new ScriptedSource([replacing, guarded], {
-    replacing: script('replacing'),
-    guarded: script('guarded'),
+    replacing: script('replacing', false),
+    guarded: script('guarded', true),
   });
 
   await new Pipeline({
@@ -2666,7 +2675,8 @@ test('a key named last merges like its operations applied one at a time', async 
         `SELECT "last", version::int FROM marts.${table} ORDER BY "last" COLLATE "C"`,
       )
     ).map(({ last, version }) => `${last}:${version}`);
-  // a is deleted, then loaded again at 2; b ends deleted.
+  // replace: a is deleted, then loaded again at 2; b ends deleted.
+  // cursor_newer: a@2 beats the deletion at 1, the deletion at 2 beats b@1.
   assert.deepEqual(await rows('replacing'), ['a:2', 'c:3']);
   assert.deepEqual(await rows('guarded'), ['a:2', 'c:5']);
 });
@@ -2789,22 +2799,23 @@ test('a key and cursor past 63 bytes merge under their renamed columns, which th
       sourceDefinedCursor: snapshot ? true : undefined,
       emitsDeletes: true,
     });
-  const script = (stream: string) => {
+  const script = (stream: string, versioned: boolean) => {
     const put = (last: string, version: number) => ({
       stream,
       data: { last, [part]: 'p', [cursor]: version },
     });
-    const remove = (last: string) => ({
+    const remove = (last: string, cursor: number) => ({
       type: 'DELETE' as const,
       stream,
       key: { last, [part]: 'p' },
+      ...(versioned ? { cursor } : {}),
     });
     return [
       put('a', 1),
-      remove('a'),
+      remove('a', 1),
       put('a', 2),
       put('b', 1),
-      remove('b'),
+      remove('b', 2),
       put('c', 5),
       put('c', 3),
       checkpoint(stream, { page: 1 }),
@@ -2813,8 +2824,8 @@ test('a key and cursor past 63 bytes merge under their renamed columns, which th
   const replacing = keyed('replacing', true);
   const guarded = keyed('guarded', false);
   const source = new ScriptedSource([replacing, guarded], {
-    replacing: script('replacing'),
-    guarded: script('guarded'),
+    replacing: script('replacing', false),
+    guarded: script('guarded', true),
   });
 
   const pipeline = new Pipeline({
@@ -2851,7 +2862,8 @@ test('a key and cursor past 63 bytes merge under their renamed columns, which th
         `SELECT "last", "${column(part)}" AS part, "${column(cursor)}"::int AS version FROM marts.${table} ORDER BY "last" COLLATE "C"`,
       )
     ).map(({ last, part, version }) => `${last}:${part}:${version}`);
-  // a is deleted, then loaded again at 2; b ends deleted.
+  // replace: a is deleted, then loaded again at 2; b ends deleted.
+  // cursor_newer: a@2 beats the deletion at 1, the deletion at 2 beats b@1.
   assert.deepEqual(await rows('replacing'), ['a:p:2', 'c:p:3']);
   assert.deepEqual(await rows('guarded'), ['a:p:2', 'c:p:5']);
   const comment = async (table: string) =>
@@ -2871,12 +2883,20 @@ test('a key and cursor past 63 bytes merge under their renamed columns, which th
 
   // Against the rows the first run left: a deletion by the renamed key, and
   // a record older than the stored cursor.
-  const later = (stream: string) => [
-    { type: 'DELETE' as const, stream, key: { last: 'a', [part]: 'p' } },
+  const later = (stream: string, versioned: boolean) => [
+    {
+      type: 'DELETE' as const,
+      stream,
+      key: { last: 'a', [part]: 'p' },
+      ...(versioned ? { cursor: 3 } : {}),
+    },
     { stream, data: { last: 'c', [part]: 'p', [cursor]: 4 } },
     checkpoint(stream, { page: 2 }),
   ];
-  source.scripts = { replacing: later('replacing'), guarded: later('guarded') };
+  source.scripts = {
+    replacing: later('replacing', false),
+    guarded: later('guarded', true),
+  };
   await pipeline.run();
 
   assert.deepEqual(await rows('replacing'), ['c:p:4']);
@@ -4741,7 +4761,12 @@ test('string formats load exactly: microsecond times typed, finer ones as text t
   );
 
   source.messages = [
-    { type: 'DELETE', stream: 'ledger', key: { id: '9223372036854775807' } },
+    {
+      type: 'DELETE',
+      stream: 'ledger',
+      key: { id: '9223372036854775807' },
+      cursor: '2025-01-02T03:04:05.1234568Z',
+    },
   ];
   await pipeline.run();
   assert.deepEqual(

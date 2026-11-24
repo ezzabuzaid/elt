@@ -512,7 +512,7 @@ test('a file in a file storage that only an expired history row refers to is del
   const [stored] = asOf(destination, 'SELECT ref FROM documents');
   const kept = join(files.directory, String(stored?.ref));
   await pass([
-    { type: 'DELETE', stream: 'documents', key: { id: 'd1' } },
+    { type: 'DELETE', stream: 'documents', key: { id: 'd1' }, cursor: 2 },
     checkpoint('documents', 2),
   ]);
   await access(kept);
@@ -534,7 +534,7 @@ test('the select of a target as of a position, run on the file or on the file at
   await pass([note('n1', 2, 'second'), note('n2', 1), checkpoint('notes', 2)]);
   const second = newest(destination);
   await pass([
-    { type: 'DELETE', stream: 'notes', key: { id: 'n2' } },
+    { type: 'DELETE', stream: 'notes', key: { id: 'n2' }, cursor: 2 },
     note('n3', 1),
     checkpoint('notes', 3),
   ]);

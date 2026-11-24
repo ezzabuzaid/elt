@@ -7,8 +7,8 @@ import { transaction } from '@zukhruf/sqlite-transaction';
 import type {
   Clearing,
   CopyConfiguration,
+  DeleteOperation,
   FieldValues,
-  KeyValue,
   Partition,
   ReloadMode,
   Reloads,
@@ -246,9 +246,10 @@ export abstract class SQLiteWriter extends Writer {
     return this.table.columns.map((column) => column.encode(record));
   }
 
-  // Only a load that identifies rows by key can remove one.
-  protected deletionKeys(
-    _key: Readonly<Record<string, KeyValue>>,
+  // The columns and values of a deletion's stage row. Only a load that
+  // identifies rows by key can remove one.
+  protected deletionColumns(
+    _operation: DeleteOperation,
   ): readonly [readonly SQLiteColumn[], SQLInputValue[]] {
     throw new TypeError('Only deduplicating loads can apply deletions');
   }
@@ -779,10 +780,10 @@ export abstract class SQLiteWriter extends Writer {
           return;
         }
         if (operation.type === 'DELETE') {
-          const [keys, values] = this.deletionKeys(operation.key);
+          const [columns, values] = this.deletionColumns(operation);
           database
             .prepare(
-              `INSERT INTO ${stage} (${op}, ${keys.map((column) => column.quotedName).join(', ')}) VALUES ('D', ${keys.map(() => '?').join(', ')})`,
+              `INSERT INTO ${stage} (${op}, ${columns.map((column) => column.quotedName).join(', ')}) VALUES ('D', ${columns.map(() => '?').join(', ')})`,
             )
             .run(...values);
           return;

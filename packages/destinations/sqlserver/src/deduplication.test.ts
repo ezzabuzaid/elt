@@ -130,10 +130,17 @@ const note = (stream: string, id: string, version: number, body = id) => ({
   stream,
   data: { id, version, body },
 });
-const removal = (stream: string, id: string): SourceMessage => ({
+// A deletion of a cursor_newer copy carries its cursor; one of a replace
+// copy carries none.
+const removal = (
+  stream: string,
+  id: string,
+  cursor?: number,
+): SourceMessage => ({
   type: 'DELETE',
   stream,
   key: { id },
+  ...(cursor === undefined ? {} : { cursor }),
 });
 
 // A pipeline of one connection that deduplicates each stream into the
@@ -307,21 +314,21 @@ test(
 );
 
 test(
-  'the operations of one commit merge as if they applied one at a time, under replace and under cursor_newer, also when a key repeats',
+  'the operations of one commit merge in source order under replace, and by cursor under cursor_newer, also when a key repeats',
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const script = (stream: string) => [
+    const script = (stream: string, versioned: boolean) => [
       note(stream, 'a', 1),
-      removal(stream, 'a'),
+      removal(stream, 'a', versioned ? 1 : undefined),
       note(stream, 'a', 2),
       note(stream, 'b', 1),
-      removal(stream, 'b'),
+      removal(stream, 'b', versioned ? 2 : undefined),
       note(stream, 'c', 5),
       note(stream, 'c', 3),
       note(stream, 'd', 4),
       note(stream, 'd', 4, 'd again'),
-      removal(stream, 'never'),
+      removal(stream, 'never', versioned ? 1 : undefined),
     ];
     const { source, pipeline } = deduplicating(database.login, [
       { stream: notes('replacing'), dedupPolicy: 'replace' },
@@ -331,14 +338,17 @@ test(
       },
     ]);
     source.messages = {
-      replacing: script('replacing'),
-      guarded: script('guarded'),
+      replacing: script('replacing', false),
+      guarded: script('guarded', true),
     };
 
     await pipeline.run();
 
-    // a is deleted, then loaded again at 2; b ends deleted. replace keeps the
-    // last record of a key, cursor_newer the first with the greatest cursor.
+    // replace applies them in source order: a is deleted, then loaded again
+    // at 2, b ends deleted, and the last record of a key wins. cursor_newer
+    // ranks the records and deletions of a key by cursor, the first on ties:
+    // a@2 beats the deletion at 1, the deletion at 2 beats b@1, and the first
+    // d@4 wins.
     assert.deepEqual(await notesOf(database.admin, 'replacing'), [
       'a:2:a',
       'c:3:c',
@@ -353,7 +363,7 @@ test(
 );
 
 test(
-  'a deletion and then a record of its key in one commit replace the stored row, whatever its cursor, and the history keeps the stored row',
+  'in one commit, a deletion newer than the stored row beats an older record of its key that follows it, so no row stays, and the history keeps the stored row',
   { skip: emulation },
   async () => {
     await using database = await scratch();
@@ -367,17 +377,286 @@ test(
     await pipeline.run();
 
     source.messages = {
-      guarded: [removal('guarded', 'a'), note('guarded', 'a', 1, 'after')],
+      guarded: [removal('guarded', 'a', 6), note('guarded', 'a', 1, 'after')],
     };
     await pipeline.run();
 
-    // The deletion removes the stored row, so the older cursor that follows
-    // it has no row to lose to.
-    assert.deepEqual(await notesOf(database.admin, 'guarded'), ['a:1:after']);
+    // The deletion's cursor 6 beats the record's 1 in the stage, and then
+    // the stored row's 5, so it removes the stored row.
+    assert.deepEqual(await notesOf(database.admin, 'guarded'), []);
     assert.deepEqual(
       (await historyOf(database.admin)).map(({ body }) => body),
       ['stored'],
     );
+  },
+);
+
+// A pipeline that keeps the newest version of each note in marts.notes: a
+// cursor_newer copy, whose deletions carry their cursor.
+const versioned = (login: SqlServerLogin) =>
+  deduplicating(login, [
+    {
+      stream: notes('notes', { sourceCursor: false }),
+      dedupPolicy: 'cursor_newer',
+    },
+  ]);
+
+const checkpoint = (read: number): SourceMessage => ({
+  type: 'STATE',
+  stream: 'notes',
+  state: { read },
+});
+
+// The commit that wrote each stored note. The commit is internal, so only
+// the raw table shows it.
+const commitsOf = (admin: SqlServerConnection) =>
+  admin.query(
+    'SELECT id, CONVERT(nvarchar(20), committed_in) AS committed_in FROM _warehouse.raw_notes ORDER BY id',
+  );
+
+test(
+  'a tombstone older than the stored row deletes nothing: the row keeps its values and its commit, and the history keeps no copy of it',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = versioned(database.login);
+    source.messages = { notes: [note('notes', 'a', 5, 'stored')] };
+    await pipeline.run();
+    const written = await commitsOf(database.admin);
+
+    source.messages = { notes: [removal('notes', 'a', 3)] };
+    const [copied] = await pipeline.run();
+
+    // The run counts each deletion it applied, as it counts each record that
+    // cursor_newer discards. A refused deletion must not reach the update of
+    // the MERGE, whose values would then be the deletion's nulls.
+    assert.deepEqual(
+      { count: copied?.count, deleted: copied?.deleted },
+      { count: 0, deleted: 1 },
+    );
+    assert.deepEqual(await notesOf(database.admin, 'notes'), ['a:5:stored']);
+    assert.deepEqual(await commitsOf(database.admin), written);
+    assert.deepEqual(await historyOf(database.admin), []);
+  },
+);
+
+test(
+  'a tombstone newer than the stored row deletes it, and the history keeps the row',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = versioned(database.login);
+    source.messages = { notes: [note('notes', 'a', 5, 'stored')] };
+    await pipeline.run();
+
+    source.messages = { notes: [removal('notes', 'a', 7)] };
+    const [copied] = await pipeline.run();
+
+    assert.deepEqual(
+      { count: copied?.count, deleted: copied?.deleted },
+      { count: 0, deleted: 1 },
+    );
+    assert.deepEqual(await notesOf(database.admin, 'notes'), []);
+    assert.deepEqual(
+      (await historyOf(database.admin)).map(({ id, version, body }) => ({
+        id,
+        version,
+        body,
+      })),
+      [{ id: 'a', version: '5', body: 'stored' }],
+    );
+  },
+);
+
+test(
+  'a tombstone with the cursor of the stored row deletes nothing, as a record with that cursor replaces nothing',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = versioned(database.login);
+    source.messages = { notes: [note('notes', 'a', 5, 'stored')] };
+    await pipeline.run();
+
+    source.messages = { notes: [removal('notes', 'a', 5)] };
+    await pipeline.run();
+
+    assert.deepEqual(await notesOf(database.admin, 'notes'), ['a:5:stored']);
+    assert.deepEqual(await historyOf(database.admin), []);
+  },
+);
+
+test(
+  'in one commit, a tombstone older than a record before it loses to the record',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = versioned(database.login);
+    source.messages = {
+      notes: [note('notes', 'a', 5), removal('notes', 'a', 3)],
+    };
+
+    await pipeline.run();
+
+    assert.deepEqual(await notesOf(database.admin, 'notes'), ['a:5:a']);
+  },
+);
+
+test(
+  'in one commit, a tombstone newer than the records on both sides of it wins, so neither record loads',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = versioned(database.login);
+    source.messages = {
+      notes: [
+        note('notes', 'a', 1),
+        removal('notes', 'a', 6),
+        note('notes', 'a', 3),
+      ],
+    };
+
+    await pipeline.run();
+
+    assert.deepEqual(await notesOf(database.admin, 'notes'), []);
+  },
+);
+
+test(
+  'in one commit, of a record and a tombstone with the same cursor the first wins, whichever it is',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = versioned(database.login);
+    source.messages = { notes: [note('notes', 'b', 2)] };
+    await pipeline.run();
+
+    source.messages = {
+      notes: [
+        note('notes', 'a', 4),
+        removal('notes', 'a', 4),
+        removal('notes', 'b', 4),
+        note('notes', 'b', 4),
+      ],
+    };
+    await pipeline.run();
+
+    assert.deepEqual(await notesOf(database.admin, 'notes'), ['a:4:a']);
+  },
+);
+
+test(
+  'in one commit, of two tombstones the greatest cursor wins, whichever comes first',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = versioned(database.login);
+    source.messages = { notes: [note('notes', 'a', 5), note('notes', 'b', 5)] };
+    await pipeline.run();
+
+    source.messages = {
+      notes: [
+        removal('notes', 'a', 7),
+        removal('notes', 'a', 3),
+        removal('notes', 'b', 3),
+        removal('notes', 'b', 7),
+      ],
+    };
+    await pipeline.run();
+
+    assert.deepEqual(await notesOf(database.admin, 'notes'), []);
+  },
+);
+
+test(
+  'a replay after a reset of the checkpoint changes nothing: its old tombstone keeps the newer row, which keeps its commit, and the history gains no row',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const { source, pipeline } = versioned(database.login);
+    source.messages = {
+      notes: [
+        note('notes', 'a', 1),
+        checkpoint(1),
+        removal('notes', 'a', 2),
+        checkpoint(2),
+        note('notes', 'a', 3),
+        checkpoint(3),
+      ],
+    };
+    await pipeline.run();
+    const written = await commitsOf(database.admin);
+    const history = await historyOf(database.admin);
+
+    await new SqlServerCheckpointStore({ login: database.login }).reset(
+      'notes:notes',
+    );
+    await pipeline.run();
+
+    assert.deepEqual(await notesOf(database.admin, 'notes'), ['a:3:a']);
+    assert.deepEqual(await commitsOf(database.admin), written);
+    assert.deepEqual(
+      history.map(({ id, version }) => ({ id, version })),
+      [{ id: 'a', version: '1' }],
+    );
+    assert.deepEqual(await historyOf(database.admin), history);
+  },
+);
+
+test(
+  'a full refresh that replaces its target ranks tombstones with records by cursor too',
+  { skip: emulation },
+  async () => {
+    await using database = await scratch();
+    const stream = new Stream({
+      name: 'notes',
+      jsonSchema: {
+        type: 'object',
+        description: 'A note.',
+        properties: {
+          id: { type: 'string', description: 'Which note.' },
+          version: { type: 'integer', description: 'Its version.' },
+          body: { type: 'string', description: 'What it says.' },
+        },
+        required: ['id', 'version', 'body'],
+      },
+      primaryKey: ['id'],
+      supportedSyncModes: ['full_refresh'],
+      emitsDeletes: true,
+    });
+    const warehouse = new SqlServerDestination({ login: database.login });
+    const source = new Scripted([stream]);
+    source.messages = {
+      notes: [
+        note('notes', 'a', 5),
+        removal('notes', 'a', 3),
+        note('notes', 'b', 1),
+        removal('notes', 'b', 2),
+      ],
+    };
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new SqlServerSyncHistory({ login: database.login }),
+      connections: [
+        new Connection({
+          name: 'notes',
+          source,
+          destination: warehouse,
+          checkpoints: new SqlServerCheckpointStore({ login: database.login }),
+          steps: [
+            new Copy(stream, warehouse.table('notes'), {
+              id: 'notes:notes',
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite_dedup',
+              cursorField: 'version',
+            }),
+          ],
+        }),
+      ],
+    });
+
+    await pipeline.run();
+
+    assert.deepEqual(await notesOf(database.admin, 'notes'), ['a:5:a']);
   },
 );
 
@@ -487,7 +766,7 @@ test(
     source.messages = {
       notes: [
         note('notes', 'n1', 1, 'older'),
-        removal('notes', 'never stored'),
+        removal('notes', 'never stored', 1),
       ],
     };
     await pipeline.run();

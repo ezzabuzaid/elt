@@ -3,7 +3,7 @@ import { hash } from 'node:crypto';
 import {
   type CopyConfiguration,
   type Deduplication,
-  type KeyValue,
+  type DeleteOperation,
   deduplicationColumns,
 } from '@eltjs/elt';
 
@@ -124,19 +124,45 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
       .join(' AND ');
   }
 
-  // The staged records that the result of applying the operations one at a
-  // time keeps, as a SELECT of their seq: a staged DELETE removes its key,
-  // and only records after a key's last DELETE count. replace keeps the
-  // newest extraction, so a restated fact overwrites the loaded one;
-  // cursor_newer keeps the greatest cursor, the first on ties.
+  // The staged records that the merge upserts, as a SELECT of their seq, at
+  // most one per key. replace applies the staged operations in source order:
+  // only records after a key's last DELETE count, and the newest extraction
+  // wins, so a restated fact overwrites the loaded one. cursor_newer ranks
+  // the records and deletions of a key together, and keeps the record that
+  // wins.
   #accepted(stage: string): string {
+    const guard = this.#guard;
+    if (guard !== undefined) return this.#winners(stage, guard, 'R');
+    const keys = this.keys.map((column) => column.quotedName);
+    return `SELECT "ranked".${seq} FROM (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY "staged".${seq} DESC) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}) AS "deleted" ON ${this.#same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) AS "ranked" WHERE "ranked"."_elt_rank" = 1`;
+  }
+
+  // The seq of each staged row that wins its key under cursor_newer, if it
+  // is of kind operation: of a key's records and deletions, the greatest
+  // cursor wins, and the first staged on ties, as the guard of the stored
+  // row lets only a greater cursor in.
+  #winners(stage: string, guard: PostgresColumn, operation: 'R' | 'D'): string {
+    const keys = this.keys.map((column) => column.quotedName);
+    return `SELECT "ranked".${seq} FROM (SELECT ${seq}, ${op}, row_number() OVER (PARTITION BY ${keys.join(', ')} ORDER BY ${guard.quotedName}${this.#collate} DESC, ${seq}) AS "_elt_rank" FROM ${stage}) AS "ranked" WHERE "ranked"."_elt_rank" = 1 AND "ranked".${op} = '${operation}'`;
+  }
+
+  // The staged deletions that can remove a stored row, as a SELECT of their
+  // keys and, under cursor_newer, their cursors: replace takes each key that
+  // a DELETE names, cursor_newer only the deletion that won its key.
+  #deletions(stage: string): string {
     const keys = this.keys.map((column) => column.quotedName);
     const guard = this.#guard;
-    const order =
-      guard === undefined
-        ? `"staged".${seq} DESC`
-        : `"staged".${guard.quotedName}${this.#collate} DESC, "staged".${seq}`;
-    return `SELECT "ranked".${seq} FROM (SELECT "staged".${seq}, row_number() OVER (PARTITION BY ${keys.map((key) => `"staged".${key}`).join(', ')} ORDER BY ${order}) AS "_elt_rank" FROM ${stage} AS "staged" LEFT JOIN (SELECT ${keys.join(', ')}, max(${seq}) AS "_elt_last" FROM ${stage} WHERE ${op} = 'D' GROUP BY ${keys.join(', ')}) AS "deleted" ON ${this.#same('"deleted"', '"staged"')} WHERE "staged".${op} = 'R' AND ("deleted"."_elt_last" IS NULL OR "staged".${seq} > "deleted"."_elt_last")) AS "ranked" WHERE "ranked"."_elt_rank" = 1`;
+    if (guard === undefined)
+      return `SELECT DISTINCT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D'`;
+    return `SELECT ${keys.join(', ')}, ${guard.quotedName} FROM ${stage} WHERE ${seq} IN (${this.#winners(stage, guard, 'D')})`;
+  }
+
+  // Whether the deletion removes the stored row row: it names the row's key,
+  // and under cursor_newer its cursor sorts after the row's, as a record
+  // replaces a row only then. On a tie the row stays.
+  #removes(deletion: string, row: string): string {
+    const guard = this.#guard;
+    return `${this.#same(deletion, row)}${guard === undefined ? '' : ` AND ${deletion}.${guard.quotedName}${this.#collate} > ${row}.${guard.quotedName}${this.#collate}`}`;
   }
 
   protected override kept(stage: string): string {
@@ -150,10 +176,11 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     return `${record}.${version} IS DISTINCT FROM ${row}.${version}${guard === undefined ? '' : ` AND ${record}.${guard.quotedName}${this.#collate} > ${row}.${guard.quotedName}${this.#collate}`}`;
   }
 
-  // Applies the staged operations as if one at a time. The history keeps
-  // each row that a DELETE removes or an accepted record replaces; a record
-  // with the stored row's values leaves the row, its commit and its
-  // loaded_at as they are.
+  // The staged deletions remove the rows that #removes names, and the
+  // records that #accepted keeps are upserted, with the guard, if any,
+  // rejecting out-of-order replay. The history keeps each row that a DELETE
+  // removes or an accepted record replaces; a record with the stored row's
+  // values leaves the row, its commit and its loaded_at as they are.
   protected override async merge(
     sql: Transaction,
     stage: string,
@@ -162,10 +189,15 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     history: TargetHistory | null,
   ): Promise<void> {
     const keys = this.keys.map((column) => column.quotedName);
-    const deleted = `FROM ${into} AS "_elt_old" WHERE (${keys.map((key) => `"_elt_old".${key}`).join(', ')}) IN (SELECT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D')`;
-    await history?.keep(sql, written.committedIn, into, deleted);
+    const deletions = this.#deletions(stage);
+    await history?.keep(
+      sql,
+      written.committedIn,
+      into,
+      `FROM ${into} AS "_elt_old" WHERE EXISTS (SELECT 1 FROM (${deletions}) AS "deleted" WHERE ${this.#removes('"deleted"', '"_elt_old"')})`,
+    );
     await sql.unsafe(
-      `DELETE FROM ${into} AS "_elt_target" USING (SELECT DISTINCT ${keys.join(', ')} FROM ${stage} WHERE ${op} = 'D') AS "deleted" WHERE ${this.#same('"_elt_target"', '"deleted"')}`,
+      `DELETE FROM ${into} AS "_elt_target" USING (${deletions}) AS "deleted" WHERE ${this.#removes('"deleted"', '"_elt_target"')}`,
     );
     const accepted = this.#accepted(stage);
     await history?.keep(
@@ -187,12 +219,21 @@ export class PostgresDeduplicatingWriter extends PostgresWriter {
     return super.encode(record);
   }
 
-  protected override deletionRow(
-    key: Readonly<Record<string, KeyValue>>,
-  ): EncodedValue[] {
+  // A deletion stages its key, and under cursor_newer its cursor, which
+  // ranks it with the records of its key and guards the stored row. Other
+  // columns stay null.
+  protected override deletionRow({
+    key,
+    cursor,
+  }: DeleteOperation): EncodedValue[] {
     this.deduplication.key(key);
-    return this.table.columns.map((column) =>
-      this.keys.includes(column) ? column.encode(key) : null,
-    );
+    const guard = this.#guard;
+    const versioned = guard === undefined ? {} : { [guard.field]: cursor };
+    if (guard !== undefined) this.deduplication.cursor(versioned);
+    return this.table.columns.map((column) => {
+      if (this.keys.includes(column)) return column.encode(key);
+      if (column === guard) return column.encode(versioned);
+      return null;
+    });
   }
 }

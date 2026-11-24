@@ -112,6 +112,10 @@ _Avoid_: Refresh (a refresh is for a derived dataset), backfill
 A stream with no change feed whose source compares each complete scan with the snapshot in its checkpoint.
 _Avoid_: Full scan stream, polling stream
 
+**Deletion cursor**:
+The value of the cursor field of a copy at which the upstream deleted a row. A deletion of a `cursor_newer` copy carries it, and it competes with the records of its key as a record's cursor does.
+_Avoid_: Version (the word of a host's rows), tombstone version
+
 **Deletion policy**:
 The rule that gives each vanished key of a snapshot stream a verdict: deleted, unknown or expired.
 _Avoid_: Retention policy (a retention is one kind)

@@ -215,7 +215,7 @@ test(
     await writeFile(note, 'updated');
     source.messages = [
       { stream: stream.name, data: { id: 'note', version: 2 }, file: note },
-      { type: 'DELETE', stream: stream.name, key: { id: 'empty' } },
+      { type: 'DELETE', stream: stream.name, key: { id: 'empty' }, cursor: 2 },
     ];
     await pipeline.run();
     assert.equal(await content('note'), 'updated');

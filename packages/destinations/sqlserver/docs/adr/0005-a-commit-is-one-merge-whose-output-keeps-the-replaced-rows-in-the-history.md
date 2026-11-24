@@ -2,7 +2,7 @@
 
 Status: accepted by Ezz (2026-11-19).
 
-A commit applies the operations of its stage to its table, with the result that they would have one at a time: a staged delete removes its key, `replace` keeps the last record, and `cursor_newer` keeps the first record with the greatest cursor. Before it changes or removes a row, it keeps the row in the history with `replaced_in`. A row that comes again with the same row hash stays as it is. elt-postgresql does this with `INSERT … ON CONFLICT` behind a cursor guard, and a separate copy into the history.
+A commit applies the operations of its stage to its table, with the result that they would have one at a time: a staged delete removes its key, `replace` keeps the last record, and `cursor_newer` keeps the first record with the greatest cursor. Before it changes or removes a row, it keeps the row in the history with `replaced_in`. A row that comes again with the same row hash stays as it is. elt-postgresql does this with `INSERT … ON CONFLICT` behind a cursor guard, and a separate copy into the history. The amendment below changes the rule of `cursor_newer`.
 
 The leaders on SQL Server:
 
@@ -34,6 +34,16 @@ SQL Server's `MERGE` has an `OUTPUT` clause with `$action` and the `deleted` val
 - `VECTOR` has no comparison, so the `MERGE` never compares vectors: the row hash covers them.
 - Known faults of `MERGE` involve filtered indexes, indexed views and triggers on the target. A raw table has none of them. The vector index that a host adds (ADR 0008) must not break it: the vectors probe of 2026-11-18 showed `MERGE` rows in the next DiskANN search.
 - To probe before code: composable DML over a `MERGE` into a table with a `VECTOR` column and a DiskANN index.
+
+## Amendment (2026-11-24): under cursor_newer, a deletion takes the cursor guard
+
+Under `cursor_newer`, a deletion now carries the cursor at which the upstream deleted the row ([elt ADR 0032](../../../../elt/docs/adr/0032-a-deletion-older-than-the-stored-row-deletes-nothing.md); Ezz, 2026-11-24, elt #5402). The commit changes for `cursor_newer` only. `replace` stays as above.
+
+- The stage row of a deletion holds its cursor in the cursor column.
+- The reduced stage ranks the records and deletions of a key together: `ROW_NUMBER() OVER (PARTITION BY _elt_key_hash ORDER BY <cursor> DESC, _elt_seq)`. The greatest cursor wins, and the first on ties. The rule "only the operations after the last deletion of a key count" holds only for `replace`.
+- `WHEN MATCHED AND delete AND s.<cursor> > t.<cursor> THEN DELETE`: a deletion removes the row only when its cursor is greater. On a tie the row stays, as it stays for a record.
+- `WHEN MATCHED AND not delete AND s.<cursor> > t.<cursor> AND t._elt_row_hash IS DISTINCT FROM s._elt_row_hash THEN UPDATE`: only a record updates. A deletion that the guard refuses goes past the `DELETE` clause. It has nulls in each column except the key and the cursor, and no row hash, so `IS DISTINCT FROM` is true for it. If the `UPDATE` clause let it in, the nulls of the deletion would replace the values of the row. The test "a tombstone older than the stored row deletes nothing" checks that the row keeps its values.
+- Both clauses compare a text cursor as UTF-8 bytes, as above.
 
 Sources: elt-postgresql `postgres-deduplicating-writer.ts` and `postgres-history.ts`; `@zukhruf/vectors` README, "SQL Server: what the probes found".
 

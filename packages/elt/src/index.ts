@@ -153,6 +153,7 @@ export {
 } from './core/target-description.ts';
 export {
   type Clearing,
+  type DeleteOperation,
   type FieldValues,
   type LoadFailure,
   type Stage,

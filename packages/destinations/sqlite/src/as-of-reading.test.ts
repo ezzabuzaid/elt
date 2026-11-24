@@ -558,7 +558,7 @@ test('a row that a later pass deletes reads as of the position before it', async
 
   await connection({
     notes: [
-      { type: 'DELETE', stream: 'notes', key: { id: 'n1' } },
+      { type: 'DELETE', stream: 'notes', key: { id: 'n1' }, cursor: 2 },
       checkpoint('notes', 2),
     ],
   }).run();
@@ -1204,7 +1204,7 @@ test('a view over a view reads as of the position', async () => {
 
   await pass([
     note('notes', 'n1', 2, 'c'),
-    { type: 'DELETE', stream: 'notes', key: { id: 'n2' } },
+    { type: 'DELETE', stream: 'notes', key: { id: 'n2' }, cursor: 2 },
     note('notes', 'n3', 1, 'd'),
     checkpoint('notes', 2),
   ]);
@@ -1243,7 +1243,7 @@ test('a reader view reads as of the position', async () => {
     {
       notes: [
         note('notes', 'n1', 2, 'changed'),
-        { type: 'DELETE', stream: 'notes', key: { id: 'n2' } },
+        { type: 'DELETE', stream: 'notes', key: { id: 'n2' }, cursor: 2 },
         checkpoint('notes', 2),
       ],
     },
@@ -1392,7 +1392,7 @@ test('the file in a file storage of a document that a later pass deletes reads w
   await connection(
     {
       documents: [
-        { type: 'DELETE', stream: 'documents', key: { id: 'd1' } },
+        { type: 'DELETE', stream: 'documents', key: { id: 'd1' }, cursor: 2 },
         checkpoint('documents', 2),
       ],
     },

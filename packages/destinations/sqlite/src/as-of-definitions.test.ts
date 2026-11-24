@@ -96,10 +96,11 @@ const note = (id: string, version: number, body: string) => ({
   stream: 'notes',
   data: { id, version, body },
 });
-const removed = (id: string) => ({
+const removed = (id: string, cursor: number) => ({
   type: 'DELETE' as const,
   stream: 'notes',
   key: { id },
+  cursor,
 });
 const checkpoint = (read: number) => ({
   type: 'STATE' as const,
@@ -202,7 +203,7 @@ test('the views of a position read each target, its reader view and a View over 
   await using scratch = await new TemporaryFiles().directory('elt-as-of-');
   const { destination, pass } = notesImport(scratch.path);
   await pass([note('n1', 1, 'a'), note('n2', 1, 'b'), checkpoint(1)]);
-  await pass([note('n1', 2, 'c'), removed('n2'), checkpoint(2)]);
+  await pass([note('n1', 2, 'c'), removed('n2', 2), checkpoint(2)]);
   const position = newest(destination);
   await pass([note('n1', 3, 'e'), note('n3', 1, 'f'), checkpoint(3)]);
   const expected = {
@@ -218,7 +219,7 @@ test('the views of a position read each target, its reader view and a View over 
     list: rows(database, 'SELECT * FROM mail_body_list'),
   });
   const before = read();
-  await pass([note('n4', 1, 'g'), removed('n1'), checkpoint(4)]);
+  await pass([note('n4', 1, 'g'), removed('n1', 4), checkpoint(4)]);
 
   assert.deepEqual(expected.list, [{ bodies: 'c' }]);
   assert.deepEqual(before, expected);

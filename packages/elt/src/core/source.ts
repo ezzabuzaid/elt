@@ -66,13 +66,20 @@ export type JsonValue =
   | readonly JsonValue[]
   | { readonly [field: string]: JsonValue };
 
-// Removes the destination row with this primary key. Only streams that declare
-// emitsDeletes may send it, and only deduplicating loads can apply it.
-export type DeleteMessage = {
+type Deletion = {
   readonly type: 'DELETE';
   readonly stream: string;
   readonly key: Readonly<Record<string, KeyValue>>;
 };
+// For a copy with dedupPolicy replace: the last message of the key wins.
+export type UnversionedDelete = Deletion & { readonly cursor?: never };
+// For a copy with dedupPolicy cursor_newer: the deletion's value of the
+// copy's cursor field. It competes with the records of its key as a record
+// does, and removes the stored row only when its cursor sorts after the row's.
+type VersionedDelete = Deletion & { readonly cursor: string | number };
+// Removes the destination row with this primary key. Only streams that declare
+// emitsDeletes may send it, and only deduplicating loads can apply it.
+export type DeleteMessage = UnversionedDelete | VersionedDelete;
 
 // Starts the stream over, as when the upstream's change history expired:
 // what follows loads into a hidden target that replaces every row the stream

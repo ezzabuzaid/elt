@@ -14,6 +14,7 @@ import { CopyProgress, passChannels } from './pass-channels.ts';
 import { RaisedFailure, raised, raisedFrom } from './raised-failure.ts';
 import type { FieldSchema, ItemSchema } from './record-validation.ts';
 import {
+  type DeleteMessage,
   type KeyValue,
   type ReadMessage,
   type Source,
@@ -21,7 +22,12 @@ import {
 } from './source.ts';
 import type { Stream } from './stream.ts';
 import type { Target as DestinationTarget } from './target.ts';
-import type { LoadFailure, Stage, WriteOperation } from './writer.ts';
+import type {
+  DeleteOperation,
+  LoadFailure,
+  Stage,
+  WriteOperation,
+} from './writer.ts';
 
 // A copy that has not reported how it ended.
 class Reporting {}
@@ -54,6 +60,7 @@ class Replicated<Target extends DestinationTarget> {
   // stage is a target this load creates or reloads, until the copy saves.
   resumes = true;
   #progress: Reporting | Settled = new Reporting();
+  #deletions?: (message: DeleteMessage) => DeleteOperation;
 
   readonly copy: Copy<Target>;
   readonly connection: Connection<Target>;
@@ -83,6 +90,15 @@ class Replicated<Target extends DestinationTarget> {
 
   get stream(): Stream {
     return this.copy.from;
+  }
+
+  // Checks each DELETE of the copy. Built at the first one, when the copy
+  // is known to be valid.
+  get deletions(): (message: DeleteMessage) => DeleteOperation {
+    return (this.#deletions ??= deletionsOf(
+      this.stream,
+      this.copy.configuration,
+    ));
   }
 
   // What did not load, of the kind that the side that raised the error says
@@ -329,7 +345,11 @@ async function transfer<Target extends DestinationTarget>(
           continue;
         }
         if (replication.broken) continue;
-        const operation = validOperation(replication.stream, message);
+        const operation = validOperation(
+          replication.stream,
+          message,
+          replication.deletions,
+        );
         if (operation.type === 'STATE') {
           if (!incremental(replication))
             throw new TypeError(
@@ -587,6 +607,7 @@ function validStream(message: ReadMessage): string {
 function validOperation(
   stream: Stream,
   message: ReadMessage,
+  deletions: (message: DeleteMessage) => DeleteOperation,
 ): WriteOperation | { readonly type: 'STATE'; readonly state: string } {
   if (
     'type' in message &&
@@ -607,7 +628,7 @@ function validOperation(
     Object.hasOwn(message, 'key') &&
     !Object.hasOwn(message, 'data')
   )
-    return { type: 'DELETE', key: deletionKey(stream, message.key) };
+    return deletions(message);
   if (
     'type' in message &&
     message.type === 'RESET' &&
@@ -701,6 +722,46 @@ function wellFormed(value: unknown, path: string): void {
         throw new TypeError(`${path} has a field name with a lone surrogate`);
       wellFormed(item, `${path} field ${name}`);
     }
+}
+
+// How a copy checks a DELETE. A cursor_newer copy compares the deletion's
+// cursor with the cursors of the records of its key and of the stored row,
+// so each deletion carries a value of the copy's cursor field. Any other copy
+// applies deletions in source order, so none carries a cursor.
+function deletionsOf(
+  stream: Stream,
+  configuration: CopyConfiguration,
+): (message: DeleteMessage) => DeleteOperation {
+  const { name } = stream;
+  const { cursorField } = configuration;
+  if (configuration.dedupPolicy !== 'cursor_newer' || cursorField === undefined)
+    return (message) => {
+      const key = deletionKey(stream, message.key);
+      if (Object.hasOwn(message, 'cursor'))
+        throw new TypeError(
+          `DELETE for ${name} carries a cursor, which only a cursor_newer copy compares; omit cursor`,
+        );
+      return { type: 'DELETE', key };
+    };
+  const deduplication = configuration.deduplication();
+  return (message) => {
+    const key = deletionKey(stream, message.key);
+    if (!Object.hasOwn(message, 'cursor'))
+      throw new TypeError(
+        `DELETE for ${name} must carry cursor, its value of ${cursorField}: the copy deduplicates with cursor_newer`,
+      );
+    let cursor: string | number;
+    try {
+      cursor = deduplication.cursor({ [cursorField]: message.cursor });
+    } catch (cause) {
+      if (!(cause instanceof TypeError)) throw cause;
+      throw new TypeError(
+        `DELETE for ${name} has an invalid cursor ${cursorField}`,
+        { cause },
+      );
+    }
+    return { type: 'DELETE', key, cursor };
+  };
 }
 
 function deletionKey(

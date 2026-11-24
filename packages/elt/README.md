@@ -98,7 +98,8 @@ The pairs are the [sync modes of Airbyte](https://docs.airbyte.com/platform/usin
 | `replace`      | none                                        | The upstream restates facts that it gave before, so the newest extraction is correct. |
 
 - A deduplicating copy with no `dedupPolicy` uses `cursor_newer`. For a stream with `sourceDefinedCursor`, it uses `replace`.
-- The two destinations apply the policy. SQLite applies it as the guard of the upsert. Postgres applies it when it merges each staged commit into its table.
+- Under `cursor_newer`, a [deletion](#deletions) has a guard too: `WHERE <deletion cursor> > target.<cursor>`. On a tie, the stored row stays, as it stays for a record.
+- The three destinations apply the policy. SQLite applies it as the guard of the upsert. Postgres and SQL Server apply it when they merge each staged commit into their table.
 - The copy refuses `cursor_newer` when the cursor is a field of the key. A conflict on that key has an equal cursor, so the guard never applies, and a restated record loads as a no-op that counts but changes no row. The error names the field and tells you to use `replace`.
 
 ```ts
@@ -114,16 +115,31 @@ new Copy(source.dailyTotals, destination.table('daily_totals'), {
 
 ### Deletions
 
-A stream that declares `emitsDeletes` can send `DELETE` messages in an incremental read. Each `DELETE` holds the fields of the `primaryKey` of the stream, and no other field. Such a stream always declares its key. Its incremental copies must use `append_dedup`, which deduplicates on that key, so the destination can find the row.
+A stream that declares `emitsDeletes` can send `DELETE` messages in an incremental read. The `key` of each `DELETE` holds the fields of the `primaryKey` of the stream, and no other field. Such a stream always declares its key. Its incremental copies must use `append_dedup`, which deduplicates on that key, so the destination can find the row.
 
-| Destination                         | What a `DELETE` does                                       |
-| ----------------------------------- | ---------------------------------------------------------- |
-| SQLite and Postgres, `append_dedup` | Deletes the row with that key in the commit of the stream. |
+The [dedup policy](#dedup-policy) of the copy sets the shape of a `DELETE` and the operation of a key that wins in one commit:
 
-- Records and deletions apply in the order that the source emits them.
+| `dedupPolicy`  | `DELETE`                                  | The operation of a key that wins in one commit                                                       |
+| -------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `replace`      | `{ type: 'DELETE', stream, key }`         | The last record or deletion that the source emits.                                                   |
+| `cursor_newer` | `{ type: 'DELETE', stream, key, cursor }` | The record or deletion with the greatest cursor. On a tie, the first one that the source emits wins. |
+
+`cursor` is the value of the `cursorField` of the copy at which the upstream deleted the row, of the type of that field. Under `cursor_newer`, a deletion that wins removes the stored row only when its cursor is greater than the cursor of the row. On a tie, the row stays. Thus an old deletion that a replay sends again does not remove a newer row.
+
+```ts
+// The upstream deleted note n1 at version 7.
+yield { type: 'DELETE', stream: 'notes', key: { id: 'n1' }, cursor: 7 };
+```
+
+| Destination                                     | What a `DELETE` that wins does                             |
+| ----------------------------------------------- | ---------------------------------------------------------- |
+| SQLite, Postgres and SQL Server, `append_dedup` | Deletes the row with that key in the commit of the stream. |
+
 - A `DELETE` of a key that is not there does nothing. Thus a pass can run again safely.
 - The copy refuses a deletion when the stream does not declare `emitsDeletes`, when the key is not correct, or when the load does not deduplicate.
-- The results count the accepted deletions as `deleted`, apart from `count`.
+- A `cursor_newer` copy refuses a deletion with no `cursor`, or with a `cursor` that is not a valid value of the `cursorField`. The error has the error of the value check as its `cause`. Every other copy refuses a deletion with a `cursor`, because no rule of that copy compares it. Each of these errors is a `TypeError` that names the stream.
+- The results count the accepted deletions as `deleted`, apart from `count`. A deletion that loses to a newer row counts too, as a record that `cursor_newer` discards counts in `count`.
+- No destination keeps a deletion after its commit. Thus a record that is older than a deletion of an earlier commit loads again, for example in a replay that starts after the commit of the deletion. See [ADR 0032](./docs/adr/0032-a-deletion-older-than-the-stored-row-deletes-nothing.md).
 
 ### Resets
 
@@ -267,7 +283,7 @@ A SQL destination gives each column, table and reader view a name that it can ho
 The read:
 
 - `Source.read(catalog, states, signal)` gives each incremental stream its saved state, or `null` on its first run. `extract` gets it as `state`.
-- `extract` emits records `{ stream, data }`, deletions `{ type: 'DELETE', stream, key }`, [resets](#resets) `{ type: 'RESET', stream }` and checkpoints `{ type: 'STATE', stream, state }`.
+- `extract` emits records `{ stream, data }`, [deletions](#deletions) `{ type: 'DELETE', stream, key }` (with `cursor` for a `cursor_newer` copy), [resets](#resets) `{ type: 'RESET', stream }` and checkpoints `{ type: 'STATE', stream, state }`.
 - Their text must be well-formed Unicode. A string or a field name with a lone surrogate fails its stream, because SQLite would store U+FFFD and Postgres refuses it.
 - The state belongs to the source. It must go into JSON and come back with no change. Destinations do not read it.
 
@@ -1365,6 +1381,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0028](./docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md): a host names each relation that readers query once.
 - [ADR 0029](./docs/adr/0029-the-side-that-raised-a-failure-names-its-type.md): the side that raised a failure names its type.
 - [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md): a rule reads a stored file through its storage.
+- [ADR 0032](./docs/adr/0032-a-deletion-older-than-the-stored-row-deletes-nothing.md): a deletion older than the stored row deletes nothing.
 - [ADR 0033](./docs/adr/0033-a-host-loads-the-rows-it-holds-through-an-iterable-source.md): a host loads the rows that it holds through an `IterableSource`.
 
 ## Development

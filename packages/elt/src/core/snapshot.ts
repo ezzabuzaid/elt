@@ -11,7 +11,7 @@ import {
 
 import type { CopyConfiguration } from './copy-configuration.ts';
 import { Deduplication } from './deduplication.ts';
-import type { DeleteMessage, StateMessage } from './source.ts';
+import type { StateMessage, UnversionedDelete } from './source.ts';
 import type { Stream } from './stream.ts';
 
 // A group the source lists without reading, because it knows the group did not change.
@@ -35,7 +35,7 @@ export type SnapshotDiffOptions = {
 
 type SnapshotMessage<Data> =
   | { readonly stream: string; readonly data: Data }
-  | DeleteMessage
+  | UnversionedDelete
   | StateMessage;
 
 // Reads for a source without a change feed. An incremental copy compares one

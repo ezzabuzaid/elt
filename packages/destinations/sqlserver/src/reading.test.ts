@@ -131,10 +131,11 @@ const checkpoint = (read: number): SourceMessage => ({
   stream: 'notes',
   state: { read },
 });
-const removal = (id: string): SourceMessage => ({
+const removal = (id: string, cursor: number): SourceMessage => ({
   type: 'DELETE',
   stream: 'notes',
   key: { id },
+  cursor,
 });
 
 // A pipeline that keeps the newest version of each note in marts.notes.
@@ -215,7 +216,7 @@ test(
     const [commit] = await database.admin.query(
       'SELECT TOP (1) [committed_at] FROM _warehouse._elt_commits ORDER BY [number] DESC',
     );
-    await run([note('n1', 2, 'second'), removal('n2'), note('n3', 1)]);
+    await run([note('n1', 2, 'second'), removal('n2', 2), note('n3', 1)]);
     await database.admin.query(
       'CREATE VIEW marts.bodies AS SELECT [id], UPPER([body]) AS [loud] FROM marts.notes',
     );

@@ -45,7 +45,7 @@ The `#` table of the connection of a load, where one stream keeps its operations
 _Avoid_: Buffer, staging table, table variable
 
 **Reduced stage**:
-The stage of a deduplicating commit as one operation for each key hash: the result of its operations applied one at a time. It is the source of the `MERGE` of the commit.
+The stage of a deduplicating commit as one operation for each key hash. Under `replace` it is the result of its operations applied one at a time, in the order of the source. Under `cursor_newer` it is the record or deletion of each key with the greatest cursor, the first on ties ([elt ADR 0032](../../elt/docs/adr/0032-a-deletion-older-than-the-stored-row-deletes-nothing.md)). It is the source of the `MERGE` of the commit.
 _Avoid_: Deduplicated stage, batch
 
 **Hidden table**:

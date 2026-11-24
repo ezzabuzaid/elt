@@ -382,7 +382,7 @@ test('a session that sets no position reads the reader view as it is now, with n
   await connection({
     notes: [
       note('notes', 'n1', 2, 'changed'),
-      { type: 'DELETE', stream: 'notes', key: { id: 'n2' } },
+      { type: 'DELETE', stream: 'notes', key: { id: 'n2' }, cursor: 2 },
       checkpoint('notes', 2),
     ],
   }).run();
@@ -635,7 +635,7 @@ test('a row that a later pass deletes reads as of the position before it', async
 
   await connection({
     notes: [
-      { type: 'DELETE', stream: 'notes', key: { id: 'n1' } },
+      { type: 'DELETE', stream: 'notes', key: { id: 'n1' }, cursor: 2 },
       checkpoint('notes', 2),
     ],
   }).run();
@@ -899,7 +899,7 @@ test('the rows that a later reload swapped out read as of the position before it
       note('notes', 'n3', 1),
       checkpoint('notes', 2),
       note('notes', 'n3', 2, 'changed'),
-      { type: 'DELETE', stream: 'notes', key: { id: 'n3' } },
+      { type: 'DELETE', stream: 'notes', key: { id: 'n3' }, cursor: 3 },
       note('notes', 'n4', 1),
       checkpoint('notes', 3),
     ],
@@ -1299,7 +1299,7 @@ test('a field that moves from string to integer, which does not keep each old va
   const first = await newest(destination);
   await connection({
     notes: [
-      { type: 'DELETE', stream: 'notes', key: { id: 'n1' } },
+      { type: 'DELETE', stream: 'notes', key: { id: 'n1' }, cursor: 2 },
       checkpoint('notes', 2),
     ],
   }).run();
