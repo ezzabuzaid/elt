@@ -9,6 +9,7 @@ import {
   Copy,
   type CopyConfiguration,
   type FieldSchema,
+  IterableSource,
   type Partition,
   Pipeline,
   PipelineError,
@@ -61,57 +62,23 @@ async function scratch() {
   };
 }
 
-// Notes whose schema and rows the test sets before each run.
-class Notes extends Source {
-  readonly identity = 'notes';
-  rows: readonly object[] = [];
-  #stream: Stream;
-  protected catalog: Catalog;
-
-  constructor(jsonSchema: StreamSchema) {
-    super();
-    this.#stream = Notes.#declare(jsonSchema);
-    this.catalog = new Catalog([this.#stream]);
-  }
-
-  static #declare(jsonSchema: StreamSchema): Stream {
-    return new Stream({
-      name: 'notes',
-      jsonSchema,
-      supportedSyncModes: ['full_refresh'],
-    });
-  }
-
-  get stream(): Stream {
-    return this.#stream;
-  }
-
-  reshape(jsonSchema: StreamSchema): void {
-    this.#stream = Notes.#declare(jsonSchema);
-    this.catalog = new Catalog([this.#stream]);
-  }
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  // No test watches: each runs the pipeline itself.
-  override changeSignals() {
-    return [];
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  protected override async *extract(_configuration: CopyConfiguration) {
-    for (const data of this.rows) yield { stream: 'notes', data };
-  }
-}
+// Notes of this schema and these rows, copied in full each pass. A test that
+// reshapes the notes makes a new source with the same identity.
+const notesOf = (
+  jsonSchema: StreamSchema,
+  rows: readonly Record<string, unknown>[],
+) =>
+  new IterableSource({
+    identity: 'notes',
+    streams: {
+      notes: {
+        description: 'The notes that the test sets.',
+        jsonSchema,
+        primaryKey: ['id'],
+        snapshot: () => rows,
+      },
+    },
+  });
 
 const described = (properties: Record<string, FieldSchema>): StreamSchema => ({
   type: 'object',
@@ -127,7 +94,7 @@ const described = (properties: Record<string, FieldSchema>): StreamSchema => ({
 
 // One run that overwrites marts.notes with the rows of the source, in the
 // shape that the source has now.
-function overwrite(login: SqlServerLogin, source: Notes) {
+function overwrite(login: SqlServerLogin, source: ReturnType<typeof notesOf>) {
   const destination = new SqlServerDestination({ login });
   return new Pipeline({
     clock: globalThis,
@@ -138,7 +105,7 @@ function overwrite(login: SqlServerLogin, source: Notes) {
         source,
         destination,
         checkpoints: new SqlServerCheckpointStore({ login }),
-        steps: [new Copy(source.stream, destination.table('notes'))],
+        steps: [new Copy(source.streams.notes, destination.table('notes'))],
       }),
     ],
   }).run();
@@ -172,10 +139,10 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const source = new Notes(
+    let source = notesOf(
       described({ id: { type: 'string' }, title: { type: 'string' } }),
+      [{ id: '1', title: 'a' }],
     );
-    source.rows = [{ id: '1', title: 'a' }];
     await overwrite(database.login, source);
     const [before] = await positionsOf(database.login);
     await database.admin.query(
@@ -189,17 +156,17 @@ test(
       'CREATE VIEW reports.loud AS SELECT * FROM reports.everything',
     );
 
-    source.reshape(
+    source = notesOf(
       described({
         id: { type: 'string' },
         title: { type: 'string' },
         body: { type: 'string' },
       }),
+      [
+        { id: '1', title: 'b', body: 'x' },
+        { id: '2', title: 'c', body: 'y' },
+      ],
     );
-    source.rows = [
-      { id: '1', title: 'b', body: 'x' },
-      { id: '2', title: 'c', body: 'y' },
-    ];
     await overwrite(database.login, source);
 
     assert.deepEqual(
@@ -233,24 +200,24 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const source = new Notes(
+    let source = notesOf(
       described({ id: { type: 'string' }, title: { type: 'string' } }),
+      [{ id: '1', title: 'a' }],
     );
-    source.rows = [{ id: '1', title: 'a' }];
     await overwrite(database.login, source);
     await database.admin.query('CREATE SCHEMA reports');
     await database.admin.query(
       'CREATE VIEW reports.bound WITH SCHEMABINDING AS SELECT id, title FROM _warehouse.raw_notes',
     );
     const positions = await positionsOf(database.login);
-    source.reshape(
+    source = notesOf(
       described({
         id: { type: 'string' },
         title: { type: 'string' },
         body: { type: 'string' },
       }),
+      [{ id: '2', title: 'b', body: 'x' }],
     );
-    source.rows = [{ id: '2', title: 'b', body: 'x' }];
 
     await assert.rejects(overwrite(database.login, source), (error: unknown) =>
       failedWith(
@@ -287,17 +254,16 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const source = new Notes(
+    let source = notesOf(
       described({ id: { type: 'string' }, title: { type: 'string' } }),
+      [{ id: '1', title: 'a' }],
     );
-    source.rows = [{ id: '1', title: 'a' }];
     await overwrite(database.login, source);
     await database.admin.query('CREATE SCHEMA reports');
     await database.admin.query(
       'CREATE VIEW reports.titles AS SELECT title FROM marts.notes',
     );
-    source.reshape(described({ id: { type: 'string' } }));
-    source.rows = [{ id: '2' }];
+    source = notesOf(described({ id: { type: 'string' } }), [{ id: '2' }]);
 
     await assert.rejects(overwrite(database.login, source), (error: unknown) =>
       failedWith(
@@ -318,17 +284,17 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const source = new Notes(
+    let source = notesOf(
       described({ id: { type: 'string' }, score: { type: 'integer' } }),
+      [{ id: '1', score: 2 }],
     );
-    source.rows = [{ id: '1', score: 2 }];
     await overwrite(database.login, source);
     const [before] = await positionsOf(database.login);
 
-    source.reshape(
+    source = notesOf(
       described({ id: { type: 'string' }, score: { type: 'number' } }),
+      [{ id: '2', score: 2.5 }],
     );
-    source.rows = [{ id: '2', score: 2.5 }];
     await overwrite(database.login, source);
 
     assert.deepEqual(

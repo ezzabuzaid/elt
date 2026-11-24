@@ -5,15 +5,13 @@ import { test } from 'node:test';
 import { SqlServer } from '@zukhruf/testing/sqlserver';
 
 import {
-  Catalog,
   Connection,
   Copy,
+  IterableSource,
   type LoadedRow,
   Pipeline,
   type RuleColumns,
   type RuleValues,
-  Source,
-  Stream,
   TableRule,
   type TableRuleResult,
 } from '@eltjs/elt';
@@ -64,45 +62,28 @@ async function scratch() {
 type Note = { readonly id: string; readonly text: string };
 
 // Notes the test sets before each run, copied in full each pass.
-class Notes extends Source {
-  readonly identity = 'notes';
-  rows: readonly Note[] = [];
-  readonly notes = new Stream({
-    name: 'notes',
-    jsonSchema: {
-      type: 'object',
-      description: 'A note.',
-      properties: {
-        id: { type: 'string', description: 'Note id.' },
-        text: { type: 'string', description: 'The text of the note.' },
+function notesSource() {
+  const host: { rows: readonly Note[] } = { rows: [] };
+  const source = new IterableSource({
+    identity: 'notes',
+    streams: {
+      notes: {
+        description: 'The notes that the test sets.',
+        jsonSchema: {
+          type: 'object',
+          description: 'A note.',
+          properties: {
+            id: { type: 'string', description: 'Note id.' },
+            text: { type: 'string', description: 'The text of the note.' },
+          },
+          required: ['id', 'text'],
+        },
+        primaryKey: ['id'],
+        snapshot: () => host.rows,
       },
-      required: ['id', 'text'],
     },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
   });
-  protected readonly catalog = new Catalog([this.notes]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  // No test watches: each runs the pipeline itself.
-  override changeSignals() {
-    return [];
-  }
-
-  protected override async *extract() {
-    for (const row of this.rows) yield { stream: 'notes', data: row };
-  }
+  return { host, source };
 }
 
 const content = {
@@ -179,7 +160,7 @@ function pieces(
     partIndexes?: readonly SqlServerIndex[];
   } = {},
 ) {
-  const source = new Notes();
+  const { host, source } = notesSource();
   const destination = new SqlServerDestination({ login });
   const target = destination.table('notes');
   const pipeline = new Pipeline({
@@ -190,7 +171,7 @@ function pieces(
         name: 'notes',
         source,
         destination,
-        steps: [new Copy(source.notes, target)],
+        steps: [new Copy(source.streams.notes, target)],
       }),
     ],
     derived: [
@@ -204,7 +185,7 @@ function pieces(
       }),
     ],
   });
-  return { source, destination, pipeline };
+  return { host, destination, pipeline };
 }
 
 async function newest(destination: SqlServerDestination): Promise<string> {
@@ -254,8 +235,8 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const { source, pipeline } = pieces(database.login);
-    source.rows = [
+    const { host, pipeline } = pieces(database.login);
+    host.rows = [
       { id: 'a', text: 'one|two|one' },
       { id: 'b', text: 'three' },
       { id: 'c', text: '' },
@@ -371,13 +352,13 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const { source, destination, pipeline } = pieces(database.login);
-    source.rows = [{ id: 'a', text: 'one|two|three' }];
+    const { host, destination, pipeline } = pieces(database.login);
+    host.rows = [{ id: 'a', text: 'one|two|three' }];
     await pipeline.run();
     const before = await newest(destination);
     const [kept, changed] = await database.rows(committed);
     const [made] = await database.rows('SELECT [input_hash] FROM marts.pieces');
-    source.rows = [{ id: 'a', text: 'one|tw' }];
+    host.rows = [{ id: 'a', text: 'one|tw' }];
 
     await pipeline.run();
 
@@ -415,11 +396,11 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const { source, pipeline } = pieces(database.login);
-    source.rows = [{ id: 'a', text: 'xx|one' }];
+    const { host, pipeline } = pieces(database.login);
+    host.rows = [{ id: 'a', text: 'xx|one' }];
     await pipeline.run();
     const [, before] = await database.rows(committed);
-    source.rows = [{ id: 'a', text: 'x|one' }];
+    host.rows = [{ id: 'a', text: 'x|one' }];
 
     await pipeline.run();
 
@@ -440,15 +421,15 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const { source, pipeline } = pieces(database.login);
-    source.rows = [
+    const { host, pipeline } = pieces(database.login);
+    host.rows = [
       { id: 'a', text: '' },
       { id: 'b', text: 'bad' },
       { id: 'c', text: 'one|two' },
     ];
     await pipeline.run();
     const first = await database.rows(parts);
-    source.rows = [
+    host.rows = [
       { id: 'a', text: '' },
       { id: 'b', text: 'bad' },
       { id: 'c', text: 'bad again' },
@@ -482,14 +463,14 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const { source, destination, pipeline } = pieces(database.login);
-    source.rows = [
+    const { host, destination, pipeline } = pieces(database.login);
+    host.rows = [
       { id: 'a', text: 'one|two' },
       { id: 'b', text: 'three' },
     ];
     await pipeline.run();
     const before = await newest(destination);
-    source.rows = [{ id: 'b', text: 'three' }];
+    host.rows = [{ id: 'b', text: 'three' }];
 
     await pipeline.run();
 
@@ -521,7 +502,7 @@ test(
   async () => {
     await using database = await scratch();
     const first = pieces(database.login);
-    first.source.rows = [{ id: 'a', text: 'one|two' }];
+    first.host.rows = [{ id: 'a', text: 'one|two' }];
     await first.pipeline.run();
     await database.admin.query(
       'CREATE VIEW marts.piece_texts AS SELECT * FROM marts.pieces_parts',
@@ -539,7 +520,7 @@ test(
         },
       }),
     );
-    second.source.rows = first.source.rows;
+    second.host.rows = first.host.rows;
 
     await second.pipeline.run();
 
@@ -586,11 +567,11 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const { source, pipeline } = pieces(database.login, new Pieces(), {
+    const { host, pipeline } = pieces(database.login, new Pieces(), {
       indexes: [{ type: 'nonclustered', columns: ['committed_in'] }],
       partIndexes: [{ type: 'nonclustered', columns: ['tokens', 'seq'] }],
     });
-    source.rows = [{ id: 'n1', text: 'ab|c' }];
+    host.rows = [{ id: 'n1', text: 'ab|c' }];
 
     await pipeline.run();
 
@@ -671,7 +652,7 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const source = new Notes();
+    const { source } = notesSource();
     const destination = new SqlServerDestination({ login: database.login });
     const target = destination.table('Pieces_Parts_Nearest');
     const pipeline = new Pipeline({
@@ -682,7 +663,7 @@ test(
           name: 'notes',
           source,
           destination,
-          steps: [new Copy(source.notes, target)],
+          steps: [new Copy(source.streams.notes, target)],
         }),
       ],
       derived: [
@@ -717,7 +698,7 @@ test(
   { skip: emulation },
   async () => {
     await using database = await scratch();
-    const source = new Notes();
+    const { source } = notesSource();
     const destination = new SqlServerDestination({ login: database.login });
     const target = destination.table('Pieces_Parts');
     const pipeline = new Pipeline({
@@ -728,7 +709,7 @@ test(
           name: 'notes',
           source,
           destination,
-          steps: [new Copy(source.notes, target)],
+          steps: [new Copy(source.streams.notes, target)],
         }),
       ],
       derived: [

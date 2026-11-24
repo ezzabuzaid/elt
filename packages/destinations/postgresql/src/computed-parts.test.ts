@@ -6,15 +6,13 @@ import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
 import {
-  Catalog,
   Connection,
   Copy,
+  IterableSource,
   type LoadedRow,
   Pipeline,
   type RuleColumns,
   type RuleValues,
-  Source,
-  Stream,
   TableRule,
   type TableRuleResult,
 } from '@eltjs/elt';
@@ -30,44 +28,28 @@ const databases = new Postgres({ environment: process.env });
 type Note = { readonly id: string; readonly text: string };
 
 // Notes the test sets before each run, copied in full each pass.
-class Notes extends Source {
-  readonly identity = 'notes';
-  rows: readonly Note[] = [];
-  readonly notes = new Stream({
-    name: 'notes',
-    jsonSchema: {
-      type: 'object',
-      description: 'A note.',
-      properties: {
-        id: { type: 'string', description: 'Note id.' },
-        text: { type: 'string', description: 'The text of the note.' },
+function notesSource() {
+  const host: { rows: readonly Note[] } = { rows: [] };
+  const source = new IterableSource({
+    identity: 'notes',
+    streams: {
+      notes: {
+        description: 'The notes that the test sets.',
+        jsonSchema: {
+          type: 'object',
+          description: 'A note.',
+          properties: {
+            id: { type: 'string', description: 'Note id.' },
+            text: { type: 'string', description: 'The text of the note.' },
+          },
+          required: ['id', 'text'],
+        },
+        primaryKey: ['id'],
+        snapshot: () => host.rows,
       },
-      required: ['id', 'text'],
     },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
   });
-  protected readonly catalog = new Catalog([this.notes]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals() {
-    return [];
-  }
-
-  protected override async *extract() {
-    for (const row of this.rows) yield { stream: 'notes', data: row };
-  }
+  return { host, source };
 }
 
 const content = {
@@ -149,7 +131,7 @@ function pieces(
   clients: AsyncDisposableStack,
   rule = new Pieces(),
 ) {
-  const source = new Notes();
+  const { host, source } = notesSource();
   const marts = new PostgresDestination({ url });
   const target = marts.table('notes');
   const pipeline = new Pipeline({
@@ -160,7 +142,7 @@ function pieces(
         name: 'notes',
         source,
         destination: marts,
-        steps: [new Copy(source.notes, target)],
+        steps: [new Copy(source.streams.notes, target)],
       }),
     ],
     derived: [
@@ -178,7 +160,7 @@ function pieces(
     (session) => session.end(),
   );
   const rows = async (query: string) => [...(await sql.unsafe(query))];
-  return { source, marts, pipeline, rule, rows };
+  return { host, marts, pipeline, rule, rows };
 }
 
 async function newest(marts: PostgresDestination): Promise<string> {
@@ -223,8 +205,8 @@ const parts =
 test('a table rule keeps one output row for each key in the view of the dataset, and each part in <name>_parts with its seq from 0, its part hash, its content and its place, in columns of the Postgres type of each kind', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
-  const { source, pipeline, rows } = pieces(database.connectionString, clients);
-  source.rows = [
+  const { host, pipeline, rows } = pieces(database.connectionString, clients);
+  host.rows = [
     { id: 'a', text: 'one|two|one' },
     { id: 'b', text: 'three' },
   ];
@@ -314,11 +296,11 @@ test('a table rule keeps one output row for each key in the view of the dataset,
 test('an input that changes at its end keeps the commit of each part that did not change, writes the part that changed, deletes the parts beyond the new list, and a reading before the change shows the old parts with their output row', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
-  const { source, marts, pipeline, rows } = pieces(
+  const { host, marts, pipeline, rows } = pieces(
     database.connectionString,
     clients,
   );
-  source.rows = [{ id: 'a', text: 'one|two|three' }];
+  host.rows = [{ id: 'a', text: 'one|two|three' }];
   await pipeline.run();
   const before = await newest(marts);
   const committed = () =>
@@ -327,7 +309,7 @@ test('an input that changes at its end keeps the commit of each part that did no
     );
   const [kept] = await committed();
   const [made] = await rows('SELECT input_hash FROM marts.pieces');
-  source.rows = [{ id: 'a', text: 'one|tw' }];
+  host.rows = [{ id: 'a', text: 'one|tw' }];
 
   await pipeline.run();
 
@@ -362,13 +344,13 @@ test('an input that changes at its end keeps the commit of each part that did no
 test('a part that only moved keeps its part hash and is written with its new place', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
-  const { source, pipeline, rows } = pieces(database.connectionString, clients);
-  source.rows = [{ id: 'a', text: 'xx|one' }];
+  const { host, pipeline, rows } = pieces(database.connectionString, clients);
+  host.rows = [{ id: 'a', text: 'xx|one' }];
   await pipeline.run();
   const moved =
     'SELECT seq, part_hash, start, "end", committed_in FROM _warehouse.raw_pieces_parts WHERE seq = 1';
   const [before] = await rows(moved);
-  source.rows = [{ id: 'a', text: 'x|one' }];
+  host.rows = [{ id: 'a', text: 'x|one' }];
 
   await pipeline.run();
 
@@ -386,15 +368,15 @@ test('a part that only moved keeps its part hash and is written with its new pla
 test('an input that is empty or failed has no parts, and an input whose parts were kept loses them when it fails', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
-  const { source, pipeline, rows } = pieces(database.connectionString, clients);
-  source.rows = [
+  const { host, pipeline, rows } = pieces(database.connectionString, clients);
+  host.rows = [
     { id: 'a', text: '' },
     { id: 'b', text: 'bad' },
     { id: 'c', text: 'one|two' },
   ];
   await pipeline.run();
   const first = await rows(parts);
-  source.rows = [
+  host.rows = [
     { id: 'a', text: '' },
     { id: 'b', text: 'bad' },
     { id: 'c', text: 'bad again' },
@@ -425,17 +407,17 @@ test('an input that is empty or failed has no parts, and an input whose parts we
 test('a removed input removes its output row and its parts, and a reading before the removal still shows them', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
-  const { source, marts, pipeline, rows } = pieces(
+  const { host, marts, pipeline, rows } = pieces(
     database.connectionString,
     clients,
   );
-  source.rows = [
+  host.rows = [
     { id: 'a', text: 'one|two' },
     { id: 'b', text: 'three' },
   ];
   await pipeline.run();
   const before = await newest(marts);
-  source.rows = [{ id: 'b', text: 'three' }];
+  host.rows = [{ id: 'b', text: 'three' }];
 
   await pipeline.run();
 
@@ -466,12 +448,12 @@ for (const column of ['tokens', 'start'] as const)
     await using clients = new AsyncDisposableStack();
     const rule = new Pieces();
     rule.nudges.set(column, 0.5);
-    const { source, pipeline, rows } = pieces(
+    const { host, pipeline, rows } = pieces(
       database.connectionString,
       clients,
       rule,
     );
-    source.rows = [{ id: 'a', text: 'one|two' }];
+    host.rows = [{ id: 'a', text: 'one|two' }];
 
     await pipeline.run();
 
@@ -496,8 +478,8 @@ for (const column of ['tokens', 'start'] as const)
 test('a rule call that fails rejects the run, and each input of the calls before it keeps its output row with all its parts', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
-  const { source, pipeline, rows } = pieces(database.connectionString, clients);
-  source.rows = [
+  const { host, pipeline, rows } = pieces(database.connectionString, clients);
+  host.rows = [
     { id: 'a', text: 'one|two' },
     { id: 'b', text: 'throw' },
     { id: 'c', text: 'three' },
@@ -523,14 +505,14 @@ test('a rule call that fails rejects the run, and each input of the calls before
 test('a rule that stops handling an input keeps the parts it made before', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
-  const { source, pipeline, rule, rows } = pieces(
+  const { host, pipeline, rule, rows } = pieces(
     database.connectionString,
     clients,
   );
-  source.rows = [{ id: 'a', text: 'one|two' }];
+  host.rows = [{ id: 'a', text: 'one|two' }];
   await pipeline.run();
   rule.handles = false;
-  source.rows = [{ id: 'a', text: 'one|two|three' }];
+  host.rows = [{ id: 'a', text: 'one|two|three' }];
 
   await pipeline.run();
 
@@ -549,8 +531,8 @@ test('a rule that stops handling an input keeps the parts it made before', async
 test('derived_status counts the inputs and the output rows of a table rule, one for each key, not its parts', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();
-  const { source, pipeline, rows } = pieces(database.connectionString, clients);
-  source.rows = [
+  const { host, pipeline, rows } = pieces(database.connectionString, clients);
+  host.rows = [
     { id: 'a', text: 'one|two|three' },
     { id: 'b', text: 'four' },
     { id: 'c', text: '' },
@@ -580,7 +562,7 @@ test('a changed declaration of the parts makes both tables again, a view over <n
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
   const first = pieces(url, clients);
-  first.source.rows = [{ id: 'a', text: 'one|two' }];
+  first.host.rows = [{ id: 'a', text: 'one|two' }];
   await first.pipeline.run();
   await first.rows(
     'CREATE VIEW marts.piece_texts AS SELECT id, text FROM marts.pieces_parts',
@@ -599,7 +581,7 @@ test('a changed declaration of the parts makes both tables again, a view over <n
       },
     }),
   );
-  second.source.rows = first.source.rows;
+  second.host.rows = first.host.rows;
 
   await second.pipeline.run();
 
@@ -719,7 +701,7 @@ test('a computed dataset with a table rule refuses a pipeline whose copy makes p
     postgres(url, { max: 1, onnotice: () => {} }),
     (session) => session.end(),
   );
-  const source = new Notes();
+  const { source } = notesSource();
   const marts = new PostgresDestination({ url });
   const target = marts.table('pieces_parts');
   const pipeline = new Pipeline({
@@ -730,7 +712,7 @@ test('a computed dataset with a table rule refuses a pipeline whose copy makes p
         name: 'notes',
         source,
         destination: marts,
-        steps: [new Copy(source.notes, target)],
+        steps: [new Copy(source.streams.notes, target)],
       }),
     ],
     derived: [

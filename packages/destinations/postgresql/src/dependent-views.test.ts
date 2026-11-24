@@ -6,14 +6,11 @@ import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
 import {
-  Catalog,
   Connection,
   Copy,
-  type CopyConfiguration,
   type FieldSchema,
+  IterableSource,
   Pipeline,
-  Source,
-  Stream,
   type StreamSchema,
 } from '@eltjs/elt';
 
@@ -21,57 +18,23 @@ import { PostgresDestination, PostgresSyncHistory } from './index.ts';
 
 const databases = new Postgres({ environment: process.env });
 
-// Notes whose schema and rows the test sets before each run.
-class Notes extends Source {
-  readonly identity = 'notes';
-  rows: readonly object[] = [];
-  #stream: Stream;
-  protected catalog: Catalog;
-
-  constructor(jsonSchema: StreamSchema) {
-    super();
-    this.#stream = Notes.#declare(jsonSchema);
-    this.catalog = new Catalog([this.#stream]);
-  }
-
-  static #declare(jsonSchema: StreamSchema): Stream {
-    return new Stream({
-      name: 'notes',
-      jsonSchema,
-      supportedSyncModes: ['full_refresh'],
-    });
-  }
-
-  get stream(): Stream {
-    return this.#stream;
-  }
-
-  reshape(jsonSchema: StreamSchema): void {
-    this.#stream = Notes.#declare(jsonSchema);
-    this.catalog = new Catalog([this.#stream]);
-  }
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  // No test watches: each runs the pipeline itself.
-  override changeSignals() {
-    return [];
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  protected override async *extract(_configuration: CopyConfiguration) {
-    for (const data of this.rows) yield { stream: 'notes', data };
-  }
-}
+// Notes of this schema and these rows, copied in full each pass. A test that
+// reshapes the notes makes a new source with the same identity.
+const notesOf = (
+  jsonSchema: StreamSchema,
+  rows: readonly Record<string, unknown>[],
+) =>
+  new IterableSource({
+    identity: 'notes',
+    streams: {
+      notes: {
+        description: 'The notes that the test sets.',
+        jsonSchema,
+        primaryKey: ['id'],
+        snapshot: () => rows,
+      },
+    },
+  });
 
 const described = (properties: Record<string, FieldSchema>): StreamSchema => ({
   type: 'object',
@@ -94,8 +57,9 @@ test('a reload that swaps a table in keeps the views of others over it, their ow
     (client) => client.end(),
   );
   const destination = new PostgresDestination({ url });
-  const source = new Notes(
+  let source = notesOf(
     described({ id: { type: 'string' }, title: { type: 'string' } }),
+    [{ id: '1', title: 'a' }],
   );
   const run = () =>
     new Pipeline({
@@ -106,11 +70,10 @@ test('a reload that swaps a table in keeps the views of others over it, their ow
           name: 'notes',
           source,
           destination,
-          steps: [new Copy(source.stream, destination.table('notes'))],
+          steps: [new Copy(source.streams.notes, destination.table('notes'))],
         }),
       ],
     }).run();
-  source.rows = [{ id: '1', title: 'a' }];
   await run();
   // Roles belong to the whole server, which other tests share.
   const suffix = randomUUID().replaceAll('-', '');
@@ -140,17 +103,17 @@ test('a reload that swaps a table in keeps the views of others over it, their ow
     CREATE INDEX counts_n ON reports.counts (n);
   `);
 
-  source.reshape(
+  source = notesOf(
     described({
       id: { type: 'string' },
       title: { type: 'string' },
       body: { type: 'string' },
     }),
+    [
+      { id: '1', title: 'b', body: 'x' },
+      { id: '2', title: 'c', body: 'y' },
+    ],
   );
-  source.rows = [
-    { id: '1', title: 'b', body: 'x' },
-    { id: '2', title: 'c', body: 'y' },
-  ];
   await run();
 
   assert.deepEqual(
@@ -200,12 +163,13 @@ test('a shape change in place keeps the views of others that still fit it, and f
     (client) => client.end(),
   );
   const destination = new PostgresDestination({ url });
-  const source = new Notes(
+  let source = notesOf(
     described({
       id: { type: 'string' },
       title: { type: 'string' },
       score: { type: 'integer' },
     }),
+    [{ id: '1', title: 'a', score: 2 }],
   );
   const run = () =>
     new Pipeline({
@@ -217,7 +181,7 @@ test('a shape change in place keeps the views of others that still fit it, and f
           source,
           destination,
           steps: [
-            new Copy(source.stream, destination.table('notes'), {
+            new Copy(source.streams.notes, destination.table('notes'), {
               syncMode: 'full_refresh',
               destinationSyncMode: 'append',
             }),
@@ -225,7 +189,6 @@ test('a shape change in place keeps the views of others that still fit it, and f
         }),
       ],
     }).run();
-  source.rows = [{ id: '1', title: 'a', score: 2 }];
   await run();
   await sql.unsafe(`
     CREATE SCHEMA reports;
@@ -233,24 +196,24 @@ test('a shape change in place keeps the views of others that still fit it, and f
     CREATE VIEW reports.titles AS SELECT title FROM marts.notes;
   `);
 
-  source.reshape(
+  source = notesOf(
     described({
       id: { type: 'string' },
       title: { type: 'string' },
       score: { type: 'number' },
     }),
+    [{ id: '2', title: 'b', score: 2.5 }],
   );
-  source.rows = [{ id: '2', title: 'b', score: 2.5 }];
   await run();
   const widened = {
     scores: [...(await sql`SELECT id, score FROM reports.scores ORDER BY id`)],
     titles: [...(await sql`SELECT title FROM reports.titles ORDER BY title`)],
   };
 
-  source.reshape(
+  source = notesOf(
     described({ id: { type: 'string' }, score: { type: 'number' } }),
+    [{ id: '3', score: 1 }],
   );
-  source.rows = [{ id: '3', score: 1 }];
   await assert.rejects(
     run(),
     /reports\.titles reads "_warehouse"\."raw_notes" and does not fit its change: column "?title"? does not exist/,

@@ -13,13 +13,12 @@ import { fromSql } from 'pgvector';
 import postgres from 'postgres';
 
 import {
-  Catalog,
   Connection,
   Copy,
-  type CopyConfiguration,
   DerivedDatasetError,
   DocumentParser,
   DocumentText,
+  IterableSource,
   type LoadedRow,
   LocalFiles,
   Pipeline,
@@ -28,8 +27,6 @@ import {
   type RuleColumns,
   type RuleResult,
   type RuleValues,
-  Source,
-  Stream,
 } from '@eltjs/elt';
 
 import {
@@ -47,62 +44,42 @@ const databases = new Postgres({ environment: process.env });
 // Rows that name stored files by ref, loaded into _warehouse.raw_files and read
 // through marts.files; rows can change between runs. Its notes fail every
 // read while notesGone is set, as an app's missing store does.
-class Files extends Source {
-  readonly identity = 'files';
+class FilesHost {
   rows: readonly { readonly id: string; readonly ref: string }[] = [];
   notesGone = false;
-  readonly files = new Stream({
-    name: 'files',
-    jsonSchema: {
-      type: 'object',
-      description: 'A row naming a stored file.',
-      properties: {
-        id: { type: 'string', description: 'Row id.' },
-        ref: { type: 'string', description: 'The stored file.' },
+  readonly source = new IterableSource({
+    identity: 'files',
+    streams: {
+      files: {
+        description: 'The rows that the test sets.',
+        jsonSchema: {
+          type: 'object',
+          description: 'A row naming a stored file.',
+          properties: {
+            id: { type: 'string', description: 'Row id.' },
+            ref: { type: 'string', description: 'The stored file.' },
+          },
+          required: ['id', 'ref'],
+        },
+        primaryKey: ['id'],
+        snapshot: () => this.rows,
       },
-      required: ['id', 'ref'],
+      notes: {
+        description: 'No note.',
+        jsonSchema: {
+          type: 'object',
+          description: 'A note.',
+          properties: { id: { type: 'string', description: 'Note id.' } },
+          required: ['id'],
+        },
+        primaryKey: ['id'],
+        snapshot: () => {
+          if (this.notesGone) throw new Error('the notes store is gone');
+          return [];
+        },
+      },
     },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
   });
-  readonly notes = new Stream({
-    name: 'notes',
-    jsonSchema: {
-      type: 'object',
-      description: 'A note.',
-      properties: { id: { type: 'string', description: 'Note id.' } },
-      required: ['id'],
-    },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
-  });
-  protected readonly catalog = new Catalog([this.files, this.notes]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  // No test watches: each runs the pipeline itself.
-  override changeSignals() {
-    return [];
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  protected override async *extract(configuration: CopyConfiguration) {
-    if (configuration.stream.name === 'notes') {
-      if (this.notesGone) throw new Error('the notes store is gone');
-      return;
-    }
-    for (const row of this.rows)
-      yield { stream: configuration.stream.name, data: row };
-  }
 }
 
 // A parser of UTF-8 text files: a real DocumentParser, which records each
@@ -135,7 +112,7 @@ const text =
 async function filesImport(url: string, directory: string) {
   const store = join(directory, 'files');
   await mkdir(store);
-  const source = new Files();
+  const host = new FilesHost();
   const destination = new PostgresDestination({ url });
   const target = destination.table('files');
   let parser = new TextParser('text-v1');
@@ -145,11 +122,11 @@ async function filesImport(url: string, directory: string) {
     connections: [
       new Connection({
         name: 'files',
-        source,
+        source: host.source,
         destination,
         steps: [
-          new Copy(source.files, target),
-          new Copy(source.notes, destination.table('notes')),
+          new Copy(host.source.streams.files, target),
+          new Copy(host.source.streams.notes, destination.table('notes')),
         ],
       }),
     ],
@@ -168,7 +145,7 @@ async function filesImport(url: string, directory: string) {
     ],
   });
   return {
-    source,
+    host,
     pipeline,
     parser: () => parser,
     replaceParser: (next: TextParser) => {
@@ -194,7 +171,7 @@ test('a computed dataset stores the text of each file its input rows name, once 
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
   await files.file('photo.txt', ' ');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'a.txt' },
     { id: '3', ref: 'b.txt' },
@@ -249,7 +226,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
   await writeFile(join(store, 'a.txt'), 'invoice 123');
   await writeFile(join(store, 'b.txt'), 'receipt');
   await writeFile(join(store, 'scan.pdf'), 'not text');
-  const source = new Files();
+  const host = new FilesHost();
   const destination = new PostgresDestination({ url });
   const target = destination.table('files');
   const named = new View({
@@ -266,9 +243,9 @@ test('a computed dataset reads a view declared before it: the text of each file 
     connections: [
       new Connection({
         name: 'files',
-        source,
+        source: host.source,
         destination,
-        steps: [new Copy(source.files, target)],
+        steps: [new Copy(host.source.streams.files, target)],
       }),
     ],
     derived: [
@@ -286,7 +263,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
       }),
     ],
   });
-  source.rows = [
+  host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
     { id: '3', ref: 'scan.pdf' },
@@ -294,7 +271,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
 
   await pipeline.run();
   const first = [...(await sql.unsafe(text))];
-  source.rows = [{ id: '1', ref: 'a.txt' }];
+  host.rows = [{ id: '1', ref: 'a.txt' }];
   await pipeline.run();
 
   assert.deepEqual(
@@ -336,12 +313,12 @@ test('the next run reads only the files that are new or that another parser woul
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
   await files.file('c.txt', 'contract');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
   await files.pipeline.run();
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '3', ref: 'c.txt' },
   ];
@@ -379,7 +356,7 @@ test('a file the parser fails on is stored failed with why, the run still succee
   const files = await filesImport(url, scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('bad.txt', 'contract');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'bad.txt' },
   ];
@@ -434,10 +411,10 @@ test('a format the parser stops handling keeps the text read before, and a file 
   const files = await filesImport(url, scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
-  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
   await files.pipeline.run();
   files.parser().handles = false;
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
@@ -476,7 +453,7 @@ test('a file that is slow to read holds only its own place: the text of the file
   const names = Array.from({ length: 40 }, (_, index) => `f${index}.txt`);
   for (const name of ['slow.txt', ...names])
     await files.file(name, `text of ${name}`);
-  files.source.rows = ['slow.txt', ...names].map((ref, index) => ({
+  files.host.rows = ['slow.txt', ...names].map((ref, index) => ({
     id: String(index),
     ref,
   }));
@@ -522,7 +499,7 @@ test('while a file is slow to read, marts.derived_status says that the dataset r
   const names = Array.from({ length: 8 }, (_, index) => `f${index}.txt`);
   for (const name of ['slow.txt', ...names])
     await files.file(name, `text of ${name}`);
-  files.source.rows = ['slow.txt', ...names].map((ref, index) => ({
+  files.host.rows = ['slow.txt', ...names].map((ref, index) => ({
     id: String(index),
     ref,
   }));
@@ -581,7 +558,7 @@ test('a parser that fails on every file leaves the dataset current in marts.deri
   const files = await filesImport(url, scratch.path);
   await files.file('a.txt', 'invoice');
   await files.file('b.txt', 'receipt');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
@@ -617,8 +594,8 @@ test('a run whose other copy failed still stores the text of the files its loade
   const sql = client(url, clients);
   const files = await filesImport(url, scratch.path);
   await files.file('a.txt', 'invoice 123');
-  files.source.rows = [{ id: '1', ref: 'a.txt' }];
-  files.source.notesGone = true;
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
+  files.host.notesGone = true;
 
   const error = await files.pipeline.run().then(
     () => assert.fail('the run reported no failure'),
@@ -652,7 +629,7 @@ test('the view of a computed dataset, read as of a position, shows the rows it h
   const files = await filesImport(url, scratch.path);
   const marts = new PostgresDestination({ url });
   await files.file('a.txt', 'first draft');
-  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
   await files.pipeline.run();
   const positions = await marts.positions();
   const before = Array.isArray(positions) ? positions.at(-1) : undefined;
@@ -728,12 +705,12 @@ const vectorDatabases = new Postgres({
   image: 'pgvector/pgvector:pg18',
 });
 
-// A pipeline that copies the rows of source into _warehouse.raw_files and
+// A pipeline that copies the rows of host into _warehouse.raw_files and
 // measures each file into marts.measures.
 function measuresPipeline(
   destination: PostgresDestination,
   url: string,
-  source: Files,
+  host: FilesHost,
   measure: Measure,
   indexes: readonly PostgresIndex[] = [],
 ) {
@@ -744,9 +721,9 @@ function measuresPipeline(
     connections: [
       new Connection({
         name: 'files',
-        source,
+        source: host.source,
         destination,
-        steps: [new Copy(source.files, target)],
+        steps: [new Copy(host.source.streams.files, target)],
       }),
     ],
     derived: [
@@ -795,9 +772,9 @@ test('a vector column of a rule is a vector(n) of pgvector that keeps each float
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
   const sql = client(url, clients);
-  const source = new Files();
+  const host = new FilesHost();
   const measure = new Measure(3);
-  source.rows = [
+  host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
@@ -810,7 +787,7 @@ test('a vector column of a rule is a vector(n) of pgvector that keeps each float
   await measuresPipeline(
     new PostgresDestination({ url }),
     url,
-    source,
+    host,
     measure,
   ).run();
 
@@ -862,12 +839,12 @@ test('a declared HNSW index and a btree index are made at a refresh, and a chang
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
   const sql = client(url, clients);
-  const source = new Files();
+  const host = new FilesHost();
   const measure = new Measure(3);
   const destination = new PostgresDestination({ url });
-  source.rows = [{ id: '1', ref: 'a.txt' }];
+  host.rows = [{ id: '1', ref: 'a.txt' }];
   measure.answers.set('a.txt', { size: 1, vector: Vector.from([1, 0, 0]) });
-  await measuresPipeline(destination, url, source, measure, [
+  await measuresPipeline(destination, url, host, measure, [
     { type: 'btree', columns: ['committed_in'] },
     {
       type: 'vector',
@@ -883,7 +860,7 @@ test('a declared HNSW index and a btree index are made at a refresh, and a chang
   ];
   const committed = await commits();
 
-  await measuresPipeline(destination, url, source, measure, [
+  await measuresPipeline(destination, url, host, measure, [
     { type: 'vector', column: 'vector', metric: 'euclidean', build: hnsw() },
   ]).run();
 
@@ -912,10 +889,10 @@ test('a change of only the metric, only m or only efConstruction of a declared H
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
   const sql = client(url, clients);
-  const source = new Files();
+  const host = new FilesHost();
   const measure = new Measure(3);
   const destination = new PostgresDestination({ url });
-  source.rows = [{ id: '1', ref: 'a.txt' }];
+  host.rows = [{ id: '1', ref: 'a.txt' }];
   measure.answers.set('a.txt', { vector: Vector.from([1, 0, 0]) });
   const declarations = [
     { metric: 'cosine', m: 8, efConstruction: 32 },
@@ -926,7 +903,7 @@ test('a change of only the metric, only m or only efConstruction of a declared H
   const made: string[][] = [];
 
   for (const { metric, m, efConstruction } of declarations) {
-    await measuresPipeline(destination, url, source, measure, [
+    await measuresPipeline(destination, url, host, measure, [
       {
         type: 'vector',
         column: 'vector',
@@ -961,14 +938,14 @@ test('a vector column that Postgres refuses for another reason than a missing ty
   // A person made the extension, as a destination with createExtension:
   // false asks.
   await sql`CREATE EXTENSION vector`;
-  const source = new Files();
+  const host = new FilesHost();
   const destination = new PostgresDestination({ url, createExtension: false });
-  source.rows = [{ id: '1', ref: 'a.txt' }];
+  host.rows = [{ id: '1', ref: 'a.txt' }];
 
   const failed = await measuresPipeline(
     destination,
     url,
-    source,
+    host,
     new Measure(16_001),
   )
     .run()
@@ -996,15 +973,15 @@ test('a change of the dimensions of a vector column makes the table again with t
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
   const sql = client(url, clients);
-  const source = new Files();
+  const host = new FilesHost();
   const destination = new PostgresDestination({ url });
   const indexes = [
     { type: 'vector', column: 'vector', metric: 'cosine', build: hnsw() },
   ] as const;
-  source.rows = [{ id: '1', ref: 'a.txt' }];
+  host.rows = [{ id: '1', ref: 'a.txt' }];
   const three = new Measure(3);
   three.answers.set('a.txt', { vector: Vector.from([1, 0, 0]) });
-  await measuresPipeline(destination, url, source, three, indexes).run();
+  await measuresPipeline(destination, url, host, three, indexes).run();
   // The table is made again, not altered: pgvector does not cast the vector
   // of a row to other dimensions, and the index must come back on the new
   // table.
@@ -1013,7 +990,7 @@ test('a change of the dimensions of a vector column makes the table again with t
   const four = new Measure(4);
   four.answers.set('a.txt', { vector: Vector.from([0, 1, 0, 0]) });
 
-  await measuresPipeline(destination, url, source, four, indexes).run();
+  await measuresPipeline(destination, url, host, four, indexes).run();
 
   assert.deepEqual(
     {
@@ -1045,12 +1022,12 @@ test('a destination that may not create the extension fails a dataset with a vec
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
   const sql = client(url, clients);
-  const source = new Files();
+  const host = new FilesHost();
   const measure = new Measure(3);
   const destination = new PostgresDestination({ url, createExtension: false });
-  source.rows = [{ id: '1', ref: 'a.txt' }];
+  host.rows = [{ id: '1', ref: 'a.txt' }];
 
-  const failed = await measuresPipeline(destination, url, source, measure)
+  const failed = await measuresPipeline(destination, url, host, measure)
     .run()
     .then(
       () => assert.fail('the dataset reported no failure'),
@@ -1085,16 +1062,11 @@ test('a server with no pgvector installed fails a dataset with a vector column w
   await using clients = new AsyncDisposableStack();
   const url = database.connectionString;
   const sql = client(url, clients);
-  const source = new Files();
+  const host = new FilesHost();
   const destination = new PostgresDestination({ url });
-  source.rows = [{ id: '1', ref: 'a.txt' }];
+  host.rows = [{ id: '1', ref: 'a.txt' }];
 
-  const failed = await measuresPipeline(
-    destination,
-    url,
-    source,
-    new Measure(3),
-  )
+  const failed = await measuresPipeline(destination, url, host, new Measure(3))
     .run()
     .then(
       () => assert.fail('the dataset reported no failure'),
@@ -1142,13 +1114,13 @@ test('a role that may not create the extension vector fails a dataset with a vec
   owner.username = role;
   owner.password = password;
   const destination = new PostgresDestination({ url: owner.href });
-  const source = new Files();
-  source.rows = [{ id: '1', ref: 'a.txt' }];
+  const host = new FilesHost();
+  host.rows = [{ id: '1', ref: 'a.txt' }];
 
   const failed = await measuresPipeline(
     destination,
     owner.href,
-    source,
+    host,
     new Measure(3),
   )
     .run()

@@ -3,17 +3,7 @@ import { test } from 'node:test';
 
 import { Postgres } from '@zukhruf/testing/postgres';
 
-import {
-  Catalog,
-  type ChangeSignal,
-  Connection,
-  Copy,
-  type CopyConfiguration,
-  Gauge,
-  Pipeline,
-  Source,
-  Stream,
-} from '@eltjs/elt';
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
@@ -35,86 +25,22 @@ type SlackMessage = {
   threadTs: string | null;
 };
 
-function slackStream(name: string) {
-  return new Stream({
-    name,
-    jsonSchema: {
-      type: 'object',
-      description: 'A Slack message.',
-      properties: {
-        workspaceId: { type: 'string', description: 'Its workspace.' },
-        channelId: { type: 'string', description: 'Its conversation.' },
-        ts: { type: 'string', description: 'Its Slack timestamp.' },
-        userId: { type: 'string', description: 'Who sent it.' },
-        text: { type: ['string', 'null'], description: 'What it says.' },
-        threadTs: {
-          type: ['string', 'null'],
-          description: 'The Slack timestamp of its thread parent.',
-        },
-      },
-      required: [
-        'workspaceId',
-        'channelId',
-        'ts',
-        'userId',
-        'text',
-        'threadTs',
-      ],
+const slackSchema = {
+  type: 'object',
+  description: 'A Slack message.',
+  properties: {
+    workspaceId: { type: 'string', description: 'Its workspace.' },
+    channelId: { type: 'string', description: 'Its conversation.' },
+    ts: { type: 'string', description: 'Its Slack timestamp.' },
+    userId: { type: 'string', description: 'Who sent it.' },
+    text: { type: ['string', 'null'], description: 'What it says.' },
+    threadTs: {
+      type: ['string', 'null'],
+      description: 'The Slack timestamp of its thread parent.',
     },
-    primaryKey: ['workspaceId', 'channelId', 'ts'],
-    supportedSyncModes: ['full_refresh'],
-  });
-}
-
-const messages = slackStream('slack_messages');
-const replies = slackStream('slack_thread_replies');
-
-// The upstream of the test source, which the test fills before it reads.
-class Filled extends Gauge<number> {
-  protected async read(): Promise<number> {
-    return 0;
-  }
-}
-
-// Reads every Slack message and thread reply posted so far, as an upstream
-// that replaces its tables whole.
-class Posted extends Source {
-  readonly identity = 'posted';
-  protected readonly catalog = new Catalog([messages, replies]);
-  readonly #messages: readonly SlackMessage[];
-  readonly #replies: readonly SlackMessage[];
-
-  constructor(
-    messages: readonly SlackMessage[],
-    replies: readonly SlackMessage[],
-  ) {
-    super();
-    this.#messages = messages;
-    this.#replies = replies;
-  }
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
-    return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
-  }
-
-  protected override async *extract({ stream }: CopyConfiguration) {
-    const posted =
-      stream.name === messages.name ? this.#messages : this.#replies;
-    for (const data of posted) yield { stream: stream.name, data };
-  }
-}
+  },
+  required: ['workspaceId', 'channelId', 'ts', 'userId', 'text', 'threadTs'],
+} as const;
 
 type Row = readonly [
   workspaceId: string,
@@ -132,7 +58,31 @@ function workspace(url: string) {
   const destination = new PostgresDestination({ url });
   const checkpoints = new PostgresCheckpointStore({ url });
   const history = new PostgresSyncHistory({ url });
-  const copies = [messages, replies].map(
+  const postedMessages: SlackMessage[] = [];
+  const postedReplies: SlackMessage[] = [];
+  // Reads every Slack message and thread reply posted so far, as an upstream
+  // that replaces its tables whole.
+  const source = new IterableSource({
+    identity: 'posted',
+    streams: {
+      slack_messages: {
+        description: 'Every Slack message posted so far.',
+        jsonSchema: slackSchema,
+        primaryKey: ['workspaceId', 'channelId', 'ts'],
+        snapshot: () => postedMessages,
+      },
+      slack_thread_replies: {
+        description: 'Every Slack thread reply posted so far.',
+        jsonSchema: slackSchema,
+        primaryKey: ['workspaceId', 'channelId', 'ts'],
+        snapshot: () => postedReplies,
+      },
+    },
+  });
+  const copies = [
+    source.streams.slack_messages,
+    source.streams.slack_thread_replies,
+  ].map(
     (stream) =>
       new Copy(stream, destination.table(stream.name), {
         id: stream.name,
@@ -140,8 +90,6 @@ function workspace(url: string) {
         destinationSyncMode: 'overwrite',
       }),
   );
-  const postedMessages: SlackMessage[] = [];
-  const postedReplies: SlackMessage[] = [];
   const toMessage = ([
     workspaceId,
     channelId,
@@ -173,7 +121,7 @@ function workspace(url: string) {
         connections: [
           new Connection({
             name: 'slack',
-            source: new Posted([...postedMessages], [...postedReplies]),
+            source,
             destination,
             checkpoints,
             steps: copies,

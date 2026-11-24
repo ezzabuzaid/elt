@@ -15,15 +15,11 @@ import { fromSql } from '@zukhruf/vectors/sqlite';
 import { APICallError } from 'ai';
 
 import {
-  Catalog,
   Connection,
   Copy,
-  type CopyConfiguration,
-  Gauge,
+  IterableSource,
   Pipeline,
   type PipelineClock,
-  Source,
-  Stream,
 } from '@eltjs/elt';
 import {
   ComputedDataset,
@@ -32,14 +28,6 @@ import {
 } from '@eltjs/elt-sqlite';
 
 import { Embedding } from './embedding.ts';
-
-// The upstream of a test source, which the test fills before it reads: a
-// watch finds it changed at its first check and unchanged after.
-class Filled extends Gauge<number> {
-  protected async read(): Promise<number> {
-    return 0;
-  }
-}
 
 // A model server cannot run in a test, so this stands in for one: a real
 // EmbeddingModelV4 whose vector of a text counts each letter a to z. It
@@ -108,49 +96,16 @@ type Listing = {
   readonly description: string | null;
 };
 
-// Listings, loaded into raw_listings and read through listings; they can
-// change between runs.
-class Listings extends Source {
-  readonly identity = 'listings';
-  rows: readonly Listing[] = [];
-  readonly listings = new Stream({
-    name: 'listings',
-    jsonSchema: {
-      type: 'object',
-      description: 'A listing.',
-      properties: {
-        id: { type: 'string', description: 'Listing id.' },
-        title: { type: 'string', description: 'Title.' },
-        description: { type: ['string', 'null'], description: 'Text.' },
-      },
-      required: ['id', 'title', 'description'],
-    },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
-  });
-  protected readonly catalog = new Catalog([this.listings]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals(streams: readonly Stream[]) {
-    return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
-  }
-
-  protected override async *extract(configuration: CopyConfiguration) {
-    for (const row of this.rows)
-      yield { stream: configuration.stream.name, data: row };
-  }
-}
+const listingSchema = {
+  type: 'object',
+  description: 'A listing.',
+  properties: {
+    id: { type: 'string', description: 'Listing id.' },
+    title: { type: 'string', description: 'Title.' },
+    description: { type: ['string', 'null'], description: 'Text.' },
+  },
+  required: ['id', 'title', 'description'],
+} as const;
 
 // The timers of a rule, which a test fires by hand: no real model call waits
 // out a limit of minutes in a test.
@@ -180,7 +135,20 @@ function listingsImport(
     | HandClock = globalThis,
   dimensions: () => number = () => 26,
 ) {
-  const source = new Listings();
+  // Listings, loaded into raw_listings and read through listings; they can
+  // change between runs.
+  const host: { rows: readonly Listing[] } = { rows: [] };
+  const source = new IterableSource({
+    identity: 'listings',
+    streams: {
+      listings: {
+        description: 'The listings that the test sets.',
+        jsonSchema: listingSchema,
+        primaryKey: ['id'],
+        snapshot: () => host.rows,
+      },
+    },
+  });
   const path = join(directory, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
   const target = destination.table('listings');
@@ -193,7 +161,7 @@ function listingsImport(
           name: 'listings',
           source,
           destination,
-          steps: [new Copy(source.listings, target)],
+          steps: [new Copy(source.streams.listings, target)],
         }),
       ],
       derived: [
@@ -231,7 +199,7 @@ function listingsImport(
       }));
   };
   return {
-    source,
+    host,
     run: (options?: { signal: AbortSignal }) => pipeline().run(options),
     vectors,
   };
@@ -249,7 +217,7 @@ test('each listing with text gets the unit vector of its title and description f
   await using scratch = await new TemporaryFiles().directory('embedding-');
   const model = new LetterModel('letters-1');
   const listings = listingsImport(scratch.path, () => model);
-  listings.source.rows = [
+  listings.host.rows = [
     { id: '1', title: 'red car', description: 'fast' },
     { id: '2', title: 'blue bike', description: null },
     { id: '3', title: ' ', description: null },
@@ -279,12 +247,12 @@ test('the next run embeds only the listings whose text changed, and another mode
   await using scratch = await new TemporaryFiles().directory('embedding-');
   let model = new LetterModel('letters-1');
   const listings = listingsImport(scratch.path, () => model);
-  listings.source.rows = [
+  listings.host.rows = [
     { id: '1', title: 'red car', description: 'fast' },
     { id: '2', title: 'blue bike', description: null },
   ];
   await listings.run();
-  listings.source.rows = [
+  listings.host.rows = [
     { id: '1', title: 'red car', description: 'fast' },
     { id: '2', title: 'green bike', description: null },
   ];
@@ -309,7 +277,7 @@ test('a model that answers a vector of other dimensions than the rule declares s
   await using scratch = await new TemporaryFiles().directory('embedding-');
   const model = new LetterModel('letters-1');
   const listings = listingsImport(scratch.path, () => model);
-  listings.source.rows = [
+  listings.host.rows = [
     { id: '1', title: 'red car', description: null },
     { id: '2', title: 'blue van', description: null },
   ];
@@ -341,7 +309,7 @@ test('another number of dimensions embeds every listing again, as one model can 
     globalThis,
     () => dimensions,
   );
-  listings.source.rows = [
+  listings.host.rows = [
     { id: '1', title: 'red car', description: null },
     { id: '2', title: 'blue van', description: null },
   ];
@@ -376,7 +344,7 @@ test('a model that refuses a call stores those listings failed with why, the run
   await using scratch = await new TemporaryFiles().directory('embedding-');
   const model = new LetterModel('letters-1');
   const listings = listingsImport(scratch.path, () => model);
-  listings.source.rows = [{ id: '1', title: 'red car', description: null }];
+  listings.host.rows = [{ id: '1', title: 'red car', description: null }];
   model.refusing = true;
 
   await listings.run();
@@ -403,7 +371,7 @@ test('a model that answers a vector with no usable length stores that listing fa
   await using scratch = await new TemporaryFiles().directory('embedding-');
   const model = new LetterModel('letters-1');
   const listings = listingsImport(scratch.path, () => model);
-  listings.source.rows = [
+  listings.host.rows = [
     { id: '1', title: 'red car', description: null },
     // No letter to count, so the model answers an all-zero vector.
     { id: '2', title: '1234', description: null },
@@ -458,7 +426,7 @@ test('an input the model refuses fails only its own row, and the next run asks a
   await using scratch = await new TemporaryFiles().directory('embedding-');
   const model = new LetterModel('letters-1');
   const listings = listingsImport(scratch.path, () => model);
-  listings.source.rows = [
+  listings.host.rows = [
     'red car',
     'too long',
     'blue van',
@@ -501,7 +469,7 @@ for (const [status, calls] of [
     await using scratch = await new TemporaryFiles().directory('embedding-');
     const model = new LetterModel('letters-1');
     const listings = listingsImport(scratch.path, () => model);
-    listings.source.rows = ['red car', 'blue van', 'old bus'].map(
+    listings.host.rows = ['red car', 'blue van', 'old bus'].map(
       (title, index) => ({ id: String(index + 1), title, description: null }),
     );
     model.answer = () => status;
@@ -527,7 +495,7 @@ test(
     const clock = new HandClock();
     const listings = listingsImport(scratch.path, () => model, clock);
     // 64 rows are one batch, so the 65th goes in the next call.
-    listings.source.rows = [
+    listings.host.rows = [
       'hung car',
       ...Array.from(
         { length: 64 },
@@ -572,7 +540,7 @@ test(
     const model = new LetterModel('letters-1');
     const clock = new HandClock();
     const listings = listingsImport(scratch.path, () => model, clock);
-    listings.source.rows = [{ id: '1', title: 'red car', description: null }];
+    listings.host.rows = [{ id: '1', title: 'red car', description: null }];
     model.hangs = () => true;
     const controller = new AbortController();
 

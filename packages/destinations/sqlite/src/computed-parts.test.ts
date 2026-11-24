@@ -7,15 +7,13 @@ import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 
 import {
-  Catalog,
   Connection,
   Copy,
+  IterableSource,
   type LoadedRow,
   Pipeline,
   type RuleColumns,
   type RuleValues,
-  Source,
-  Stream,
   TableRule,
   type TableRuleResult,
 } from '@eltjs/elt';
@@ -29,44 +27,28 @@ import {
 type Note = { readonly id: string; readonly text: string };
 
 // Notes the test sets before each run, copied in full each pass.
-class Notes extends Source {
-  readonly identity = 'notes';
-  rows: readonly Note[] = [];
-  readonly notes = new Stream({
-    name: 'notes',
-    jsonSchema: {
-      description: 'One notes record.',
-      type: 'object',
-      properties: {
-        id: { description: 'Id of the record.', type: 'string' },
-        text: { description: 'Text of the record.', type: 'string' },
+function notesSource() {
+  const host: { rows: readonly Note[] } = { rows: [] };
+  const source = new IterableSource({
+    identity: 'notes',
+    streams: {
+      notes: {
+        description: 'The notes that the test sets.',
+        jsonSchema: {
+          description: 'One notes record.',
+          type: 'object',
+          properties: {
+            id: { description: 'Id of the record.', type: 'string' },
+            text: { description: 'Text of the record.', type: 'string' },
+          },
+          required: ['id', 'text'],
+        },
+        primaryKey: ['id'],
+        snapshot: () => host.rows,
       },
-      required: ['id', 'text'],
     },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
   });
-  protected readonly catalog = new Catalog([this.notes]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals() {
-    return [];
-  }
-
-  protected override async *extract() {
-    for (const row of this.rows) yield { stream: 'notes', data: row };
-  }
+  return { host, source };
 }
 
 const content = {
@@ -141,7 +123,7 @@ class Pieces extends TableRule<Note, RuleColumns, RuleColumns> {
 }
 
 function pieces(directory: string, rule = new Pieces()) {
-  const source = new Notes();
+  const { host, source } = notesSource();
   const destination = new SQLiteDestination({
     path: join(directory, 'data.sqlite'),
   });
@@ -154,7 +136,7 @@ function pieces(directory: string, rule = new Pieces()) {
         name: 'notes',
         source,
         destination,
-        steps: [new Copy(source.notes, target)],
+        steps: [new Copy(source.streams.notes, target)],
       }),
     ],
     derived: [
@@ -167,7 +149,7 @@ function pieces(directory: string, rule = new Pieces()) {
       }),
     ],
   });
-  return { source, destination, pipeline, rule };
+  return { host, destination, pipeline, rule };
 }
 
 function rows(path: string, sql: string) {
@@ -218,8 +200,8 @@ const parts =
 
 test('a table rule keeps one output row for each key in the view of the dataset, and each part in <name>_parts with its seq from 0, its part hash, its content and its place', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
-  const { source, destination, pipeline } = pieces(scratch.path);
-  source.rows = [
+  const { host, destination, pipeline } = pieces(scratch.path);
+  host.rows = [
     { id: 'a', text: 'one|two|one' },
     { id: 'b', text: 'three' },
   ];
@@ -291,8 +273,8 @@ test('a table rule keeps one output row for each key in the view of the dataset,
 
 test('an input that changes at its end keeps the commit of each part that did not change, writes the part that changed, deletes the parts beyond the new list, and a reading before the change shows the old parts with their output row', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
-  const { source, destination, pipeline } = pieces(scratch.path);
-  source.rows = [{ id: 'a', text: 'one|two|three' }];
+  const { host, destination, pipeline } = pieces(scratch.path);
+  host.rows = [{ id: 'a', text: 'one|two|three' }];
   await pipeline.run();
   const before = newest(destination);
   const committed = () =>
@@ -302,7 +284,7 @@ test('an input that changes at its end keeps the commit of each part that did no
     );
   const [kept] = committed();
   const [made] = rows(destination.path, 'SELECT input_hash FROM pieces');
-  source.rows = [{ id: 'a', text: 'one|tw' }];
+  host.rows = [{ id: 'a', text: 'one|tw' }];
 
   await pipeline.run();
 
@@ -336,13 +318,13 @@ test('an input that changes at its end keeps the commit of each part that did no
 
 test('a part that only moved keeps its part hash and is written with its new place', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
-  const { source, destination, pipeline } = pieces(scratch.path);
-  source.rows = [{ id: 'a', text: 'xx|one' }];
+  const { host, destination, pipeline } = pieces(scratch.path);
+  host.rows = [{ id: 'a', text: 'xx|one' }];
   await pipeline.run();
   const moved =
     'SELECT seq, part_hash, start, "end", committed_in FROM raw_pieces_parts WHERE seq = 1';
   const [before] = rows(destination.path, moved);
-  source.rows = [{ id: 'a', text: 'x|one' }];
+  host.rows = [{ id: 'a', text: 'x|one' }];
 
   await pipeline.run();
 
@@ -359,15 +341,15 @@ test('a part that only moved keeps its part hash and is written with its new pla
 
 test('an input that is empty or failed has no parts, and an input whose parts were kept loses them when it fails', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
-  const { source, destination, pipeline } = pieces(scratch.path);
-  source.rows = [
+  const { host, destination, pipeline } = pieces(scratch.path);
+  host.rows = [
     { id: 'a', text: '' },
     { id: 'b', text: 'bad' },
     { id: 'c', text: 'one|two' },
   ];
   await pipeline.run();
   const first = rows(destination.path, parts);
-  source.rows = [
+  host.rows = [
     { id: 'a', text: '' },
     { id: 'b', text: 'bad' },
     { id: 'c', text: 'bad again' },
@@ -398,14 +380,14 @@ test('an input that is empty or failed has no parts, and an input whose parts we
 
 test('a removed input removes its output row and its parts, and a reading before the removal still shows them', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
-  const { source, destination, pipeline } = pieces(scratch.path);
-  source.rows = [
+  const { host, destination, pipeline } = pieces(scratch.path);
+  host.rows = [
     { id: 'a', text: 'one|two' },
     { id: 'b', text: 'three' },
   ];
   await pipeline.run();
   const before = newest(destination);
-  source.rows = [{ id: 'b', text: 'three' }];
+  host.rows = [{ id: 'b', text: 'three' }];
 
   await pipeline.run();
 
@@ -435,8 +417,8 @@ for (const column of ['tokens', 'start'] as const)
     await using scratch = await new TemporaryFiles().directory('elt-parts-');
     const rule = new Pieces();
     rule.nudges.set(column, 0.5);
-    const { source, destination, pipeline } = pieces(scratch.path, rule);
-    source.rows = [{ id: 'a', text: 'one|two' }];
+    const { host, destination, pipeline } = pieces(scratch.path, rule);
+    host.rows = [{ id: 'a', text: 'one|two' }];
 
     await pipeline.run();
 
@@ -460,8 +442,8 @@ for (const column of ['tokens', 'start'] as const)
 
 test('a rule call that fails rejects the run, and each input of the calls before it keeps its output row with all its parts', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
-  const { source, destination, pipeline } = pieces(scratch.path);
-  source.rows = [
+  const { host, destination, pipeline } = pieces(scratch.path);
+  host.rows = [
     { id: 'a', text: 'one|two' },
     { id: 'b', text: 'throw' },
     { id: 'c', text: 'three' },
@@ -486,11 +468,11 @@ test('a rule call that fails rejects the run, and each input of the calls before
 
 test('a rule that stops handling an input keeps the parts it made before', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
-  const { source, destination, pipeline, rule } = pieces(scratch.path);
-  source.rows = [{ id: 'a', text: 'one|two' }];
+  const { host, destination, pipeline, rule } = pieces(scratch.path);
+  host.rows = [{ id: 'a', text: 'one|two' }];
   await pipeline.run();
   rule.handles = false;
-  source.rows = [{ id: 'a', text: 'one|two|three' }];
+  host.rows = [{ id: 'a', text: 'one|two|three' }];
 
   await pipeline.run();
 
@@ -508,8 +490,8 @@ test('a rule that stops handling an input keeps the parts it made before', async
 
 test('derived_status counts the inputs and the output rows of a table rule, one for each key, not its parts', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
-  const { source, destination, pipeline } = pieces(scratch.path);
-  source.rows = [
+  const { host, destination, pipeline } = pieces(scratch.path);
+  host.rows = [
     { id: 'a', text: 'one|two|three' },
     { id: 'b', text: 'four' },
     { id: 'c', text: '' },
@@ -538,7 +520,7 @@ test('derived_status counts the inputs and the output rows of a table rule, one 
 test('a changed declaration of the parts makes both tables again, and a reading before shows the parts of the old declaration', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
   const first = pieces(scratch.path);
-  first.source.rows = [{ id: 'a', text: 'one|two' }];
+  first.host.rows = [{ id: 'a', text: 'one|two' }];
   await first.pipeline.run();
   const before = newest(first.destination);
   const [output] = rows(
@@ -554,7 +536,7 @@ test('a changed declaration of the parts makes both tables again, and a reading 
       },
     }),
   );
-  second.source.rows = first.source.rows;
+  second.host.rows = first.host.rows;
 
   await second.pipeline.run();
 
@@ -639,7 +621,7 @@ for (const [output, place, column, other] of [
 for (const name of ['pieces_parts', 'RAW_PIECES_PARTS'])
   test(`a computed dataset with a table rule refuses a pipeline whose copy makes ${name}`, async () => {
     await using scratch = await new TemporaryFiles().directory('elt-parts-');
-    const source = new Notes();
+    const { source } = notesSource();
     const destination = new SQLiteDestination({
       path: join(scratch.path, 'data.sqlite'),
     });
@@ -652,7 +634,7 @@ for (const name of ['pieces_parts', 'RAW_PIECES_PARTS'])
           name: 'notes',
           source,
           destination,
-          steps: [new Copy(source.notes, target)],
+          steps: [new Copy(source.streams.notes, target)],
         }),
       ],
       derived: [

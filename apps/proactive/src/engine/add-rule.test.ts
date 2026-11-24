@@ -6,16 +6,7 @@ import { test } from 'node:test';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 
-import {
-  Catalog,
-  type ChangeSignal,
-  Connection,
-  Copy,
-  Gauge,
-  Pipeline,
-  Source,
-  Stream,
-} from '@eltjs/elt';
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
@@ -29,61 +20,16 @@ const postgresql = new Postgres({ environment: process.env });
 
 type Text = { guid: string; handle: string; text: string };
 
-const messages = new Stream({
-  name: 'messages_messages',
-  jsonSchema: {
-    type: 'object',
-    description: 'A message.',
-    properties: {
-      guid: { type: 'string', description: 'Its id.' },
-      handle: { type: 'string', description: 'Who sent it.' },
-      text: { type: 'string', description: 'What it says.' },
-    },
-    required: ['guid', 'handle', 'text'],
+const messagesSchema = {
+  type: 'object',
+  description: 'A message.',
+  properties: {
+    guid: { type: 'string', description: 'Its id.' },
+    handle: { type: 'string', description: 'Who sent it.' },
+    text: { type: 'string', description: 'What it says.' },
   },
-  primaryKey: ['guid'],
-  supportedSyncModes: ['full_refresh'],
-});
-
-// The upstream of the test source, which the test fills before it reads.
-class Filled extends Gauge<number> {
-  protected async read(): Promise<number> {
-    return 0;
-  }
-}
-
-// Reads the messages it was given, as an upstream that replaces its table
-// whole.
-class Received extends Source {
-  readonly identity = 'received';
-  protected readonly catalog = new Catalog([messages]);
-  readonly #texts: readonly Text[];
-
-  constructor(texts: readonly Text[]) {
-    super();
-    this.#texts = texts;
-  }
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
-    return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
-  }
-
-  protected override async *extract() {
-    for (const data of this.#texts) yield { stream: messages.name, data };
-  }
-}
+  required: ['guid', 'handle', 'text'],
+} as const;
 
 // A warehouse whose marts.messages_messages holds these messages, and a
 // rule file, both new: the rules added and the reading of the warehouse as
@@ -94,23 +40,43 @@ async function setup(
   ...texts: readonly [handle: string, text: string][]
 ) {
   const destination = new PostgresDestination({ url });
+  // Reads the messages it was given, as an upstream that replaces its table
+  // whole.
+  const received: readonly Text[] = texts.map(([handle, text]) => ({
+    guid: randomUUID(),
+    handle,
+    text,
+  }));
+  const source = new IterableSource({
+    identity: 'received',
+    streams: {
+      messages_messages: {
+        description: 'The messages that the test gives.',
+        jsonSchema: messagesSchema,
+        primaryKey: ['guid'],
+        snapshot: () => received,
+      },
+    },
+  });
   await new Pipeline({
     clock: globalThis,
     history: new PostgresSyncHistory({ url }),
     connections: [
       new Connection({
         name: 'messages',
-        source: new Received(
-          texts.map(([handle, text]) => ({ guid: randomUUID(), handle, text })),
-        ),
+        source,
         destination,
         checkpoints: new PostgresCheckpointStore({ url }),
         steps: [
-          new Copy(messages, destination.table('messages_messages'), {
-            id: 'messages',
-            syncMode: 'full_refresh',
-            destinationSyncMode: 'overwrite',
-          }),
+          new Copy(
+            source.streams.messages_messages,
+            destination.table('messages_messages'),
+            {
+              id: 'messages',
+              syncMode: 'full_refresh',
+              destinationSyncMode: 'overwrite',
+            },
+          ),
         ],
       }),
     ],

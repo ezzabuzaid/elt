@@ -5,55 +5,11 @@ import { test } from 'node:test';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
-import {
-  Catalog,
-  Connection,
-  Copy,
-  type CopyConfiguration,
-  Pipeline,
-  Source,
-  Stream,
-} from '@eltjs/elt';
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
 
 import { PostgresDestination, PostgresSyncHistory } from './index.ts';
 
 const databases = new Postgres({ environment: process.env });
-
-class Notes extends Source {
-  readonly identity = 'notes';
-  readonly notes = new Stream({
-    name: 'notes',
-    jsonSchema: {
-      type: 'object',
-      description: 'A note.',
-      properties: { id: { type: 'string', description: 'Note id.' } },
-      required: ['id'],
-    },
-    supportedSyncModes: ['full_refresh'],
-  });
-  protected readonly catalog = new Catalog([this.notes]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  // No test watches: each runs the pipeline itself.
-  override changeSignals() {
-    return [];
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  protected override async *extract(configuration: CopyConfiguration) {
-    yield { stream: configuration.stream.name, data: { id: 'n1' } };
-  }
-}
 
 test('a role that a sync history names as a reader reads the positions of the database, and the database as of one, with its own session', async () => {
   await using database = await databases.database();
@@ -79,7 +35,22 @@ test('a role that a sync history names as a reader reads the positions of the da
   reader.username = role;
   reader.password = password;
   const readings = new PostgresDestination({ url: reader.href });
-  const source = new Notes();
+  const source = new IterableSource({
+    identity: 'notes',
+    streams: {
+      notes: {
+        description: 'One note.',
+        jsonSchema: {
+          type: 'object',
+          description: 'A note.',
+          properties: { id: { type: 'string', description: 'Note id.' } },
+          required: ['id'],
+        },
+        primaryKey: ['id'],
+        snapshot: () => [{ id: 'n1' }],
+      },
+    },
+  });
   const destination = new PostgresDestination({ url });
   const pipeline = (readers: readonly string[]) =>
     new Pipeline({
@@ -90,7 +61,7 @@ test('a role that a sync history names as a reader reads the positions of the da
           name: 'notes',
           source,
           destination,
-          steps: [new Copy(source.notes, destination.table('notes'))],
+          steps: [new Copy(source.streams.notes, destination.table('notes'))],
         }),
       ],
     });

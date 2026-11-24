@@ -9,16 +9,7 @@ import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
 import type { Reading, Warehouse } from '@eltjs/eca';
-import {
-  Catalog,
-  type ChangeSignal,
-  Connection,
-  Copy,
-  Gauge,
-  Pipeline,
-  Source,
-  Stream,
-} from '@eltjs/elt';
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
@@ -35,62 +26,16 @@ const postgresql = new Postgres({ environment: process.env });
 
 type Thing = { key: string; kind: string; text?: string };
 
-// The upstream of the test source, which the test fills before it reads.
-class Filled extends Gauge<number> {
-  protected async read(): Promise<number> {
-    return 0;
-  }
-}
-
-// Reads the things a test lists, all of them each time, as an upstream that
-// replaces its table whole.
-class Listed extends Source {
-  readonly identity = 'listed';
-  protected readonly catalog: Catalog;
-  readonly #things: readonly Thing[];
-
-  constructor(stream: Stream, things: readonly Thing[]) {
-    super();
-    this.catalog = new Catalog([stream]);
-    this.#things = things;
-  }
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
-    return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
-  }
-
-  protected override async *extract() {
-    for (const data of this.#things) yield { stream: 'things', data };
-  }
-}
-
-const things = new Stream({
-  name: 'things',
-  jsonSchema: {
-    type: 'object',
-    description: 'A thing.',
-    properties: {
-      key: { type: 'string', description: 'Its key.' },
-      kind: { type: 'string', description: 'What it is.' },
-      text: { type: 'string', description: 'What it says.' },
-    },
-    required: ['key', 'kind'],
+const thingsSchema = {
+  type: 'object',
+  description: 'A thing.',
+  properties: {
+    key: { type: 'string', description: 'Its key.' },
+    kind: { type: 'string', description: 'What it is.' },
+    text: { type: 'string', description: 'What it says.' },
   },
-  primaryKey: ['key'],
-  supportedSyncModes: ['full_refresh'],
-});
+  required: ['key', 'kind'],
+} as const;
 
 // A warehouse of things that a pass loads, as the loading role, into
 // marts.things, and its positions and readings as Automations reads them.
@@ -100,25 +45,41 @@ function warehouse(url: string, retention?: Temporal.Duration) {
     ...(retention === undefined ? {} : { retention }),
   });
   const checkpoints = new PostgresCheckpointStore({ url });
-  const copy = new Copy(things, destination.table('things'), {
+  // Reads the things a test lists, all of them each time, as an upstream that
+  // replaces its table whole.
+  let listed: readonly Thing[] = [];
+  const source = new IterableSource({
+    identity: 'listed',
+    streams: {
+      things: {
+        description: 'The things that the test lists.',
+        jsonSchema: thingsSchema,
+        primaryKey: ['key'],
+        snapshot: () => listed,
+      },
+    },
+  });
+  const copy = new Copy(source.streams.things, destination.table('things'), {
     id: 'things',
     syncMode: 'full_refresh',
     destinationSyncMode: 'overwrite',
   });
-  const load = (...listed: readonly Thing[]) =>
-    new Pipeline({
+  const load = (...things: readonly Thing[]) => {
+    listed = things;
+    return new Pipeline({
       clock: globalThis,
       history: new PostgresSyncHistory({ url }),
       connections: [
         new Connection({
           name: 'things',
-          source: new Listed(things, listed),
+          source,
           destination,
           checkpoints,
           steps: [copy],
         }),
       ],
     }).run();
+  };
   const port: Warehouse<postgres.Sql> = {
     stable: (after) => destination.positions(after),
     read: (position) => destination.reading(position),

@@ -6,16 +6,7 @@ import { test } from 'node:test';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { Postgres } from '@zukhruf/testing/postgres';
 
-import {
-  Catalog,
-  type ChangeSignal,
-  Connection,
-  Copy,
-  Gauge,
-  Pipeline,
-  Source,
-  Stream,
-} from '@eltjs/elt';
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
 import {
   PostgresCheckpointStore,
   PostgresDestination,
@@ -30,60 +21,16 @@ const postgresql = new Postgres({ environment: process.env });
 
 type Text = { guid: string; handle: string; text: string };
 
-const messages = new Stream({
-  name: 'messages_messages',
-  jsonSchema: {
-    type: 'object',
-    description: 'A message.',
-    properties: {
-      guid: { type: 'string', description: 'Its id.' },
-      handle: { type: 'string', description: 'Who sent it.' },
-      text: { type: 'string', description: 'What it says.' },
-    },
-    required: ['guid', 'handle', 'text'],
+const messagesSchema = {
+  type: 'object',
+  description: 'A message.',
+  properties: {
+    guid: { type: 'string', description: 'Its id.' },
+    handle: { type: 'string', description: 'Who sent it.' },
+    text: { type: 'string', description: 'What it says.' },
   },
-  primaryKey: ['guid'],
-  supportedSyncModes: ['full_refresh'],
-});
-
-// The upstream of the test source, which the test fills before it reads.
-class Filled extends Gauge<number> {
-  protected async read(): Promise<number> {
-    return 0;
-  }
-}
-
-// Reads every message so far, as an upstream that replaces its table whole.
-class Received extends Source {
-  readonly identity = 'received';
-  protected readonly catalog = new Catalog([messages]);
-  readonly #texts: readonly Text[];
-
-  constructor(texts: readonly Text[]) {
-    super();
-    this.#texts = texts;
-  }
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals(streams: readonly Stream[]): ChangeSignal[] {
-    return [{ gauge: new Filled(), streams, interval: 1000, timeout: 1000 }];
-  }
-
-  protected override async *extract() {
-    for (const data of this.#texts) yield { stream: messages.name, data };
-  }
-}
+  required: ['guid', 'handle', 'text'],
+} as const;
 
 // The Messages import in a warehouse: each load gives marts.messages_messages
 // every message so far, and a rule reads it as of two loads.
@@ -91,12 +38,28 @@ function inbox(url: string) {
   const destination = new PostgresDestination({ url });
   const checkpoints = new PostgresCheckpointStore({ url });
   const history = new PostgresSyncHistory({ url });
-  const copy = new Copy(messages, destination.table('messages_messages'), {
-    id: 'messages',
-    syncMode: 'full_refresh',
-    destinationSyncMode: 'overwrite',
-  });
   const received: Text[] = [];
+  // Reads every message so far, as an upstream that replaces its table whole.
+  const source = new IterableSource({
+    identity: 'received',
+    streams: {
+      messages_messages: {
+        description: 'Every message so far.',
+        jsonSchema: messagesSchema,
+        primaryKey: ['guid'],
+        snapshot: () => received,
+      },
+    },
+  });
+  const copy = new Copy(
+    source.streams.messages_messages,
+    destination.table('messages_messages'),
+    {
+      id: 'messages',
+      syncMode: 'full_refresh',
+      destinationSyncMode: 'overwrite',
+    },
+  );
   return {
     // Loads every message so far, plus these. Resolves to the position of
     // the load.
@@ -116,7 +79,7 @@ function inbox(url: string) {
         connections: [
           new Connection({
             name: 'messages',
-            source: new Received([...received]),
+            source,
             destination,
             checkpoints,
             steps: [copy],

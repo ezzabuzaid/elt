@@ -20,10 +20,8 @@ import { Vector } from '@zukhruf/vectors';
 import { fromSql } from '@zukhruf/vectors/sqlite';
 
 import {
-  Catalog,
   Connection,
   Copy,
-  type CopyConfiguration,
   DerivedDatasetError,
   type DocumentFile,
   DocumentParser,
@@ -31,6 +29,7 @@ import {
   type FailureType,
   FileStorage,
   Gauge,
+  IterableSource,
   type LoadedRow,
   LocalFiles,
   Pipeline,
@@ -39,8 +38,6 @@ import {
   type RuleColumns,
   type RuleResult,
   type RuleValues,
-  Source,
-  Stream,
 } from '@eltjs/elt';
 
 import {
@@ -59,69 +56,61 @@ class Version extends Gauge<number> {
   }
 }
 
+// The change signal of both streams: a watch sees every stream change at its
+// start, and again each time the test moves the version of its upstream.
+const paced = (version: Version) => ({
+  gauge: () => version,
+  interval: 10,
+  timeout: 10,
+});
+
 // Rows that name stored files by ref, loaded into raw_files and read through
 // files; rows can change between runs, and every read of them fails while
 // filesGone is set. Its notes come from a second store, which fails every
-// read while notesGone is set, as an app's missing store does. A watch sees every stream change at its start, and again each time
-// the test moves the version of its upstream.
-class Files extends Source {
-  readonly identity = 'files';
+// read while notesGone is set, as an app's missing store does.
+class FilesHost {
   rows: readonly { readonly id: string; readonly ref: string }[] = [];
   filesGone = false;
   notesGone = false;
   readonly version = new Version();
-  readonly files = new Stream({
-    name: 'files',
-    jsonSchema: {
-      type: 'object',
-      description: 'A row naming a stored file.',
-      properties: {
-        id: { type: 'string', description: 'Row id.' },
-        ref: { type: 'string', description: 'The stored file.' },
+  readonly source = new IterableSource({
+    identity: 'files',
+    streams: {
+      files: {
+        description: 'The rows that the test sets.',
+        jsonSchema: {
+          type: 'object',
+          description: 'A row naming a stored file.',
+          properties: {
+            id: { type: 'string', description: 'Row id.' },
+            ref: { type: 'string', description: 'The stored file.' },
+          },
+          required: ['id', 'ref'],
+        },
+        primaryKey: ['id'],
+        snapshot: () => {
+          if (this.filesGone) throw new Error('the files store is gone');
+          return this.rows;
+        },
+        changeSignal: paced(this.version),
       },
-      required: ['id', 'ref'],
+      notes: {
+        description: 'No note.',
+        jsonSchema: {
+          type: 'object',
+          description: 'A note.',
+          properties: { id: { type: 'string', description: 'Note id.' } },
+          required: ['id'],
+        },
+        primaryKey: ['id'],
+        snapshot: () => {
+          if (this.notesGone) throw new Error('the notes store is gone');
+          return [];
+        },
+        changeSignal: paced(this.version),
+      },
     },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
   });
-  readonly notes = new Stream({
-    name: 'notes',
-    jsonSchema: {
-      type: 'object',
-      description: 'A note.',
-      properties: { id: { type: 'string', description: 'Note id.' } },
-      required: ['id'],
-    },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
-  });
-  protected readonly catalog = new Catalog([this.files, this.notes]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals(streams: readonly Stream[]) {
-    return [{ gauge: this.version, streams, interval: 10, timeout: 10 }];
-  }
-
-  protected override async *extract(configuration: CopyConfiguration) {
-    if (configuration.stream.name === 'notes') {
-      if (this.notesGone) throw new Error('the notes store is gone');
-      return;
-    }
-    if (this.filesGone) throw new Error('the files store is gone');
-    for (const row of this.rows)
-      yield { stream: configuration.stream.name, data: row };
-  }
 }
 
 // A parser of UTF-8 text files: a real DocumentParser, which records each
@@ -154,7 +143,7 @@ async function filesImport(directory: string) {
   const store = join(directory, 'files');
   const { mkdir } = await import('node:fs/promises');
   await mkdir(store);
-  const source = new Files();
+  const host = new FilesHost();
   const destination = new SQLiteDestination({
     path: join(directory, 'data.sqlite'),
   });
@@ -166,11 +155,11 @@ async function filesImport(directory: string) {
     connections: [
       new Connection({
         name: 'files',
-        source,
+        source: host.source,
         destination,
         steps: [
-          new Copy(source.files, target),
-          new Copy(source.notes, destination.table('notes')),
+          new Copy(host.source.streams.files, target),
+          new Copy(host.source.streams.notes, destination.table('notes')),
         ],
       }),
     ],
@@ -189,7 +178,7 @@ async function filesImport(directory: string) {
     ],
   });
   return {
-    source,
+    host,
     pipeline,
     parser: () => parser,
     replaceParser: (next: TextParser) => {
@@ -218,7 +207,7 @@ test('a computed dataset stores the text of each file its input rows name, once 
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
   await files.file('photo.txt', ' ');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'a.txt' },
     { id: '3', ref: 'b.txt' },
@@ -262,7 +251,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
   await writeFile(join(store, 'a.txt'), 'invoice 123');
   await writeFile(join(store, 'b.txt'), 'receipt');
   await writeFile(join(store, 'scan.pdf'), 'not text');
-  const source = new Files();
+  const host = new FilesHost();
   const destination = new SQLiteDestination({
     path: join(scratch.path, 'data.sqlite'),
   });
@@ -281,9 +270,9 @@ test('a computed dataset reads a view declared before it: the text of each file 
     connections: [
       new Connection({
         name: 'files',
-        source,
+        source: host.source,
         destination,
-        steps: [new Copy(source.files, target)],
+        steps: [new Copy(host.source.streams.files, target)],
       }),
     ],
     derived: [
@@ -301,7 +290,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
       }),
     ],
   });
-  source.rows = [
+  host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
     { id: '3', ref: 'scan.pdf' },
@@ -309,7 +298,7 @@ test('a computed dataset reads a view declared before it: the text of each file 
 
   await pipeline.run();
   const first = shell(destination.path, text).rows;
-  source.rows = [{ id: '1', ref: 'a.txt' }];
+  host.rows = [{ id: '1', ref: 'a.txt' }];
   await pipeline.run();
 
   assert.deepEqual(first, [
@@ -328,12 +317,12 @@ test('the next run reads only the files that are new or that another parser woul
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
   await files.file('c.txt', 'contract');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
   await files.pipeline.run();
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '3', ref: 'c.txt' },
   ];
@@ -356,13 +345,13 @@ test('a file that rows name and the files folder does not have fails its row wit
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
   await files.pipeline.run();
   await rm(join(scratch.path, 'files', 'a.txt'));
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
     { id: '3', ref: 'c.txt' },
@@ -408,7 +397,7 @@ test('under a watch, a file that a commit removes with its rows while the file i
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
@@ -430,8 +419,8 @@ test('under a watch, a file that a commit removes with its rows while the file i
       { signal: t.signal, interval: 10 },
     );
     await rm(join(scratch.path, 'files', 'b.txt'));
-    files.source.rows = [{ id: '1', ref: 'a.txt' }];
-    files.source.version.current += 1;
+    files.host.rows = [{ id: '1', ref: 'a.txt' }];
+    files.host.version.current += 1;
     await watching.next();
     released.open();
     // The refresh that read b.txt counts two inputs; the one after the
@@ -473,7 +462,7 @@ test('a file the parser fails on is stored failed with why, the run still succee
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('bad.txt', 'contract');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'bad.txt' },
   ];
@@ -504,10 +493,10 @@ test('a format the parser stops handling keeps the text read before, and a file 
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
-  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
   await files.pipeline.run();
   files.parser().handles = false;
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
@@ -552,7 +541,7 @@ test('a parser identifies a stored file by its file name, with its extension, an
   await mkdir(join(scratch.path, 'files', 'scans'));
   await files.file('scans/a.txt', 'invoice 123');
   await files.file('scans/b.md', 'note');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'scans/a.txt' },
     { id: '2', ref: 'scans/b.md' },
   ];
@@ -584,14 +573,14 @@ test('a parser that identifies a file by its first bytes fails only the row of a
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
   files.replaceParser(new HeadParser('text-v1'));
   await files.pipeline.run();
   await rm(join(scratch.path, 'files', 'a.txt'));
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
     { id: '3', ref: 'c.txt' },
@@ -670,7 +659,7 @@ async function copyingImport(directory: string, parser: TextParser) {
   await mkdir(held);
   await mkdir(copies);
   const storage = new CopyingFiles(held, copies);
-  const source = new Files();
+  const host = new FilesHost();
   const destination = new SQLiteDestination({
     path: join(directory, 'data.sqlite'),
   });
@@ -681,9 +670,9 @@ async function copyingImport(directory: string, parser: TextParser) {
     connections: [
       new Connection({
         name: 'files',
-        source,
+        source: host.source,
         destination,
-        steps: [new Copy(source.files, target)],
+        steps: [new Copy(host.source.streams.files, target)],
       }),
     ],
     derived: [
@@ -702,7 +691,7 @@ async function copyingImport(directory: string, parser: TextParser) {
   });
   return {
     storage,
-    source,
+    host,
     pipeline,
     parser,
     copies,
@@ -717,7 +706,7 @@ test('the rule reads each file through its storage: the parser gets a path that 
   const files = await copyingImport(scratch.path, new TextParser('text-v1'));
   await files.file('a.txt', 'invoice 123');
   await files.file('b.txt', 'receipt');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
@@ -741,7 +730,7 @@ test('a storage that fails to open a file for a reason other than not holding it
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await copyingImport(scratch.path, new TextParser('text-v1'));
   await files.file('a.txt', 'invoice 123');
-  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
   files.storage.unreachable = 'a.txt';
 
   const error = await files.pipeline.run().then(
@@ -764,7 +753,7 @@ test('a storage that fails to read the first bytes of a file for a reason other 
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await copyingImport(scratch.path, new HeadParser('text-v1'));
   await files.file('a.txt', 'invoice 123');
-  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
   files.storage.unreachable = 'a.txt';
 
   const error = await files.pipeline.run().then(
@@ -787,7 +776,7 @@ test('a refresh that its watch stops while a file is parsed stores no row for th
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
-  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
   const released = new Latch();
   files.parser().holding.set('a.txt', released);
   const status = `SELECT state, error, pending FROM derived_status WHERE dataset = 'file_text'`;
@@ -832,7 +821,7 @@ test('a file that is slow to read holds only its own place: the text of the file
   const names = Array.from({ length: 40 }, (_, index) => `f${index}.txt`);
   for (const name of ['slow.txt', ...names])
     await files.file(name, `text of ${name}`);
-  files.source.rows = ['slow.txt', ...names].map((ref, index) => ({
+  files.host.rows = ['slow.txt', ...names].map((ref, index) => ({
     id: String(index),
     ref,
   }));
@@ -871,7 +860,7 @@ test('while a file is slow to read, derived_status says that the dataset refresh
   const names = Array.from({ length: 8 }, (_, index) => `f${index}.txt`);
   for (const name of ['slow.txt', ...names])
     await files.file(name, `text of ${name}`);
-  files.source.rows = ['slow.txt', ...names].map((ref, index) => ({
+  files.host.rows = ['slow.txt', ...names].map((ref, index) => ({
     id: String(index),
     ref,
   }));
@@ -923,7 +912,7 @@ test('a parser that fails on every file leaves the dataset current in derived_st
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice');
   await files.file('b.txt', 'receipt');
-  files.source.rows = [
+  files.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
@@ -953,8 +942,8 @@ test('a run whose other copy failed still stores the text of the files its loade
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice 123');
-  files.source.rows = [{ id: '1', ref: 'a.txt' }];
-  files.source.notesGone = true;
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
+  files.host.notesGone = true;
 
   const error = await files.pipeline.run().then(
     () => assert.fail('the run reported no failure'),
@@ -976,7 +965,7 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
   const files = await filesImport(scratch.path);
   await files.file('slow.txt', 'contract');
   await files.file('b.txt', 'receipt');
-  files.source.rows = [{ id: '1', ref: 'slow.txt' }];
+  files.host.rows = [{ id: '1', ref: 'slow.txt' }];
   const released = new Latch();
   files.parser().holding.set('slow.txt', released);
   const controller = new AbortController();
@@ -995,11 +984,11 @@ test('under a watch, a file that is slow to read holds no pass back: the next pa
       },
       { signal: t.signal, interval: 10 },
     );
-    files.source.rows = [
+    files.host.rows = [
       { id: '1', ref: 'slow.txt' },
       { id: '2', ref: 'b.txt' },
     ];
-    files.source.version.current += 1;
+    files.host.version.current += 1;
     const second = await pass();
     const whileHeld = files.read(text);
     released.open();
@@ -1033,7 +1022,7 @@ test('derived_status gives as_of as the time the last refresh began to read, whi
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const files = await filesImport(scratch.path);
   await files.file('a.txt', 'invoice');
-  files.source.rows = [{ id: '1', ref: 'a.txt' }];
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
   files.parser().failing.add('a.txt');
   await files.pipeline.run();
   // A failed file is read again only by the refresh after the passes, the
@@ -1123,7 +1112,7 @@ class Model extends Rule<string, typeof answered> {
 // The rows of Files, loaded into raw_files and read through files, and the
 // computed dataset answers, which model makes from each file a row names.
 function modelImport(directory: string, model: Rule<string, RuleColumns>) {
-  const source = new Files();
+  const host = new FilesHost();
   const destination = new SQLiteDestination({
     path: join(directory, 'data.sqlite'),
   });
@@ -1134,9 +1123,9 @@ function modelImport(directory: string, model: Rule<string, RuleColumns>) {
     connections: [
       new Connection({
         name: 'files',
-        source,
+        source: host.source,
         destination,
-        steps: [new Copy(source.files, target)],
+        steps: [new Copy(host.source.streams.files, target)],
       }),
     ],
     derived: [
@@ -1150,7 +1139,7 @@ function modelImport(directory: string, model: Rule<string, RuleColumns>) {
     ],
   });
   return {
-    source,
+    host,
     pipeline,
     path: destination.path,
     read: (sql: string) => shell(destination.path, sql).rows,
@@ -1161,7 +1150,7 @@ test('a rule call that fails stops the calls after it in its refresh: the call b
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const model = new Model(2);
   const answers = modelImport(scratch.path, model);
-  answers.source.rows = ['a.txt', 'b.txt', 'c.txt', 'd.txt'].map(
+  answers.host.rows = ['a.txt', 'b.txt', 'c.txt', 'd.txt'].map(
     (ref, index) => ({ id: String(index), ref }),
   );
   model.refused.add('a.txt');
@@ -1196,7 +1185,7 @@ test('a refresh that its watch stops while the model answers stays refreshing in
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const model = new Model(1);
   const answers = modelImport(scratch.path, model);
-  answers.source.rows = [{ id: '0', ref: 'a.txt' }];
+  answers.host.rows = [{ id: '0', ref: 'a.txt' }];
   model.holding.add('a.txt');
   const status = `SELECT state, error, pending FROM derived_status WHERE dataset = 'answers'`;
   const controller = new AbortController();
@@ -1238,7 +1227,7 @@ test('a computed dataset whose rule cannot read an input row fails in derived_st
     }
   }
   const answers = modelImport(scratch.path, new Misread(1));
-  answers.source.rows = [{ id: '0', ref: 'a.txt' }];
+  answers.host.rows = [{ id: '0', ref: 'a.txt' }];
 
   const error = await answers.pipeline.run().then(
     () => assert.fail('the run reported no failure'),
@@ -1263,7 +1252,7 @@ test('a computed dataset whose rule cannot read an input row fails in derived_st
 test('a computed dataset whose input table a person dropped waits in derived_status, and keeps the rows it made', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const answers = modelImport(scratch.path, new Model(1));
-  answers.source.rows = [{ id: '0', ref: 'a.txt' }];
+  answers.host.rows = [{ id: '0', ref: 'a.txt' }];
   await answers.pipeline.run();
   // No operation of elt drops a loaded table: a person does it by hand, and
   // the copy cannot load it again while its store is gone.
@@ -1271,7 +1260,7 @@ test('a computed dataset whose input table a person dropped waits in derived_sta
     using database = open(answers.path);
     database.exec('DROP TABLE raw_files');
   }
-  answers.source.filesGone = true;
+  answers.host.filesGone = true;
 
   await assert.rejects(answers.pipeline.run(), PipelineError);
 
@@ -1399,7 +1388,7 @@ test('an integer column keeps each value as an INTEGER, and a vector column keep
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const measure = new Measure();
   const answers = modelImport(scratch.path, measure);
-  answers.source.rows = [
+  answers.host.rows = [
     { id: '1', ref: 'a.txt' },
     { id: '2', ref: 'b.txt' },
   ];
@@ -1448,7 +1437,7 @@ test('a value that does not fit its column fails its row with why: an integer th
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const measure = new Measure();
   const answers = modelImport(scratch.path, measure);
-  answers.source.rows = ['a.txt', 'b.txt', 'c.txt', 'd.txt'].map(
+  answers.host.rows = ['a.txt', 'b.txt', 'c.txt', 'd.txt'].map(
     (ref, index) => ({ id: String(index), ref }),
   );
   const fits = Vector.from([1, 2, 3]);

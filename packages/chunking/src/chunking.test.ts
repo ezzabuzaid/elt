@@ -6,14 +6,7 @@ import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 import { countTokens } from 'gpt-tokenizer/encoding/cl100k_base';
 
-import {
-  Catalog,
-  Connection,
-  Copy,
-  Pipeline,
-  Source,
-  Stream,
-} from '@eltjs/elt';
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
 import {
   ComputedDataset,
   SQLiteDestination,
@@ -32,52 +25,33 @@ type Document = {
   readonly body: string | null;
 };
 
-// Documents the test sets before each run, copied in full each pass.
-class Documents extends Source {
-  readonly identity = 'documents';
-  rows: readonly Document[] = [];
-  readonly documents = new Stream({
-    name: 'documents',
-    jsonSchema: {
-      type: 'object',
-      description: 'A document.',
-      properties: {
-        id: { type: 'string', description: 'Document id.' },
-        title: { type: ['string', 'null'], description: 'Title.' },
-        body: { type: ['string', 'null'], description: 'Text.' },
-      },
-      required: ['id', 'title', 'body'],
-    },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
-  });
-  protected readonly catalog = new Catalog([this.documents]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals() {
-    return [];
-  }
-
-  protected override async *extract() {
-    for (const row of this.rows) yield { stream: 'documents', data: row };
-  }
-}
+const documentSchema = {
+  type: 'object',
+  description: 'A document.',
+  properties: {
+    id: { type: 'string', description: 'Document id.' },
+    title: { type: ['string', 'null'], description: 'Title.' },
+    body: { type: ['string', 'null'], description: 'Text.' },
+  },
+  required: ['id', 'title', 'body'],
+} as const;
 
 // A pipeline that copies the documents and cuts the title and body of each
 // into the computed dataset chunks.
 function documentChunks(directory: string, chunking: () => Chunking) {
-  const source = new Documents();
+  // The documents the test sets before each run, copied in full each pass.
+  const host: { rows: readonly Document[] } = { rows: [] };
+  const source = new IterableSource({
+    identity: 'documents',
+    streams: {
+      documents: {
+        description: 'The documents that the test sets.',
+        jsonSchema: documentSchema,
+        primaryKey: ['id'],
+        snapshot: () => host.rows,
+      },
+    },
+  });
   const path = join(directory, 'data.sqlite');
   const destination = new SQLiteDestination({ path });
   const target = destination.table('documents');
@@ -90,7 +64,7 @@ function documentChunks(directory: string, chunking: () => Chunking) {
           name: 'documents',
           source,
           destination,
-          steps: [new Copy(source.documents, target)],
+          steps: [new Copy(source.streams.documents, target)],
         }),
       ],
       derived: [
@@ -110,7 +84,7 @@ function documentChunks(directory: string, chunking: () => Chunking) {
       .all()
       .map((row) => ({ ...row }));
   };
-  return { source, run, rows };
+  return { host, run, rows };
 }
 
 const sizes = (maxTokens: number, overlapTokens: number) =>
@@ -361,7 +335,7 @@ test('a run of white space that does not fit beside the text around it is a part
 
 test('a document whose text is only white space gets no output and no part, also when its white space counts more than maxTokens', async () => {
   await using scratch = await new TemporaryFiles().directory('chunking-');
-  const { source, run, rows } = documentChunks(
+  const { host, run, rows } = documentChunks(
     scratch.path,
     () =>
       new Chunking({
@@ -372,7 +346,7 @@ test('a document whose text is only white space gets no output and no part, also
         fields: ['title', 'body'],
       }),
   );
-  source.rows = [
+  host.rows = [
     { id: 'short', title: '  \t', body: '\r\n  ' },
     { id: 'long', title: null, body: ' \n'.repeat(40) },
     { id: 'fine', title: null, body: 'One two.' },
@@ -571,7 +545,7 @@ test('in a long text in several scripts, no chunk counts more than maxTokens, a 
 
 test('a grapheme that counts more than maxTokens stores its document failed with the offset of the grapheme, and the other documents of the call get their chunks; a document with no text gets none', async () => {
   await using scratch = await new TemporaryFiles().directory('chunking-');
-  const { source, run, rows } = documentChunks(
+  const { host, run, rows } = documentChunks(
     scratch.path,
     () =>
       new Chunking({
@@ -582,7 +556,7 @@ test('a grapheme that counts more than maxTokens stores its document failed with
         fields: ['title', 'body'],
       }),
   );
-  source.rows = [
+  host.rows = [
     { id: 'family', title: 'Hi', body: 'a 😀 👩‍👩‍👧‍👦 b' },
     { id: 'fine', title: null, body: 'One two.' },
     { id: 'blank', title: null, body: '  ' },
@@ -622,7 +596,7 @@ test('a grapheme that counts more than maxTokens stores its document failed with
 
 test('a tokenizer that throws stores each document of the call failed with its message', async () => {
   await using scratch = await new TemporaryFiles().directory('chunking-');
-  const { source, run, rows } = documentChunks(
+  const { host, run, rows } = documentChunks(
     scratch.path,
     () =>
       new Chunking({
@@ -640,7 +614,7 @@ test('a tokenizer that throws stores each document of the call failed with its m
         fields: ['body'],
       }),
   );
-  source.rows = [
+  host.rows = [
     { id: 'a', title: null, body: 'A calm text.' },
     { id: 'b', title: null, body: 'A text that goes boom.' },
   ];
@@ -664,7 +638,7 @@ test('a tokenizer that throws stores each document of the call failed with its m
 
 test('an edit near the start of a long document gives the first chunk a new part hash, and the later chunks keep their text and part hash while their offsets move', async () => {
   await using scratch = await new TemporaryFiles().directory('chunking-');
-  const { source, run, rows } = documentChunks(
+  const { host, run, rows } = documentChunks(
     scratch.path,
     () =>
       new Chunking({
@@ -680,11 +654,11 @@ test('an edit near the start of a long document gives the first chunk a new part
   const moved = 'Summary'.length - 'Report'.length;
   const parts =
     'SELECT seq, part_hash, text, start, "end" FROM chunks_parts ORDER BY seq';
-  source.rows = [{ id: 'doc', title: 'Report', body: longText }];
+  host.rows = [{ id: 'doc', title: 'Report', body: longText }];
   await run();
   const before = rows(parts);
 
-  source.rows = [{ id: 'doc', title: 'Summary', body: longText }];
+  host.rows = [{ id: 'doc', title: 'Summary', body: longText }];
   await run();
   const after = rows(parts);
 

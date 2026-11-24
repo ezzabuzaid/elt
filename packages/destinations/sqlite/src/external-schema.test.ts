@@ -7,17 +7,14 @@ import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
 
 import {
-  Catalog,
-  type ChangeSignal,
   Connection,
   Copy,
+  IterableSource,
   Pipeline,
   Rule,
   type RuleColumns,
   type RuleResult,
   type RuleValues,
-  Source,
-  Stream,
 } from '@eltjs/elt';
 
 import {
@@ -31,46 +28,15 @@ import {
 
 type Note = { readonly id: string; readonly body: string };
 
-// Notes the test sets before each pass, copied in full each pass.
-class Notes extends Source {
-  readonly identity = 'notes';
-  rows: readonly Note[] = [];
-  readonly notes = new Stream({
-    name: 'notes',
-    jsonSchema: {
-      type: 'object',
-      description: 'A note.',
-      properties: {
-        id: { type: 'string', description: 'Note id.' },
-        body: { type: 'string', description: 'Text of the note.' },
-      },
-      required: ['id', 'body'],
-    },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
-  });
-  protected readonly catalog = new Catalog([this.notes]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals(): ChangeSignal[] {
-    return [];
-  }
-
-  protected override async *extract() {
-    for (const row of this.rows) yield { stream: 'notes', data: row };
-  }
-}
+const notesSchema = {
+  type: 'object',
+  description: 'A note.',
+  properties: {
+    id: { type: 'string', description: 'Note id.' },
+    body: { type: 'string', description: 'Text of the note.' },
+  },
+  required: ['id', 'body'],
+} as const;
 
 // The body of each note in capitals.
 class Shout extends Rule<Note, RuleColumns> {
@@ -102,7 +68,19 @@ class Shout extends Rule<Note, RuleColumns> {
 // An import as a host makes it: raw_notes with its reader view notes, and a
 // computed dataset loud_notes over the reader view's table.
 function notesImport(directory: string) {
-  const source = new Notes();
+  // Notes the test sets before each pass, copied in full each pass.
+  let rows: readonly Note[] = [];
+  const source = new IterableSource({
+    identity: 'notes',
+    streams: {
+      notes: {
+        description: 'The notes that the test sets.',
+        jsonSchema: notesSchema,
+        primaryKey: ['id'],
+        snapshot: () => rows,
+      },
+    },
+  });
   const destination = new SQLiteDestination({
     path: join(directory, 'notes.sqlite'),
   });
@@ -115,7 +93,7 @@ function notesImport(directory: string) {
         name: 'notes',
         source,
         destination,
-        steps: [new Copy(source.notes, target)],
+        steps: [new Copy(source.streams.notes, target)],
       }),
     ],
     derived: [
@@ -130,13 +108,13 @@ function notesImport(directory: string) {
   });
   // Two passes, so the first position reads rows the second replaced.
   const load = async () => {
-    source.rows = [
+    rows = [
       { id: 'n1', body: 'a' },
       { id: 'n2', body: 'b' },
     ];
     await pipeline.run();
     const first = newest(destination);
-    source.rows = [{ id: 'n1', body: 'c' }];
+    rows = [{ id: 'n1', body: 'c' }];
     await pipeline.run();
     return first;
   };

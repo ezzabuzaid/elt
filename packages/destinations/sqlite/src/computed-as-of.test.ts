@@ -9,17 +9,15 @@ import { Latch } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 
 import {
-  Catalog,
   Connection,
   Copy,
+  IterableSource,
   Pipeline,
   type PipelineClock,
   Rule,
   type RuleColumns,
   type RuleResult,
   type RuleValues,
-  Source,
-  Stream,
 } from '@eltjs/elt';
 
 import {
@@ -31,46 +29,15 @@ import { storedRows } from './testing/stored-rows.ts';
 
 type Note = { readonly id: string; readonly text: string };
 
-// Notes the test sets before each run, copied in full each pass.
-class Notes extends Source {
-  readonly identity = 'notes';
-  rows: readonly Note[] = [];
-  readonly notes = new Stream({
-    name: 'notes',
-    jsonSchema: {
-      description: 'One notes record.',
-      type: 'object',
-      properties: {
-        id: { description: 'Id of the record.', type: 'string' },
-        text: { description: 'Text of the record.', type: 'string' },
-      },
-      required: ['id', 'text'],
-    },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh'],
-  });
-  protected readonly catalog = new Catalog([this.notes]);
-
-  override coverage() {
-    return { description: 'test', selection: {} };
-  }
-
-  override async currentAsOf() {
-    return null;
-  }
-
-  protected override async open() {
-    return new AsyncDisposableStack();
-  }
-
-  override changeSignals() {
-    return [];
-  }
-
-  protected override async *extract() {
-    for (const row of this.rows) yield { stream: 'notes', data: row };
-  }
-}
+const notesSchema = {
+  description: 'One notes record.',
+  type: 'object',
+  properties: {
+    id: { description: 'Id of the record.', type: 'string' },
+    text: { description: 'Text of the record.', type: 'string' },
+  },
+  required: ['id', 'text'],
+} as const;
 
 // Each note's text in capitals, one note a call; a note whose text starts
 // with "bad" fails, one whose text starts with "throw" fails the call, and a
@@ -139,7 +106,19 @@ function shouted(
   rule = new Shout(),
   clock: PipelineClock = globalThis,
 ) {
-  const source = new Notes();
+  // Notes the test sets before each run, copied in full each pass.
+  const host: { rows: readonly Note[] } = { rows: [] };
+  const source = new IterableSource({
+    identity: 'notes',
+    streams: {
+      notes: {
+        description: 'The notes that the test sets.',
+        jsonSchema: notesSchema,
+        primaryKey: ['id'],
+        snapshot: () => host.rows,
+      },
+    },
+  });
   const destination = new SQLiteDestination({
     path: join(directory, 'data.sqlite'),
   });
@@ -152,7 +131,7 @@ function shouted(
         name: 'notes',
         source,
         destination,
-        steps: [new Copy(source.notes, target)],
+        steps: [new Copy(source.streams.notes, target)],
       }),
     ],
     derived: [
@@ -165,7 +144,7 @@ function shouted(
       }),
     ],
   });
-  return { source, destination, pipeline, rule };
+  return { host, destination, pipeline, rule };
 }
 
 // The commit numbers of the file's positions.
@@ -210,15 +189,15 @@ const committed = (destination: SQLiteDestination) =>
 
 test('the view of a computed dataset, read as of a position, shows the rows it had there after a later refresh changed one', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
-  const { source, destination, pipeline } = shouted(scratch.path);
-  source.rows = [
+  const { host, destination, pipeline } = shouted(scratch.path);
+  host.rows = [
     { id: 'a', text: 'one' },
     { id: 'b', text: 'two' },
   ];
   await pipeline.run();
   const first = newest(destination);
   const then = storedRows(destination.path, loud);
-  source.rows = [
+  host.rows = [
     { id: 'a', text: 'one' },
     { id: 'b', text: 'three' },
   ];
@@ -238,14 +217,14 @@ test('the view of a computed dataset, read as of a position, shows the rows it h
 
 test('a row whose input a later pass removed still reads as of a position before it', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
-  const { source, destination, pipeline } = shouted(scratch.path);
-  source.rows = [
+  const { host, destination, pipeline } = shouted(scratch.path);
+  host.rows = [
     { id: 'a', text: 'one' },
     { id: 'b', text: 'two' },
   ];
   await pipeline.run();
   const first = newest(destination);
-  source.rows = [{ id: 'a', text: 'one' }];
+  host.rows = [{ id: 'a', text: 'one' }];
 
   await pipeline.run();
 
@@ -260,15 +239,15 @@ test('a row whose input a later pass removed still reads as of a position before
 
 test('a row the rule makes again with the same values keeps its commit, beside a row of the same refresh that changed, and a refresh that changes nothing commits nothing', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
-  const { source, destination, pipeline } = shouted(scratch.path);
-  source.rows = [
+  const { host, destination, pipeline } = shouted(scratch.path);
+  host.rows = [
     { id: 'a', text: 'bad one' },
     { id: 'b', text: 'two' },
   ];
   await pipeline.run();
   const first = committed(destination);
   const firstPosition = newest(destination);
-  source.rows = [
+  host.rows = [
     { id: 'a', text: 'bad one' },
     { id: 'b', text: 'three' },
   ];
@@ -302,10 +281,10 @@ test('a row the rule makes again with the same values keeps its commit, beside a
 
 test('a commit of a refresh that still runs is no position, and once it ends each of its commits has its own number and its end is one', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
-  const { source, destination, pipeline, rule } = shouted(scratch.path);
-  source.rows = [{ id: 'a', text: 'one' }];
+  const { host, destination, pipeline, rule } = shouted(scratch.path);
+  host.rows = [{ id: 'a', text: 'one' }];
   await pipeline.run();
-  source.rows = [
+  host.rows = [
     { id: 'a', text: 'uno' },
     { id: 'b', text: 'two' },
   ];
@@ -340,8 +319,8 @@ test('a commit of a refresh that still runs is no position, and once it ends eac
 
 test('a refresh whose rule throws closes its load, so its commits up to the failure end at a position', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
-  const { source, destination, pipeline } = shouted(scratch.path);
-  source.rows = [
+  const { host, destination, pipeline } = shouted(scratch.path);
+  host.rows = [
     { id: 'a', text: 'one' },
     { id: 'b', text: 'throw two' },
   ];
@@ -359,18 +338,8 @@ test('a refresh that a killed process left open hides every later position, unti
   // A process that loads two notes and is killed while the rule computes
   // the second, after the first one's commit.
   const killedRun = `
-    import { Catalog, Connection, Copy, Pipeline, Rule, Source, Stream } from '@eltjs/elt';
+    import { Connection, Copy, IterableSource, Pipeline, Rule } from '@eltjs/elt';
     import { ComputedDataset, SQLiteDestination, SQLiteSyncHistory } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'index.ts')).href)};
-    class Notes extends Source {
-      identity = 'notes';
-      notes = new Stream({ name: 'notes', jsonSchema: { type: 'object', description: 'A note.', properties: { id: { type: 'string', description: 'Note id.' }, text: { type: 'string', description: 'Note text.' } }, required: ['id', 'text'] }, primaryKey: ['id'], supportedSyncModes: ['full_refresh'] });
-      catalog = new Catalog([this.notes]);
-      coverage() { return { description: 'test', selection: {} }; }
-      async currentAsOf() { return null; }
-      async open() { return new AsyncDisposableStack(); }
-      changeSignals() { return []; }
-      async *extract() { yield { stream: 'notes', data: { id: 'a', text: 'one' } }; yield { stream: 'notes', data: { id: 'b', text: 'two' } }; }
-    }
     class Shout extends Rule {
       key = { name: 'id', description: 'Note id.' };
       output = { loud: { description: 'The text in capitals.', type: 'text' } };
@@ -383,11 +352,11 @@ test('a refresh that a killed process left open hides every later position, unti
         return [{ value: { loud: text.toUpperCase() + ':loud' } }];
       }
     }
-    const source = new Notes();
+    const source = new IterableSource({ identity: 'notes', streams: { notes: { description: 'Two notes.', jsonSchema: { type: 'object', description: 'A note.', properties: { id: { type: 'string', description: 'Note id.' }, text: { type: 'string', description: 'Note text.' } }, required: ['id', 'text'] }, primaryKey: ['id'], snapshot: () => [{ id: 'a', text: 'one' }, { id: 'b', text: 'two' }] } } });
     const destination = new SQLiteDestination({ path: process.env.DATABASE });
     const target = destination.table('notes');
     await new Pipeline({ clock: globalThis, history: new SQLiteSyncHistory(),
-      connections: [new Connection({ name: 'notes', source, destination, steps: [new Copy(source.notes, target)] })],
+      connections: [new Connection({ name: 'notes', source, destination, steps: [new Copy(source.streams.notes, target)] })],
       derived: [new ComputedDataset({ into: destination, name: 'loud_notes', description: 'Each note in capitals.', from: [target], compute: new Shout() })],
     }).run();
   `;
@@ -407,10 +376,10 @@ test('a refresh that a killed process left open hides every later position, unti
   ]);
   killed.kill('SIGKILL');
   await exited;
-  const { source, destination, pipeline } = shouted(scratch.path);
+  const { host, destination, pipeline } = shouted(scratch.path);
   const [a] = committed(destination);
   const left = walkable(destination);
-  source.rows = [
+  host.rows = [
     { id: 'a', text: 'one' },
     { id: 'b', text: 'two' },
   ];
@@ -436,7 +405,7 @@ test('a refresh that a killed process left open hides every later position, unti
 test('a refresh that remakes its table for a new declaration keeps the rows of the old one, so they read as of a position before it', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const before = shouted(scratch.path);
-  before.source.rows = [{ id: 'a', text: 'one' }];
+  before.host.rows = [{ id: 'a', text: 'one' }];
   await before.pipeline.run();
   const first = newest(before.destination);
   const after = shouted(
@@ -446,7 +415,7 @@ test('a refresh that remakes its table for a new declaration keeps the rows of t
       louder: { description: 'The text in capitals again.', type: 'text' },
     }),
   );
-  after.source.rows = [{ id: 'a', text: 'two' }];
+  after.host.rows = [{ id: 'a', text: 'two' }];
 
   await after.pipeline.run();
 
@@ -466,13 +435,13 @@ test('a refresh that remakes its table for a new declaration keeps the rows of t
 test('a commit of a refresh is made at the time of the pipeline clock', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');
   const at = Date.parse('2001-02-03T04:05:06.000Z');
-  const { source, destination, pipeline } = shouted(scratch.path, new Shout(), {
+  const { host, destination, pipeline } = shouted(scratch.path, new Shout(), {
     Date: { now: () => at },
     performance,
     setTimeout,
     clearTimeout,
   });
-  source.rows = [{ id: 'a', text: 'one' }];
+  host.rows = [{ id: 'a', text: 'one' }];
 
   await pipeline.run();
 
