@@ -784,7 +784,7 @@ When `key` is a list of two or more columns, the source of a passage is the JSON
 
 ## A new model
 
-When the model or its `dimensions` change, the next refresh makes each vector again, in place. While it runs, `docs_status` has the state `refreshing` and counts the texts that wait in `pending_vectors`. A retriever with the new model finds only the passages that it already embedded, and a retriever with the old model finds only the others. When the refresh ends, each vector has the new model.
+When the model changes and its `dimensions` stay the same, the next refresh makes each vector again, in place. On SQLite, a change of `dimensions` also makes each vector again in place, because the vector column is a `BLOB`. On Postgres and SQL Server, a change of `dimensions` changes the declaration of the vector column, `vector(n)` or `VECTOR(n)`, so the next refresh makes the table of the vectors again, and then makes each vector again. During a refresh in place, `docs_status` has the state `refreshing` and counts the texts that wait in `pending_vectors`. A retriever with the new model finds only the passages that it already embedded, and a retriever with the old model finds only the others. When the refresh ends, each vector has the new model.
 
 ## Rules and failures
 
