@@ -52,16 +52,16 @@
   },
   "dependencies": {
     "@eltjs/elt": "*",
-    "@zukhruf/async": "^0.8.105",
-    "@zukhruf/coprocess": "^0.8.105",
-    "@zukhruf/pool": "^0.8.105",
+    "@zukhruf/async": "^0.8.109",
+    "@zukhruf/coprocess": "^0.8.109",
+    "@zukhruf/pool": "^0.8.109",
     "ai": "^7.0.165",
     "file-type": "22.2.0",
     "zod": "^4.3.6"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/fs": "^0.8.105",
-    "@zukhruf/testing": "^0.8.105"
+    "@zukhruf/fs": "^0.8.109",
+    "@zukhruf/testing": "^0.8.109"
   }
 }

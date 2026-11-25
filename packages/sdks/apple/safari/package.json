@@ -14,8 +14,8 @@
     "@eltjs/codec-plist": "0.0.1",
     "@eltjs/sdk-apple-launch-services": "0.0.1",
     "@eltjs/sdk-macos-app-database": "0.0.1",
-    "@zukhruf/async": "^0.8.105",
-    "@zukhruf/sqlite-data-version": "^0.8.105",
-    "@zukhruf/sqlite-snapshot": "^0.8.105"
+    "@zukhruf/async": "^0.8.109",
+    "@zukhruf/sqlite-data-version": "^0.8.109",
+    "@zukhruf/sqlite-snapshot": "^0.8.109"
   }
 }

@@ -28,7 +28,7 @@
   "devDependencies": {
     "@eltjs/elt-sqlite": "*",
     "@types/jsdom": "28.0.3",
-    "@zukhruf/fs": "^0.8.105",
-    "@zukhruf/testing": "^0.8.105"
+    "@zukhruf/fs": "^0.8.109",
+    "@zukhruf/testing": "^0.8.109"
   }
 }

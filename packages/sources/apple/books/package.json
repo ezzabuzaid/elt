@@ -13,14 +13,14 @@
     "@eltjs/elt": "*",
     "@eltjs/sdk-apple-books": "0.0.1",
     "@eltjs/source-apple-macos": "0.0.1",
-    "@zukhruf/fs": "^0.8.105",
-    "@zukhruf/snapshot-differential": "^0.8.105"
+    "@zukhruf/fs": "^0.8.109",
+    "@zukhruf/snapshot-differential": "^0.8.109"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
     "@eltjs/codec-apple-reference-date": "0.0.1",
     "@eltjs/elt-sqlite": "*",
-    "@zukhruf/sqlite-open": "^0.8.105",
-    "@zukhruf/testing": "^0.8.105"
+    "@zukhruf/sqlite-open": "^0.8.109",
+    "@zukhruf/testing": "^0.8.109"
   }
 }
