@@ -2044,7 +2044,7 @@ test(
 );
 
 test(
-  'a check that times out while an open TRUNCATE blocks its queries stops them on the server, fails each stream with the query it waited on and its time, and the next check after the commit wakes every stream',
+  'a check whose queries an open TRUNCATE blocks for longer than their lock timeout fails no stream and wakes only the stream whose rowversion moved, and the next check after the commit wakes the truncated table',
   { timeout: 120_000 },
   async (t) => {
     await using server = await sqlServer.database();
@@ -2055,34 +2055,24 @@ test(
     );
     await admin.connect();
     await admin.request().batch(`
-    ALTER DATABASE CURRENT SET CHANGE_TRACKING = ON;
-    CREATE TABLE dbo.tracked (id int PRIMARY KEY);
-    ALTER TABLE dbo.tracked ENABLE CHANGE_TRACKING;
-    CREATE TABLE dbo.plain (id int PRIMARY KEY);
     CREATE TABLE dbo.other (id int PRIMARY KEY);
-    INSERT dbo.plain VALUES (1);
-    INSERT dbo.other VALUES (1);`);
-    // A server permission, so it is granted in master.
+    CREATE TABLE dbo.plain (id int PRIMARY KEY);
+    CREATE TABLE dbo.stamped (id int PRIMARY KEY, stamp rowversion);
+    INSERT dbo.other VALUES (1);
+    INSERT dbo.plain VALUES (1);`);
+    // A server permission, so it is granted in master. With it, a check reads
+    // the statistics, the row counts and the last writes.
     await using reader = await readOnlyLogin(
       server,
       admin,
-      "GRANT VIEW CHANGE TRACKING ON dbo.tracked TO {user}; EXEC master.sys.sp_executesql N'GRANT VIEW SERVER STATE TO {user}';",
+      "EXEC master.sys.sp_executesql N'GRANT VIEW SERVER STATE TO {user}';",
     );
     const source = await SqlServerSource.discover(
       new SqlServerDatabase(reader.connectionString),
     );
-    const requests = async (where: string) =>
-      (
-        await admin
-          .request()
-          .input('login', reader.login)
-          .query<{ requests: number }>(
-            `SELECT COUNT(*) AS requests FROM sys.dm_exec_requests AS r JOIN sys.dm_exec_sessions AS s ON s.session_id = r.session_id WHERE s.login_name = @login ${where}`,
-          )
-      ).recordset[0]?.requests;
     await using warehouse = await postgresServer.database();
     const warehouseSql = clients.adopt(
-      postgres(warehouse.connectionString, { max: 2, onnotice: () => {} }),
+      postgres(warehouse.connectionString, { max: 1, onnotice: () => {} }),
       (client) => client.end(),
     );
     using signals = signalFailures(source);
@@ -2090,69 +2080,92 @@ test(
     assert.deepEqual(await watch.first(), [
       'dbo.other',
       'dbo.plain',
-      'dbo.tracked',
+      'dbo.stamped',
     ]);
     const blocker = new sql.Transaction(admin);
     await blocker.begin();
     let committed = false;
     try {
       await new sql.Request(blocker).batch('TRUNCATE TABLE dbo.other;');
-      const pass = watch.next();
-      await watch.check();
-      // The statistics, the row counts and the last writes wait on the lock.
-      await waitFor(
-        async () =>
-          assert.equal(await requests('AND r.blocking_session_id <> 0'), 3),
-        { signal: t.signal },
-      );
+      await admin.request().batch('INSERT dbo.stamped (id) VALUES (1);');
 
+      // The statistics, the row counts and the last writes wait on the lock
+      // and give no news; the database version takes no lock.
+      const locked = await watch.woken();
+      const failed =
+        await warehouseSql`SELECT count(*)::int AS attempts FROM _warehouse.sync_attempts WHERE status = 'failed'`;
+      await blocker.commit();
+      committed = true;
+      const committedWoken = await watch.woken();
+
+      assert.deepEqual(locked, ['dbo.stamped']);
+      assert.deepEqual(signals.failures, []);
+      assert.deepEqual([...failed], [{ attempts: 0 }]);
+      assert.deepEqual(committedWoken, ['dbo.other']);
+    } finally {
+      if (!committed) await blocker.rollback();
+    }
+  },
+);
+
+test(
+  'a check that times out while the server stops sending the answers to its queries fails each stream with the query it waited on and its time',
+  { timeout: 120_000 },
+  async (t) => {
+    await using server = await sqlServer.database();
+    await using clients = new AsyncDisposableStack();
+    const admin = clients.adopt(
+      new sql.ConnectionPool(server.connectionString),
+      (pool) => pool.close(),
+    );
+    await admin.connect();
+    await admin
+      .request()
+      .batch(
+        'CREATE TABLE dbo.plain (id int PRIMARY KEY); INSERT dbo.plain VALUES (1);',
+      );
+    await using reader = await readOnlyLogin(server, admin, '');
+    await using hop = await relay(server);
+    const source = await SqlServerSource.discover(
+      new SqlServerDatabase(
+        reader.connectionString.replace(
+          `Server=${server.host},${server.port}`,
+          `Server=${hop.server}`,
+        ),
+      ),
+    );
+    await using warehouse = await postgresServer.database();
+    const warehouseSql = clients.adopt(
+      postgres(warehouse.connectionString, { max: 1, onnotice: () => {} }),
+      (client) => client.end(),
+    );
+    using signals = signalFailures(source);
+    await using watch = watcher(t, source, warehouse.connectionString);
+    assert.deepEqual(await watch.first(), ['dbo.plain']);
+    // The session of the watch is open, so the check waits in its queries.
+    const stalled = hop.stallAfter(1);
+    void watch.next();
+    await watch.check();
+    await stalled;
+    try {
       await watch.clock.tickAsync(10_000);
 
-      await waitFor(() => assert.equal(signals.failures.length, 3), {
+      await waitFor(() => assert.equal(signals.failures.length, 1), {
         signal: t.signal,
       });
       assert.deepEqual(
-        signals.failures.map(({ error }) =>
-          Error.isError(error) && error.cause instanceof DOMException
-            ? error.cause.name
-            : error,
-        ),
-        ['TimeoutError', 'TimeoutError', 'TimeoutError'],
-      );
-      // A whole-table stream waits on its statistics first, and the tracked
-      // table on its row count: its database version takes no lock.
-      assert.deepEqual(
         [
-          ...(await warehouseSql`SELECT c.stream, a.error FROM _warehouse.sync_attempts AS a JOIN _warehouse.extraction_coverage AS c ON c.attempt_id = a.id WHERE a.status = 'failed' ORDER BY c.stream`),
+          ...(await warehouseSql`SELECT c.stream, a.error FROM _warehouse.sync_attempts AS a JOIN _warehouse.extraction_coverage AS c ON c.attempt_id = a.id WHERE a.status = 'failed'`),
         ],
         [
-          {
-            stream: 'dbo.other',
-            error: 'timed out in statistics after 10000 ms',
-          },
           {
             stream: 'dbo.plain',
             error: 'timed out in statistics after 10000 ms',
           },
-          {
-            stream: 'dbo.tracked',
-            error: 'timed out in rowCounts after 10000 ms',
-          },
         ],
       );
-      await waitFor(async () => assert.equal(await requests(''), 0), {
-        signal: t.signal,
-      });
-      await blocker.commit();
-      committed = true;
-      await watch.check();
-      assert.deepEqual(loadedBy(await pass), [
-        'dbo.other',
-        'dbo.plain',
-        'dbo.tracked',
-      ]);
     } finally {
-      if (!committed) await blocker.rollback();
+      hop.resume();
     }
   },
 );

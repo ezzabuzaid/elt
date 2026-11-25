@@ -9,9 +9,10 @@ import {
 } from '@zukhruf/async';
 
 import type { PipelineClock } from '@eltjs/elt';
-import type {
-  SqlServerDatabase,
-  SqlServerSession,
+import {
+  type SqlServerDatabase,
+  SqlServerLockTimeoutError,
+  type SqlServerSession,
 } from '@eltjs/sdk-microsoft-sql-server';
 
 // What a read of a check waits on: the login of the session, or one query.
@@ -19,11 +20,23 @@ type Phase = 'open' | TableQuery | 'version';
 
 type TableQuery = 'statistics' | 'rowCounts' | 'lastWrites';
 
+// How long a query of a check waits for a lock that another session holds,
+// such as the schema lock of an open TRUNCATE of any table: a check has 10 s,
+// and the next check, 30 s later, reads again.
+const lockTimeoutMs = 2_000;
+
 // A value of each table, by its quoted name, from one query, which a check
 // that times out cancels on the server.
 class TableValues extends Collector<string> {
   readonly #session: WatchSession;
   readonly #query: TableQuery;
+  // What a query that waits too long for a lock gives: no news, the values
+  // that the last read gave, so no stream fails and none wakes, and a later
+  // check reads the new values. Before the first read there are none, so the
+  // query fails.
+  #noNews = (error: SqlServerLockTimeoutError): ReadonlyMap<string, string> => {
+    throw error;
+  };
 
   constructor(session: WatchSession, query: TableQuery) {
     super();
@@ -33,11 +46,21 @@ class TableValues extends Collector<string> {
 
   protected async collect(check: Check) {
     const session = await this.#session.open(check);
-    return this.#session.during(
-      this.#query,
-      check,
-      session[this.#query]({ signal: check.signal }),
-    );
+    try {
+      const values = await this.#session.during(
+        this.#query,
+        check,
+        session[this.#query]({
+          signal: check.signal,
+          lockTimeout: lockTimeoutMs,
+        }),
+      );
+      this.#noNews = () => values;
+      return values;
+    } catch (error) {
+      if (!(error instanceof SqlServerLockTimeoutError)) throw error;
+      return this.#noNews(error);
+    }
   }
 }
 

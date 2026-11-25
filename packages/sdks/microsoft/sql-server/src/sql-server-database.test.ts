@@ -17,6 +17,7 @@ import {
   OffsetTimestamp,
   type SqlServerChange,
   SqlServerDatabase,
+  SqlServerLockTimeoutError,
   SqlServerLoginError,
   SqlServerPermissionError,
   type SqlServerSession,
@@ -607,6 +608,66 @@ test('the database version moves when a rowversion or a tracked table changes, a
       BigInt(String(tracked.changeTracking)),
   );
   assert.ok(BigInt(updated.rowversion) > BigInt(tracked.rowversion));
+});
+
+test('a query of the values of every table that waits for a lock longer than its lock timeout fails with SqlServerLockTimeoutError, and the same query with no lock timeout waits as long as the lock is held', async () => {
+  await using scratch = await sqlServer.database();
+  await using clients = new AsyncDisposableStack();
+  const admin = clients.adopt(
+    new sql.ConnectionPool(scratch.connectionString),
+    (pool) => pool.close(),
+  );
+  await admin.connect();
+  await admin
+    .request()
+    .batch(
+      'CREATE TABLE dbo.other (id int PRIMARY KEY); INSERT dbo.other VALUES (1);',
+    );
+  // A server permission, so it is granted in master.
+  await using reader = await readOnlyLogin(
+    scratch,
+    admin,
+    "EXEC master.sys.sp_executesql N'GRANT VIEW SERVER STATE TO {user}';",
+  );
+  // The open reads on one connection, and each query after it borrows that
+  // same idle connection again.
+  await using session = await new SqlServerDatabase(reader.login).open();
+
+  for (const read of ['statistics', 'rowCounts', 'lastWrites'] as const) {
+    const blocker = new sql.Transaction(admin);
+    await blocker.begin();
+    let held = true;
+    try {
+      await new sql.Request(blocker).batch('TRUNCATE TABLE dbo.other;');
+      const started = performance.now();
+      const refused = await session[read]({ lockTimeout: 500 }).catch(
+        (error: unknown) => error,
+      );
+      const refusedAfter = performance.now() - started;
+      let settled = false;
+      const waiting = session[read]()
+        .catch((error: unknown) => error)
+        .finally(() => {
+          settled = true;
+        });
+      await sleep(1500);
+      const settledWhileHeld = settled;
+      await blocker.rollback();
+      held = false;
+
+      assert.ok(refused instanceof SqlServerLockTimeoutError, inspect(refused));
+      assert.ok(
+        refusedAfter >= 500,
+        `${read} was refused after ${refusedAfter} ms`,
+      );
+      assert.equal(settledWhileHeld, false);
+      const values = await waiting;
+      assert.ok(values instanceof Map, inspect(values));
+      assert.ok(values.has('[dbo].[other]'));
+    } finally {
+      if (held) await blocker.rollback();
+    }
+  }
 });
 
 test('a session that reads 35 seconds after its last read, longer than a watch waits between checks, reads on the server session that it logged in to first', async () => {

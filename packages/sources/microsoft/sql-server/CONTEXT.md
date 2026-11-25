@@ -20,6 +20,10 @@ _Avoid_: Change signal, probe, trigger, counter (a counter is one kind of value)
 What a read of a check waits on: `open` (the login of the session of the watch) or one query, `statistics`, `rowCounts`, `lastWrites` or `version`. A read that still waits when the check times out fails with an error that names its phase.
 _Avoid_: Step, stage
 
+**No news**:
+What the query of a collector gives when it waits longer than 2 seconds for a lock: the values that its last read gave, so its gauges are unchanged. The next check reads the query again.
+_Avoid_: Skip, stale value, cache
+
 **Position**:
 Where a Change Tracking stream is in the change history of its table: a Change Tracking version and the tracking generation of the table.
 _Avoid_: Cursor, offset, watermark, version (the version is one part of the position)

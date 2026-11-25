@@ -30,6 +30,15 @@ export type SqlServerVersion = {
   readonly rowversion: string;
 };
 
+// The options of a query of the values of every table. The signal cancels
+// the query. lockTimeout is how many milliseconds the query waits for a lock
+// that another session holds; without it, the query waits as long as the lock
+// is held.
+type GaugeQuery = {
+  readonly signal?: AbortSignal;
+  readonly lockTimeout?: number;
+};
+
 // User tables only: not the system's own, not external tables (their rows
 // live elsewhere), and not the change tables CDC keeps.
 const tablesQuery = `
@@ -235,17 +244,8 @@ export class SqlServerSession implements AsyncDisposable {
   // 0, so the value carries the time of the last refresh too. A table with no
   // statistics has no count, so its value never moves. A login that can read
   // a table can read its counts.
-  // The signal cancels the query.
-  async statistics(options?: {
-    readonly signal?: AbortSignal;
-  }): Promise<ReadonlyMap<string, string>> {
-    const rows = await query(
-      this.#pool.request(),
-      this.#location,
-      statisticsQuery,
-      [],
-      options?.signal,
-    );
+  async statistics(options?: GaugeQuery): Promise<ReadonlyMap<string, string>> {
+    const rows = await this.#gauge(statisticsQuery, options);
     return new Map(
       rows.map(([table, counts]) => [
         cellText(table, 'table'),
@@ -258,17 +258,8 @@ export class SqlServerSession implements AsyncDisposable {
   // it in the table's metadata: an insert, a delete or a TRUNCATE moves it,
   // also in a table whose statistics SQL Server has not built, but an update
   // does not. A login that can read a table can read its count.
-  // The signal cancels the query.
-  async rowCounts(options?: {
-    readonly signal?: AbortSignal;
-  }): Promise<ReadonlyMap<string, string>> {
-    const rows = await query(
-      this.#pool.request(),
-      this.#location,
-      rowCountsQuery,
-      [],
-      options?.signal,
-    );
+  async rowCounts(options?: GaugeQuery): Promise<ReadonlyMap<string, string>> {
+    const rows = await this.#gauge(rowCountsQuery, options);
     return new Map(
       rows.map(([table, count]) => [
         cellText(table, 'table'),
@@ -282,25 +273,18 @@ export class SqlServerSession implements AsyncDisposable {
   // column with no statistics, but not a TRUNCATE. A restart forgets both,
   // so the value of each table is then empty. A login needs VIEW SERVER
   // STATE to read them (VIEW DATABASE STATE on Azure SQL Database).
-  // The signal cancels the query.
-  async lastWrites(options?: {
-    readonly signal?: AbortSignal;
-  }): Promise<ReadonlyMap<string, string>> {
-    const rows = await query(
-      this.#pool.request(),
-      this.#location,
-      lastWritesQuery,
-      [],
-      options?.signal,
-    ).catch((error: unknown) => {
-      // 297: the login may not read the state of the server or database.
-      if (error instanceof sql.RequestError && error.number === 297)
-        throw new SqlServerPermissionError(
-          'VIEW SERVER STATE (VIEW DATABASE STATE on Azure SQL Database)',
-          error,
-        );
-      throw error;
-    });
+  async lastWrites(options?: GaugeQuery): Promise<ReadonlyMap<string, string>> {
+    const rows = await this.#gauge(lastWritesQuery, options).catch(
+      (error: unknown) => {
+        // 297: the login may not read the state of the server or database.
+        if (error instanceof sql.RequestError && error.number === 297)
+          throw new SqlServerPermissionError(
+            'VIEW SERVER STATE (VIEW DATABASE STATE on Azure SQL Database)',
+            error,
+          );
+        throw error;
+      },
+    );
     return new Map(
       rows.map(([table, writes]) => [
         cellText(table, 'table'),
@@ -523,6 +507,25 @@ LEFT JOIN ${table.quoted} AS t ON ${keys.map((column) => `t.${column.quoted} = c
     }
   }
 
+  // One query of the values of every table. These read the metadata of every
+  // table, so a schema lock on any table blocks them. With a lock timeout, a
+  // query that waits longer for a lock fails with SqlServerLockTimeoutError.
+  // query runs each statement through sp_executesql, and SQL Server restores a
+  // SET at the end of that scope, also when the statement fails or is
+  // cancelled, so the lock timeout never stays on the pooled connection.
+  #gauge(text: string, options: GaugeQuery | undefined): Promise<unknown[][]> {
+    const lockTimeout = options?.lockTimeout;
+    return query(
+      this.#pool.request(),
+      this.#location,
+      lockTimeout === undefined
+        ? text
+        : `SET LOCK_TIMEOUT ${milliseconds(lockTimeout)};${text}`,
+      [],
+      options?.signal,
+    );
+  }
+
   async *#rows(
     table: SqlServerTable,
     text: string,
@@ -544,6 +547,14 @@ function trackingState(value: string): ChangeTracking {
   if (value === 'off' || value === 'readable' || value === 'denied')
     return value;
   throw new TypeError(`Unknown Change Tracking state ${value}`);
+}
+
+function milliseconds(lockTimeout: number): number {
+  if (!Number.isSafeInteger(lockTimeout) || lockTimeout < 0)
+    throw new TypeError(
+      `A lock timeout is a whole number of milliseconds, not ${lockTimeout}`,
+    );
+  return lockTimeout;
 }
 
 function count(limit: number): number {

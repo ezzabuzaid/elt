@@ -31,6 +31,20 @@ export class SqlServerPermissionError extends Error {
   }
 }
 
+// A statement waited longer for a lock than its lock timeout allows (error
+// 1222): another session holds the lock, for example the schema lock of an
+// open TRUNCATE or ALTER of a table. A later attempt can succeed.
+export class SqlServerLockTimeoutError extends Error {
+  override name = 'SqlServerLockTimeoutError';
+
+  constructor(location: string, cause: unknown) {
+    super(
+      `SQL Server ${location} did not grant a lock within the lock timeout.`,
+      { cause },
+    );
+  }
+}
+
 // Reading needs SQL Server 2016 or later (or Azure SQL): the masking and
 // external-table metadata and the text styles the reads rely on start there.
 export class SqlServerVersionError extends Error {

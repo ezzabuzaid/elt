@@ -162,7 +162,9 @@ The source gives elt's pipeline one change signal for each stream, checked every
 
 The statistics, the row count and the last write are collectors: one key for each table, by its quoted name. A table that a collector does not give, for example a table dropped after discovery, changed, so its stream wakes and its read fails.
 
-The queries of one check have 10 seconds. At 10 seconds the check cancels each query of the statistics, the row count and the last write that still runs, so no query of the check stays on the server, also when an open `TRUNCATE` or `ALTER` of any table blocks it. Each read that still waits at 10 seconds fails at once with an error that names what it waited on and for how long, for example `timed out in statistics after 10000 ms`. What it waited on is `open` (the login of the session), `statistics`, `rowCounts`, `lastWrites` or `version`. The cause of the error is the `TimeoutError` of the check. The sync history records the message as the error of each stream of the gauge. See [ADR 0007](./docs/adr/0007-a-check-that-times-out-names-what-each-read-waited-on.md). When a gauge fails, for example because its query took longer or a restart of the SQL Server engine dropped the connection, the streams of the gauge fail, as a `system` failure, and the next check reads the gauge again. When that check reads the gauge, its streams load again. The other streams keep loading. A server that cannot be reached at the first check leaves the session closed, and the next check opens it again. A login that the server refuses fails every stream as `config`, and the pipeline reads the gauges no more in this watch.
+The queries of the statistics, the row count and the last write read the metadata of every table, so an open `TRUNCATE` or `ALTER` of any table blocks them. Each of these queries waits 2 seconds for a lock. When it waits longer, SQL Server stops it, and the check gives no news for that query: it gives the values that the query read at its last check, so no stream fails and no stream wakes because of that query. The other gauges of the check still wake their streams, for example the last rowversion. The next check, 30 seconds later, reads the query again, and when the lock has ended, it wakes each stream whose values changed. Only the first check of a watch has no values to give: there, a query that waits too long for a lock fails the streams of its gauge with `SqlServerLockTimeoutError`. See [ADR 0008](./docs/adr/0008-a-check-whose-query-waits-too-long-for-a-lock-gives-no-news.md).
+
+The queries of one check have 10 seconds. At 10 seconds the check cancels each query of the statistics, the row count and the last write that still runs, so no query of the check stays on the server. Each read that still waits at 10 seconds fails at once with an error that names what it waited on and for how long, for example `timed out in statistics after 10000 ms`. What it waited on is `open` (the login of the session), `statistics`, `rowCounts`, `lastWrites` or `version`. The cause of the error is the `TimeoutError` of the check. The sync history records the message as the error of each stream of the gauge. See [ADR 0007](./docs/adr/0007-a-check-that-times-out-names-what-each-read-waited-on.md). When a gauge fails, for example because its query took longer or a restart of the SQL Server engine dropped the connection, the streams of the gauge fail, as a `system` failure, and the next check reads the gauge again. When that check reads the gauge, its streams load again. The other streams keep loading. A server that cannot be reached at the first check leaves the session closed, and the next check opens it again. A login that the server refuses fails every stream as `config`, and the pipeline reads the gauges no more in this watch.
 
 The database is current whenever the source reads it, so the source gives no `currentAsOf`.
 
@@ -170,6 +172,7 @@ The database is current whenever the source reads it, so the source gives no `cu
 
 - Rowversion tables do not see deletions. A deleted row stays.
 - Without the last write, an update of a column with no statistics loads only at the next hour.
+- While another session holds a lock on any table for longer than 2 seconds, for example in an open `TRUNCATE` or `ALTER`, a check sees no change of the statistics, the row count or the last write of any table, and the sync history shows no failed check. The streams wake at the first check after the lock ends. During a lock that does not end, only the hour and the database versions wake streams.
 - SQL Server builds the statistics of a table when a query first needs them. Until then, they count nothing. In a table that no query has read by a column since it was created empty, an insert or a delete moves the row count, and an update waits for the last write or the hour. A table with no key and no index has no statistics at all, so the same is true for it.
 - The source does not read CDC (backlog #2315).
 - The source discovers tables only, not views (backlog #3253).
@@ -211,6 +214,12 @@ Run on 2026-11-07 against SQL Server 2022 in a container:
 - A `SELECT` with no `WHERE` did not build the statistics of a table created empty. A `SELECT` with a `WHERE` on the key built them: the count went from none to 0, with a time of refresh. A `TRUNCATE` did not move statistics that were not built.
 - A disabled login and a login to a database that is `OFFLINE` both failed with `ELOGIN` that tedious did not mark as transient. The error log had one `Login failed` line for each attempt.
 
+Run on 2026-11-25 against SQL Server 2022 (16.0.4325.4) in a container, through mssql 12.7.4 and tedious 20.3.3, while another session held an open `TRUNCATE` of one table:
+
+- The queries of the statistics, the row counts and the last writes, each after `SET LOCK_TIMEOUT 2000`, failed with error 1222 after about 2 seconds. The query of the database version did not wait (13 ms).
+- `request.query` of mssql runs a statement through `sp_executesql`, also with no parameters. `SET LOCK_TIMEOUT` in that statement did not stay on the connection after the statement failed with error 1222, or after a cancel at 500 ms: the next statement got `@@LOCK_TIMEOUT` -1.
+- `request.batch` of mssql runs a batch as it is. A batch of `SET LOCK_TIMEOUT 2000`, the query and `SET LOCK_TIMEOUT -1` continued after error 1222 and reset the value. A cancel at 500 ms stopped the batch before the reset, so the connection kept `@@LOCK_TIMEOUT` 5000.
+
 ## Decisions
 
 - [ADR 0001: A Change Tracking position carries the tracking generation](./docs/adr/0001-a-change-tracking-position-carries-the-tracking-generation.md)
@@ -220,3 +229,4 @@ Run on 2026-11-07 against SQL Server 2022 in a container:
 - [ADR 0005: A read with no rows for too long fails](./docs/adr/0005-a-read-with-no-rows-for-too-long-fails.md)
 - [ADR 0006: The host limits discovery through its signal](./docs/adr/0006-the-host-limits-discovery-through-its-signal.md)
 - [ADR 0007: A check that times out names what each read waited on](./docs/adr/0007-a-check-that-times-out-names-what-each-read-waited-on.md)
+- [ADR 0008: A check whose query waits too long for a lock gives no news](./docs/adr/0008-a-check-whose-query-waits-too-long-for-a-lock-gives-no-news.md)

@@ -1,6 +1,7 @@
 import sql from 'mssql';
 
 import {
+  SqlServerLockTimeoutError,
   SqlServerLoginError,
   SqlServerPermissionError,
   SqlServerUnavailableError,
@@ -57,8 +58,9 @@ function refused(error: unknown): boolean {
 // A failed statement as what it means. The connection failed under it when
 // the error has no server number, such as ECONNRESET, or when the server ended
 // the session: SQL Server ends the connection at severity 20 and above, as
-// error 596 does for a session that was killed. A refused read names the grant
-// it needs (errors 229 and 230).
+// error 596 does for a session that was killed. A read that waited longer for a
+// lock than its lock timeout allows fails as such (error 1222). A refused read
+// names the grant it needs (errors 229 and 230).
 export function readError(error: unknown, location: string): unknown {
   if (
     error instanceof sql.ConnectionError ||
@@ -67,6 +69,8 @@ export function readError(error: unknown, location: string): unknown {
   )
     return connectionFailure(location, error);
   if (!(error instanceof sql.RequestError)) return error;
+  if (error.number === 1222)
+    return new SqlServerLockTimeoutError(location, error);
   if (error.number !== 229 && error.number !== 230) return error;
   const denied =
     /^The (.+) permission was denied on the (?:column '(.+)' of the )?object '(.+)', database '.+', schema '(.+)'\.$/.exec(
