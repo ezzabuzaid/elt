@@ -176,19 +176,13 @@ export class KeywordIndex extends DerivedDataset<SqlServerTable> {
   // Makes the catalog when the database has none, and the table and its
   // full-text index again when the table does not keep the hash of this
   // declaration or has no full-text index. A server with no Full-Text Search
-  // refuses the catalog, before the member makes anything.
+  // makes the catalog, which is only metadata, and refuses the full-text
+  // index (probed on SQL Server 2022): the member then drops the table that
+  // it made just before, so it leaves no keywords table.
   async #declare(session: Session): Promise<void> {
-    try {
-      await session.query(
-        `IF NOT EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE [name] = ${literal(this.name)}) CREATE FULLTEXT CATALOG ${this.#catalog}`,
-      );
-    } catch (error) {
-      if (numberOf(error) !== noFullTextSearch) throw error;
-      throw new SqlServerSetupError(
-        `Keyword index ${this.name} needs Full-Text Search, and the server has none: install it (on Linux, the package mssql-server-fts), or use Azure SQL Database, which has it`,
-        { cause: error },
-      );
-    }
+    await session.query(
+      `IF NOT EXISTS (SELECT 1 FROM sys.fulltext_catalogs WHERE [name] = ${literal(this.name)}) CREATE FULLTEXT CATALOG ${this.#catalog}`,
+    );
     const [stored] = await session.query(
       `SELECT (SELECT CAST([value] AS nvarchar(100)) FROM sys.extended_properties WHERE [class] = 1 AND [major_id] = OBJECT_ID(@table) AND [minor_id] = 0 AND [name] = N'elt_declaration') AS [declared],
               (SELECT COUNT(*) FROM sys.fulltext_indexes WHERE [object_id] = OBJECT_ID(@table)) AS [indexed]`,
@@ -200,11 +194,23 @@ export class KeywordIndex extends DerivedDataset<SqlServerTable> {
       `IF EXISTS (SELECT 1 FROM sys.fulltext_indexes WHERE [object_id] = OBJECT_ID(${literal(this.#table)})) DROP FULLTEXT INDEX ON ${this.#table}`,
     );
     await session.query(`DROP TABLE IF EXISTS ${this.#table}`);
-    for (const statement of this.#declaration) await session.query(statement);
+    try {
+      for (const statement of this.#declaration) await session.query(statement);
+    } catch (error) {
+      if (numberOf(error) !== noFullTextSearch) throw error;
+      await session.query(`DROP TABLE IF EXISTS ${this.#table}`);
+      throw new SqlServerSetupError(
+        `Keyword index ${this.name} needs Full-Text Search, and the server has none: install it (on Linux, the package mssql-server-fts), or use Azure SQL Database, which has it`,
+        { cause: error },
+      );
+    }
     // Last, so a make that stopped half way is made again by the next
-    // refresh.
+    // refresh. The connection sends each parameter as nvarchar(max), which
+    // the sql_variant value of a property refuses (error 206), so the hash
+    // goes through a variable of a fixed length, as elt-sqlserver's
+    // descriptions do.
     await session.query(
-      `EXEC sp_addextendedproperty @name = N'elt_declaration', @value = @declared, @level0type = N'SCHEMA', @level0name = @schema, @level1type = N'TABLE', @level1name = @table`,
+      `DECLARE @value nvarchar(100) = @declared; EXEC sp_addextendedproperty @name = N'elt_declaration', @value = @value, @level0type = N'SCHEMA', @level0name = @schema, @level1type = N'TABLE', @level1name = @table`,
       { declared: this.#declared, schema: marts, table: this.name },
     );
   }
