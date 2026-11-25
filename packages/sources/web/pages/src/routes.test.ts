@@ -19,6 +19,7 @@ import {
   CopyConfiguration,
   Pipeline,
   PipelineError,
+  type SourceReadOptions,
   StreamStatus,
 } from '@eltjs/elt';
 import {
@@ -43,6 +44,9 @@ import {
 import { RecordExtractor } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 // One record for each page: its path.
 class PathExtractor extends RecordExtractor {
@@ -533,6 +537,7 @@ async function read(
   const records: string[] = [];
   for await (const message of source.read(catalog, states, {
     clock: globalThis,
+    entries: noEntries,
   })) {
     if (message instanceof StreamStatus) {
       assert.notEqual(message.status, 'FAILED', String(message.error));

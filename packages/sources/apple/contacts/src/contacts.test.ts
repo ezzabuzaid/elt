@@ -21,6 +21,7 @@ import {
   Pipeline,
   PipelineError,
   type Source,
+  type SourceReadOptions,
 } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
@@ -31,6 +32,9 @@ import {
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleContactsSource } from './apple-contacts-source.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -100,7 +104,7 @@ const readFirst = async (source: AppleContactsSource) => {
         ).configuration,
       ],
       new Map(),
-      { clock: globalThis },
+      { clock: globalThis, entries: noEntries },
     ),
   );
 };

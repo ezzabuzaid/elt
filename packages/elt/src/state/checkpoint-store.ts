@@ -13,21 +13,56 @@ export type StoredCheckpoint = {
   readonly reloading: boolean;
 };
 
-// A store reads a checkpoint's state apart from the rest of it: a snapshot's
-// state grows with its upstream, so it is read only when its stream starts.
+// One keyed entry of a checkpoint: its key within its space, and its value as
+// JSON text (ADR 0035).
+export type CheckpointEntry = {
+  readonly space: string;
+  readonly key: string;
+  readonly value: string;
+};
+
+// What a save does to a checkpoint's entries: update removes every entry
+// whose space begins with one of the scopes in clear, then applies the
+// removes and the puts to the saved entries; replace keeps only its puts, for
+// a save whose read started from no checkpoint, which therefore read no
+// entries. A scope is the start of the spaces of a partition, or the empty
+// string for every space of the stream; the store knows no partition.
+export type CheckpointEntryChanges =
+  | {
+      readonly kind: 'update';
+      readonly clear: readonly string[];
+      readonly put: readonly CheckpointEntry[];
+      readonly remove: readonly Omit<CheckpointEntry, 'value'>[];
+    }
+  | { readonly kind: 'replace'; readonly put: readonly CheckpointEntry[] };
+
+// A store reads a checkpoint's state and entries apart from the rest of it:
+// they grow with the upstream, so the state is read only when the stream
+// starts, and a space's entries only when a source asks for them.
 export type CheckpointSession = {
   read(id: string): Promise<StoredCheckpoint | undefined>;
   // The saved state's JSON text, as save stored it.
   state(id: string): Promise<string | undefined>;
-  // Durable when it resolves. Stores the binding with the state, since a
-  // replication whose stream changed shape saves the shape it loads.
+  // The saved entries of a space, as pairs of a key and its value's JSON
+  // text; none for a checkpoint never saved.
+  entries(
+    id: string,
+    space: string,
+  ): Promise<Iterable<readonly [key: string, value: string]>>;
+  // Durable when it resolves, the row and its entries in one transaction.
+  // Stores the binding with the state, since a replication whose stream
+  // changed shape saves the shape it loads.
   save(
     id: string,
-    checkpoint: StoredCheckpoint & { readonly state: string },
+    checkpoint: StoredCheckpoint & {
+      readonly state: string;
+      readonly entries: CheckpointEntryChanges;
+    },
   ): Promise<void>;
   // Durable when it resolves: the reload the checkpoint was saved in
   // completed, so it keeps its state and is no longer reloading.
   reloaded(id: string): Promise<void>;
+  // Removes the checkpoint with its entries.
   remove(id: string): Promise<void>;
 };
 
@@ -49,10 +84,18 @@ export type CheckpointRun = {
   // The saved state, parsed for this call alone, so the caller owns it and
   // may change it; null for a replication never saved.
   state(id: string): Promise<unknown>;
+  // The saved entries of a space, parsed for this call alone; none for a
+  // replication never saved.
+  entries(id: string, space: string): Promise<ReadonlyMap<string, unknown>>;
   // Whether the checkpoint was saved inside a reload that has not completed.
   reloading(id: string): boolean;
   // state is the JSON text of the state.
-  save(id: string, state: string, reloading: boolean): Promise<void>;
+  save(
+    id: string,
+    state: string,
+    entries: CheckpointEntryChanges,
+    reloading: boolean,
+  ): Promise<void>;
   // The reload the checkpoint was saved in completed.
   reloaded(id: string): Promise<void>;
 };
@@ -108,10 +151,17 @@ export abstract class CheckpointStore {
           const state = await session.state(id);
           return state === undefined ? null : JSON.parse(state);
         },
+        entries: async (id, space) => {
+          checkpoint(id);
+          const entries = new Map<string, unknown>();
+          for (const [key, value] of await session.entries(id, space))
+            entries.set(key, JSON.parse(value));
+          return entries;
+        },
         reloading: (id) => checkpoint(id).reloading,
-        save: async (id, state, reloading) => {
+        save: async (id, state, entries, reloading) => {
           const { binding } = checkpoint(id);
-          await session.save(id, { binding, reloading, state });
+          await session.save(id, { binding, reloading, state, entries });
         },
         reloaded: async (id) => {
           checkpoint(id);

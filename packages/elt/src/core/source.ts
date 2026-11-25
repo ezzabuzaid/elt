@@ -5,6 +5,7 @@ import type { ChangeSignal } from './change-signal.ts';
 import type { PipelineClock } from './clock.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { DocumentParser } from './document-parser.ts';
+import { plainObject } from './entry-name.ts';
 import { FileContent } from './file-content.ts';
 import { interleave } from './interleave.ts';
 import {
@@ -24,6 +25,12 @@ export type SourceReadOptions = {
   readonly signal?: AbortSignal | undefined;
   // The clock of the pipeline: a source waits and reads the time on it.
   readonly clock: PipelineClock;
+  // The saved entries of a stream's space, by the space's name in the
+  // checkpoint (ADR 0035).
+  readonly entries: (
+    stream: string,
+    space: string,
+  ) => Promise<ReadonlyMap<string, unknown>>;
 };
 
 export type RecordMessage = {
@@ -35,10 +42,39 @@ export type RecordMessage = {
   readonly file?: string | null;
 };
 
+// A checkpoint of the stream. Beside state, entries carries the changes of
+// its keyed entries since the last STATE: for each space, the keys to put
+// with their values and the keys to remove. A space names one consumer of the
+// stream's state, such as a crawl or a diff, so their keys do not meet. A
+// STATE with no entries changes no entry (ADR 0035).
 export type StateMessage = {
   readonly type: 'STATE';
   readonly stream: string;
   readonly state: unknown;
+  readonly entries?: Readonly<
+    Record<
+      string,
+      {
+        readonly put?: Iterable<readonly [key: string, value: unknown]>;
+        readonly remove?: Iterable<string>;
+      }
+    >
+  >;
+};
+
+// The saved entries of what one extract reads: its stream, or its partition
+// of a partitioned stream, so two partitions that name one key keep two
+// entries (ADR 0035). space reads a space's entries from the checkpoint each
+// time it is asked, as the last save left them; they are empty for one never
+// saved.
+export type SavedEntries = {
+  space(name: string): Promise<ReadonlyMap<string, unknown>>;
+};
+
+// A checkpoint as Source.read emits it: clear names the scopes of the
+// partitions whose entries the save removes before it applies entries.
+export type ScopedState = StateMessage & {
+  readonly clear?: readonly string[];
 };
 
 export type KeyValue = string | number | boolean;
@@ -125,7 +161,7 @@ export class StreamStatus {
 }
 
 export type ReadMessage =
-  RecordMessage | StateMessage | DeleteMessage | ScopedReset | StreamStatus;
+  RecordMessage | ScopedState | DeleteMessage | ScopedReset | StreamStatus;
 
 // Airbyte's read(config, catalog, state): one read covers every selected
 // stream, inside one context the source opens for it, so related streams see
@@ -250,7 +286,7 @@ export abstract class Source<
   async *read(
     catalog: readonly CopyConfiguration[],
     states: { get(stream: string): unknown },
-    { signal, clock }: SourceReadOptions,
+    { signal, clock, entries }: SourceReadOptions,
   ): AsyncGenerator<ReadMessage> {
     for (const configuration of catalog) this.validate(configuration);
     if (
@@ -272,7 +308,10 @@ export abstract class Source<
       throw new TypeError('Source concurrency must be a positive integer');
     yield* interleave(
       catalog.map((configuration) =>
-        grouped(this.#stream(configuration, states, context, reading), group),
+        grouped(
+          this.#stream(configuration, states, entries, context, reading),
+          group,
+        ),
       ),
       this.concurrency,
     );
@@ -281,6 +320,7 @@ export abstract class Source<
   async *#stream(
     configuration: CopyConfiguration,
     states: { get(stream: string): unknown },
+    entries: Entries,
     context: Context,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<ReadMessage> {
@@ -288,20 +328,34 @@ export abstract class Source<
     yield new StreamStatus(name, 'STARTED');
     const state = (await states.get(name)) ?? null;
     if (configuration.stream.partitionKey !== undefined)
-      yield* this.partitioned(configuration, state, context, signal);
+      yield* this.partitioned(configuration, state, entries, context, signal);
     else {
       const incremental = configuration.syncMode === 'incremental';
+      // Whether the next STATE clears every space first: a RESET came
+      // before it.
+      let reset = false;
       try {
         for await (const message of this.resolved(
           configuration,
-          this.extract(configuration, state, null, context, signal),
+          this.extract(
+            configuration,
+            state,
+            null,
+            context,
+            signal,
+            savedEntries(name, '', entries),
+          ),
           signal,
         ))
           if (!('type' in message) || message.type === 'DELETE') yield message;
-          else if (incremental)
-            yield message.type === 'RESET'
-              ? { ...message, partition: null }
-              : message;
+          else if (!incremental) continue;
+          else if (message.type === 'RESET') {
+            reset = true;
+            yield { ...message, partition: null };
+          } else {
+            yield { ...message, ...scoped(message, '', reset ? [''] : []) };
+            reset = false;
+          }
       } catch (error) {
         yield new StreamStatus(name, 'FAILED', null, error);
       }
@@ -331,6 +385,12 @@ export abstract class Source<
         Object.hasOwn(message, 'partition')
       )
         throw new TypeError('Only Source.read scopes a reset to its partition');
+      if (
+        'type' in message &&
+        message.type === 'STATE' &&
+        Object.hasOwn(message, 'clear')
+      )
+        throw new TypeError('Only Source.read clears the entries of a STATE');
       if ('type' in message || configuration.fileReads.length === 0) {
         yield message;
         continue;
@@ -382,10 +442,12 @@ export abstract class Source<
   // seen before, so it starts from the source's normal beginning. Every
   // checkpoint carries all listed partitions' latest states, so a partition
   // not yet read, or one that failed, keeps what it had. Partitions no longer
-  // listed drop out of the next checkpoint; their rows stay loaded.
+  // listed drop out of the next checkpoint with their entries; their rows
+  // stay loaded. Each partition's entries are under its own scope.
   private async *partitioned(
     configuration: CopyConfiguration,
     state: unknown,
+    entries: Entries,
     context: Context,
     signal: AbortSignal | undefined,
   ): AsyncGenerator<ReadMessage> {
@@ -399,7 +461,18 @@ export abstract class Source<
       readPartition(identity, entry),
     );
     const latest = new Map(saved);
+    const keys = new Set(listed.map((entry) => entry.key));
+    // The scopes of the partitions no longer listed: the first STATE drops
+    // them from the checkpoint, and clears them.
+    const unlisted = [...saved.keys()]
+      .filter((key) => !keys.has(key))
+      .map(partitionScope);
     for (const { key, partition } of listed) {
+      const scope = partitionScope(key);
+      // Whether this partition's next STATE clears its scope first: the
+      // partition reset before it. A partition that fails before its STATE
+      // keeps its saved state, so it keeps its entries too.
+      let reset = false;
       try {
         for await (const message of this.resolved(
           configuration,
@@ -409,6 +482,7 @@ export abstract class Source<
             partition,
             context,
             signal,
+            savedEntries(stream.name, scope, entries),
           ),
           signal,
         )) {
@@ -423,11 +497,19 @@ export abstract class Source<
                   (entry) => latest.get(entry.key) ?? [],
                 ),
               },
+              ...scoped(message, scope, [
+                ...unlisted.splice(0),
+                ...(reset ? [scope] : []),
+              ]),
             };
+            reset = false;
             continue;
           }
           if ('type' in message && message.type === 'RESET') {
-            if (incremental) yield { ...message, partition };
+            if (incremental) {
+              reset = true;
+              yield { ...message, partition };
+            }
             continue;
           }
           assertInPartition(
@@ -445,13 +527,62 @@ export abstract class Source<
     }
   }
 
+  // entries holds the saved entries of the stream, or of partition when the
+  // stream is partitioned.
   protected abstract extract(
     configuration: CopyConfiguration,
     state: unknown,
     partition: Partition | null,
     context: Context,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): AsyncIterable<SourceMessage>;
+}
+
+type Entries = SourceReadOptions['entries'];
+
+// The scope of a partition's entries: its key as a JSON string, which ends
+// where the key ends, so no scope begins another. A stream that is not
+// partitioned has the empty scope, which begins every space.
+function partitionScope(key: string): string {
+  return JSON.stringify(key);
+}
+
+// The saved entries of one extract, in the checkpoint's spaces: each
+// space's name under scope. Until its next STATE, an extract that reset
+// still reads the saved entries, as its state stays the saved one.
+function savedEntries(
+  stream: string,
+  scope: string,
+  read: Entries,
+): SavedEntries {
+  return {
+    space: async (name) => read(stream, scope + name),
+  };
+}
+
+// What a STATE saves of the entries: its changes under scope, after the
+// scopes in clear are cleared.
+function scoped(
+  message: StateMessage,
+  scope: string,
+  clear: readonly string[],
+): Pick<ScopedState, 'entries' | 'clear'> {
+  const cleared = clear.length === 0 ? {} : { clear };
+  const { entries } = message;
+  if (entries === undefined) return cleared;
+  // Entries that are not an object go on as they are, for the copy's
+  // validation to refuse.
+  if (scope === '' || !plainObject(entries)) return { ...cleared, entries };
+  return {
+    ...cleared,
+    entries: Object.fromEntries(
+      Object.entries(entries).map(([space, changes]) => [
+        scope + space,
+        changes,
+      ]),
+    ),
+  };
 }
 
 // A stream that throws aborts its group before the throw reaches interleave,

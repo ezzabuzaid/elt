@@ -364,6 +364,17 @@ The read:
 - Their text must be well-formed Unicode. A string or a field name with a lone surrogate fails its stream, because SQLite would store U+FFFD and Postgres refuses it.
 - The state belongs to the source. It must go into JSON and come back with no change. Destinations do not read it.
 
+Keyed entries ([ADR 0035](./docs/adr/0035-a-checkpoint-keeps-keyed-entries-beside-its-state.md)):
+
+- A state that holds one record for each key, such as each URL that a crawl knows, can keep those records as entries beside `state`. A save then writes only what changed, not every key again.
+- A `STATE` can carry `entries`: for each space, `put`, pairs of a key and a value, and `remove`, keys. Each `put` and `remove` is an iterable, such as an array or a `Map`. A space names one consumer of the state, such as `crawl` or `diff`, so the keys of two spaces do not meet.
+- `{ type: 'STATE', stream, state, entries: { crawl: { put: [[url, known]], remove: [gone] } } }` changes these keys and keeps every other entry. A `STATE` with no `entries` changes no entry.
+- Keys and spaces are well-formed strings with no U+0000, and each value must go into JSON and come back with no change, as `state` must. One `STATE` puts or removes a key, not both; the last put of a key wins. Any other shape fails the stream before the records before the `STATE` commit, and the store saves nothing of that `STATE`.
+- `extract` gets the saved entries as its last argument, `entries: SavedEntries`. `await entries.space('crawl')` reads that space from the store when the extract asks, as a `ReadonlyMap`. The map is empty on the first run, after a [reset](#checkpoint-stores) and when the target is new or a reload starts over.
+- The entries belong to the stream, and to the partition for a [partitioned stream](#partitioned-streams): two partitions that put one key keep two entries, and each partition's `extract` reads only its own.
+- A partition that the stream no longer lists loses its entries in the save that drops its state. A `RESET` clears the entries of its partition, or of the whole stream, at the next `STATE`, before that `STATE`'s own changes; until then the extract still reads the saved entries, as its `state` stays the saved one. A reload that resumes keeps them.
+- The store saves the entries with the state in one transaction, after the writer committed the records before the `STATE`.
+
 Each checkpoint is a commit point, as in Airbyte:
 
 - The writer commits all that came before the checkpoint, then it acknowledges the checkpoint. The store saves it before the load continues.
@@ -403,7 +414,7 @@ Delivery is **at least once**:
 The state belongs to the orchestration, not to the destination, as in Airbyte. Thus any store works with any destination, also with a destination that cannot hold state. The replication saves each checkpoint only after the rows of its stream before it committed.
 
 - `CheckpointStore.run(bindings, work)` does that protocol for all incremental copies of a pass together. It checks the binding of each copy, clones the input state, and moves forward only on a commit. `reset` and `clear` are also part of it.
-- A store gives a session that holds the lock of each copy for the full pass. A `save` of the session is durable when it resolves.
+- A store gives a session that holds the lock of each copy for the full pass. A `save` of the session is durable when it resolves, and writes the checkpoint and the changes of its keyed entries in one transaction. A save whose read started from no checkpoint replaces every entry, and a save can clear a scope, the start of the spaces of a partition or of the whole stream; `reset`, `clear` and the end of a reload that started over with no `STATE` remove them.
 - With each checkpoint, the store saves whether a reload is open ([resets](#resets)).
 - `CheckpointStore.failureType(error)` gives the [failure type](#failure-types) of each error that the store raised. Each store must implement it.
 
@@ -910,7 +921,7 @@ new Copy(
 
 ### How a source gives files
 
-- `Source.read()` is the shared template method. A source implements `extract(configuration, state, partition, context, signal)`, and yields metadata, an optional file path, and state.
+- `Source.read()` is the shared template method. A source implements `extract(configuration, state, partition, context, signal, entries)`, and yields metadata, an optional file path, and state.
 - `Source.read()` resolves `configuration.fileReads` into parsed text or a `FileContent` before it yields the record. A `FileContent` is valid until the consumer takes the next record.
 - A path must stay readable until the consumer moves past its record. It can be a staged copy that the source removes after, or the original file when a copy would cost too much. Notes and Messages give their original attachment files.
 - The replication refuses a record that still holds a source file path (`Destinations cannot receive source file paths`).
@@ -1181,7 +1192,7 @@ try {
 
 - When the signal aborts, each pass applies no more messages. Each copy that still reads drops what it staged after its last commit, keeps what it committed and the checkpoints that it saved with it, and ends `cancelled`. A copy that ended before keeps its outcome.
 - The [sync history](#sync-history) records the pass as `cancelled`, with the reason of the signal as its error. Then `run()` rejects with `signal.reason`, as `fetch` does.
-- `Source.read(catalog, states, signal)` gives the signal to `open(streams, signal, states)` and to each `extract` as its last argument. Thus a source that waits for its upstream can stop at once. A source that ignores it stops at its next message.
+- `Source.read(catalog, states, signal)` gives the signal to `open(streams, signal, states)` and to each `extract` after its context. Thus a source that waits for its upstream can stop at once. A source that ignores it stops at its next message.
 - A [snapshot diff](#snapshot-streams) yields no message while it finds no change, so it stops itself at the next record or group.
 
 The destination contract:

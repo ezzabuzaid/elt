@@ -16,6 +16,7 @@ import postgres from 'postgres';
 import {
   Catalog,
   type ChangeSignal,
+  type CheckpointEntryChanges,
   Connection,
   Copy,
   type CopyConfiguration,
@@ -39,6 +40,14 @@ import {
   PostgresDestination,
   PostgresSyncHistory,
 } from './index.ts';
+
+// A save of a test that changes no keyed entry.
+const noChanges: CheckpointEntryChanges = {
+  kind: 'update',
+  clear: [],
+  put: [],
+  remove: [],
+};
 
 // The upstream of a test source, which the test fills before a watch and
 // writes again at each of the next checks, as many times as writes says: a
@@ -1746,7 +1755,7 @@ test('a Postgres checkpoint store resumes from the last acknowledged state in th
       if (state !== null && typeof state === 'object')
         Reflect.set(state, 'mutated', true);
       for (const next of states)
-        await checkpoints.save('copy', JSON.stringify(next), false);
+        await checkpoints.save('copy', JSON.stringify(next), noChanges, false);
       if (fail) throw new Error('source broke');
     });
 
@@ -1775,6 +1784,7 @@ test('a changed binding is refused until the Postgres checkpoint is reset', asyn
       checkpoints.save(
         'copy',
         JSON.stringify({ from: await checkpoints.state('copy') }),
+        noChanges,
         false,
       ),
     );
@@ -1959,7 +1969,12 @@ test('replications checkpoint in parallel, and one already running is refused', 
     store.run(only(id), async (checkpoints) => {
       if (++started === 2) release();
       await bothStarted;
-      await checkpoints.save(id, JSON.stringify({ done: true }), false);
+      await checkpoints.save(
+        id,
+        JSON.stringify({ done: true }),
+        noChanges,
+        false,
+      );
     });
 
   // Both runs wait until the other has started, so both locks are held at once.
@@ -1993,7 +2008,7 @@ test('checkpoint state keeps text JSONB would refuse, and the store holds no cre
   const state = { nul: 'a\u0000b', lone: '\ud800' };
 
   await store.run(only('copy'), (checkpoints) =>
-    checkpoints.save('copy', JSON.stringify(state), false),
+    checkpoints.save('copy', JSON.stringify(state), noChanges, false),
   );
   const resumed = await store.run(only('copy'), async (checkpoints) =>
     checkpoints.state('copy'),

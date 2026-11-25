@@ -27,6 +27,7 @@ import {
   PipelineError,
   type ReadMessage,
   type Source,
+  type SourceReadOptions,
   type Stream,
   StreamStatus,
   readerCatalog,
@@ -44,6 +45,9 @@ import { VisionWorker } from '@eltjs/source-apple-macos/vision';
 import { visionKind } from '@eltjs/source-apple-macos/vision-kind';
 
 import { AppleMessagesSource } from './apple-messages-source.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 // Test support shared by the Apple source packages' tests.
 
@@ -121,7 +125,7 @@ async function readRows(source: Source, streams: readonly Stream[]) {
   for await (const message of source.read(
     streams.map((stream) => configured(stream)),
     new Map(),
-    { clock: globalThis },
+    { clock: globalThis, entries: noEntries },
   )) {
     if (message instanceof StreamStatus && message.status === 'FAILED')
       throw message.error;
@@ -161,7 +165,7 @@ const acrossStreams = async (
   for await (const message of source.read(
     [configured(first), configured(second)],
     new Map(),
-    { clock: globalThis },
+    { clock: globalThis, entries: noEntries },
   )) {
     pinned.push(message);
     if (
@@ -172,7 +176,10 @@ const acrossStreams = async (
       write();
   }
   const later = await Array.fromAsync(
-    source.read([configured(second)], new Map(), { clock: globalThis }),
+    source.read([configured(second)], new Map(), {
+      clock: globalThis,
+      entries: noEntries,
+    }),
   );
   return { during: values(pinned), after: values(later) };
 };
@@ -1034,6 +1041,7 @@ test(
       const opening = Array.fromAsync(
         source.read([configured(source.messages)], new Map(), {
           clock: globalThis,
+          entries: noEntries,
         }),
       );
 
@@ -1062,6 +1070,7 @@ test('Messages says chat.db is not there, and does not name Full Disk Access, wh
   const opening = Array.fromAsync(
     source.read([configured(source.messages)], new Map(), {
       clock: globalThis,
+      entries: noEntries,
     }),
   );
 

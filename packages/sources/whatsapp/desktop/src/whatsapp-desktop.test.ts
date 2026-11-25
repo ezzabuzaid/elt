@@ -21,6 +21,7 @@ import {
   LocalFiles,
   Pipeline,
   PipelineError,
+  type SourceReadOptions,
   type Stream,
   StreamStatus,
   type SyncMode,
@@ -39,6 +40,9 @@ import {
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { WhatsAppDesktopSource } from './whatsapp-desktop-source.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 // Each WhatsApp store, with the tables this reader reads as WhatsApp 26.38's
 // models create them, in WAL mode as WhatsApp keeps them.
@@ -3773,6 +3777,7 @@ test('message streams reuse one completed metadata scan and refresh file availab
   const first: unknown[] = [];
   for await (const message of source.read(catalog, states, {
     clock: globalThis,
+    entries: noEntries,
   })) {
     if (message instanceof StreamStatus)
       assert.notEqual(message.status, 'FAILED');
@@ -3795,6 +3800,7 @@ test('message streams reuse one completed metadata scan and refresh file availab
   const next: unknown[] = [];
   for await (const message of source.read(catalog, states, {
     clock: globalThis,
+    entries: noEntries,
   })) {
     if (message instanceof StreamStatus)
       assert.notEqual(message.status, 'FAILED');
@@ -3895,6 +3901,7 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
     for await (const message of source.read(catalog, new Map(), {
       signal: controller.signal,
       clock: globalThis,
+      entries: noEntries,
     })) {
       if (message instanceof StreamStatus) {
         if (message.status === 'FAILED') {
@@ -3914,6 +3921,7 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
     const recovered = new Map<string, number>();
     for await (const message of source.read(catalog, new Map(), {
       clock: globalThis,
+      entries: noEntries,
     })) {
       if (message instanceof StreamStatus)
         assert.notEqual(message.status, 'FAILED');
@@ -3930,6 +3938,7 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
     // Closing the consumer early also closes the underlying SQLite iterators.
     for await (const message of source.read(catalog, new Map(), {
       clock: globalThis,
+      entries: noEntries,
     })) {
       if (!(message instanceof StreamStatus) && !('type' in message)) break;
     }

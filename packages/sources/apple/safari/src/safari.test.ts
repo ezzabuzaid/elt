@@ -30,6 +30,7 @@ import {
   Pipeline,
   PipelineError,
   type Source,
+  type SourceReadOptions,
   type Stream,
   StreamStatus,
   readerCatalog,
@@ -49,6 +50,9 @@ import {
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleSafariSource } from './apple-safari-source.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -920,7 +924,7 @@ async function readStream(
         ).configuration,
       ],
       new Map(),
-      { clock: globalThis },
+      { clock: globalThis, entries: noEntries },
     ),
   );
   for (const message of messages)
@@ -2261,7 +2265,7 @@ test('Safari refuses a History.db in a layout it does not know, fails only the h
         ).configuration,
       ],
       new Map(),
-      { clock: globalThis },
+      { clock: globalThis, entries: noEntries },
     ),
   );
   const status = messages.find(

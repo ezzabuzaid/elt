@@ -5,6 +5,7 @@ import { Modes, Mutex } from '@zukhruf/mutex';
 import { SqliteStore } from '@zukhruf/mutex/sqlite';
 import { Declaration } from '@zukhruf/sqlite-drift';
 import { open } from '@zukhruf/sqlite-open';
+import { transaction } from '@zukhruf/sqlite-transaction';
 
 import {
   type CheckpointSession,
@@ -15,9 +16,11 @@ import {
 import { busyTimeout } from './open-destination.ts';
 import { failureType } from './sqlite-failure-type.ts';
 
+// Each checkpoint's row, and its keyed entries by space (ADR 0035 of elt).
 const checkpoints = new Declaration(
   [
     'CREATE TABLE checkpoints (id TEXT PRIMARY KEY NOT NULL, binding TEXT NOT NULL, reloading INTEGER NOT NULL CHECK (reloading IN (0, 1)), state TEXT NOT NULL) STRICT',
+    'CREATE TABLE checkpoint_entries (id TEXT NOT NULL, space TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (id, space, key)) STRICT, WITHOUT ROWID',
   ],
   { rows: 'replace' },
 );
@@ -63,7 +66,8 @@ export class SQLiteCheckpointStore extends CheckpointStore {
     return held.value;
   }
 
-  // Each save commits on its own, so it is durable when it resolves.
+  // Each save commits in a transaction of its own, so it is durable when it
+  // resolves.
   async #withFile<T>(
     work: (session: CheckpointSession) => Promise<T>,
   ): Promise<T> {
@@ -93,12 +97,50 @@ export class SQLiteCheckpointStore extends CheckpointStore {
           .get(id);
         return saved === undefined ? undefined : String(saved.state);
       },
-      save: async (id, { binding, reloading, state }) => {
+      entries: async (id, space) =>
         database
           .prepare(
-            'INSERT INTO checkpoints (id, binding, reloading, state) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET binding = excluded.binding, reloading = excluded.reloading, state = excluded.state',
+            'SELECT key, value FROM checkpoint_entries WHERE id = ? AND space = ?',
           )
-          .run(id, binding, reloading ? 1 : 0, state);
+          .all(id, space)
+          .map(({ key, value }): [string, string] => [
+            String(key),
+            String(value),
+          ]),
+      save: async (id, { binding, reloading, state, entries }) => {
+        transaction(
+          database,
+          () => {
+            database
+              .prepare(
+                'INSERT INTO checkpoints (id, binding, reloading, state) VALUES (?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET binding = excluded.binding, reloading = excluded.reloading, state = excluded.state',
+              )
+              .run(id, binding, reloading ? 1 : 0, state);
+            if (entries.kind === 'replace')
+              database
+                .prepare('DELETE FROM checkpoint_entries WHERE id = ?')
+                .run(id);
+            else {
+              // A scope begins each space it clears, counted in characters
+              // as SQLite counts them.
+              const clear = database.prepare(
+                'DELETE FROM checkpoint_entries WHERE id = ?1 AND substr(space, 1, length(?2)) = ?2',
+              );
+              for (const scope of entries.clear) clear.run(id, scope);
+              const remove = database.prepare(
+                'DELETE FROM checkpoint_entries WHERE id = ? AND space = ? AND key = ?',
+              );
+              for (const { space, key } of entries.remove)
+                remove.run(id, space, key);
+            }
+            const put = database.prepare(
+              'INSERT INTO checkpoint_entries (id, space, key, value) VALUES (?, ?, ?, ?) ON CONFLICT(id, space, key) DO UPDATE SET value = excluded.value',
+            );
+            for (const { space, key, value } of entries.put)
+              put.run(id, space, key, value);
+          },
+          { mode: 'immediate' },
+        );
       },
       reloaded: async (id) => {
         database
@@ -106,7 +148,16 @@ export class SQLiteCheckpointStore extends CheckpointStore {
           .run(id);
       },
       remove: async (id) => {
-        database.prepare('DELETE FROM checkpoints WHERE id = ?').run(id);
+        transaction(
+          database,
+          () => {
+            database
+              .prepare('DELETE FROM checkpoint_entries WHERE id = ?')
+              .run(id);
+            database.prepare('DELETE FROM checkpoints WHERE id = ?').run(id);
+          },
+          { mode: 'immediate' },
+        );
       },
     });
   }

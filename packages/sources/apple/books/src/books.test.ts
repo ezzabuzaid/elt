@@ -33,6 +33,7 @@ import {
   Pipeline,
   PipelineError,
   type Source,
+  type SourceReadOptions,
   type Stream,
   StreamStatus,
 } from '@eltjs/elt';
@@ -50,6 +51,9 @@ import {
 } from '@eltjs/sdk-apple-books';
 
 import { AppleBooksSource } from './apple-books-source.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -712,7 +716,7 @@ async function readStream(
         ).configuration,
       ],
       new Map(),
-      { clock: globalThis },
+      { clock: globalThis, entries: noEntries },
     ),
   );
   for (const message of messages)
@@ -1282,7 +1286,7 @@ test(
           ).configuration,
         ],
         new Map(),
-        { clock: globalThis },
+        { clock: globalThis, entries: noEntries },
       ),
     );
     const status = messages.find(
@@ -1404,7 +1408,7 @@ test('Books refuses a store in a layout it does not know and a reading history f
         ).configuration,
       ],
       new Map(),
-      { clock: globalThis },
+      { clock: globalThis, entries: noEntries },
     ),
   );
   const historyStatus = history.find(

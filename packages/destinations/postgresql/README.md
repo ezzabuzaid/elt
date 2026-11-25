@@ -186,7 +186,7 @@ A run holds one connection to the database and takes no lock. Loads into one dat
 
 - Postgres refuses two sessions that make one schema or one table of one name at the same moment, with `23505`. Thus DDL that many targets share takes the advisory lock of its schema:
   - Before the commits of a load, the writer takes the lock of `_warehouse` in a transaction of its own to make `_warehouse._elt_writers` and `_warehouse._elt_reloads`, when they are not there. No commit holds the lock, so a commit that waits for its own target does not stop the loads of other connections.
-  - The checkpoint store takes the lock of `_warehouse` to make `_elt_checkpoints`.
+  - The checkpoint store takes the lock of `_warehouse` to make `_elt_checkpoints` and `_elt_checkpoint_entries`.
   - The publication and the withdrawal of a [view](#declare-a-view) take the lock of `marts`.
 - A schema is made in a transaction of its own, which begins only when the lock of the schema is held, because a transaction that waits for an advisory lock does not see the catalog changes that it waited for. The first commit of a target makes `marts` in this way. Connections that load into one database can start together.
 - As in the Postgres destination of Airbyte, no transaction stays open between commits. Thus the read of the source holds no locks on the targets and keeps nothing from vacuum, however many tables a run loads. See [ADR 0002](./docs/adr/0002-no-transaction-stays-open-between-commits.md).
@@ -267,9 +267,10 @@ A reading as of a position:
 `PostgresCheckpointStore({ url })` keeps the checkpoints of every connection in `_warehouse._elt_checkpoints`, beside the data. The key is the id of the copy. See [ADR 0001](./docs/adr/0001-checkpoints-are-kept-beside-the-data.md).
 
 - The columns are `id`, `binding`, `reloading` and `state`. `binding` and `state` are `JSON`, which keeps state that `JSONB` would refuse, such as `\u0000` and lone surrogates.
+- The [keyed entries](../../elt/README.md#incremental-copies-and-checkpoints) of each checkpoint are in `_warehouse._elt_checkpoint_entries` (`id`, `space`, `key`, `value`), unique by the SHA-256 of each of `id`, `space` and `key` (`id_hash`, `space_hash`, `key_hash`, `BYTEA`), so a key of any length fits. `value` is `JSON`. `space` and `key` are `TEXT`, which refuses `\u0000`.
 - A connector cannot be reset by a drop of a schema. A [clear](../../elt/README.md#target-ownership) forgets the rows that it removes, and `nx run infra:reset` resets the warehouse.
 - The store takes a session advisory lock for each copy `id`, on its own connection, in sorted order. The lock has the namespace `elt-checkpoints` and the copy id, so the copy ids of every connection of the database must be different. Different IDs run in parallel. A run that finds one ID in use releases the IDs that it took and fails with `Checkpoint <id> is in use by another run`.
-- Each save autocommits, so no checkpoint transaction stays open while the load runs.
+- Each save writes the checkpoint and its entries in one transaction of its own, so no checkpoint transaction stays open while the load runs.
 - The store makes `_warehouse` and the table in their own committed transaction, under the lock of `_warehouse`. Thus two runs that make them at the same time take turns.
 
 ## Reader views

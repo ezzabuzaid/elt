@@ -23,6 +23,7 @@ import {
   Pipeline,
   type ReadMessage,
   type Source,
+  type SourceReadOptions,
   type Stream,
   StreamStatus,
 } from '@eltjs/elt';
@@ -35,6 +36,9 @@ import {
 import { launchNotesHidden, notesRunning } from '@eltjs/sdk-apple-notes';
 
 import { AppleNotesSource } from './apple-notes-source.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 // The configured stream a full-refresh copy of stream reads.
 const configured = (stream: Stream) =>
@@ -63,7 +67,7 @@ const acrossStreams = async (
   for await (const message of source.read(
     [configured(first), configured(second)],
     new Map(),
-    { clock: globalThis },
+    { clock: globalThis, entries: noEntries },
   )) {
     pinned.push(message);
     if (
@@ -74,7 +78,10 @@ const acrossStreams = async (
       write();
   }
   const later = await Array.fromAsync(
-    source.read([configured(second)], new Map(), { clock: globalThis }),
+    source.read([configured(second)], new Map(), {
+      clock: globalThis,
+      entries: noEntries,
+    }),
   );
   return { during: values(pinned), after: values(later) };
 };
@@ -792,6 +799,7 @@ test(
       const opening = Array.fromAsync(
         source.read([configured(source.notes)], new Map(), {
           clock: globalThis,
+          entries: noEntries,
         }),
       );
 
@@ -815,7 +823,10 @@ test('Notes says its store is not there, and does not name Full Disk Access, whe
   const source = new AppleNotesSource({ path });
 
   const opening = Array.fromAsync(
-    source.read([configured(source.notes)], new Map(), { clock: globalThis }),
+    source.read([configured(source.notes)], new Map(), {
+      clock: globalThis,
+      entries: noEntries,
+    }),
   );
 
   await assert.rejects(opening, (error) => {
@@ -841,7 +852,10 @@ test('Notes refuses a store in a layout it does not know, naming a column it nee
   const other = new AppleNotesSource({ path: unknown });
 
   const reading = Array.fromAsync(
-    other.read([configured(other.notes)], new Map(), { clock: globalThis }),
+    other.read([configured(other.notes)], new Map(), {
+      clock: globalThis,
+      entries: noEntries,
+    }),
   );
 
   await assert.rejects(reading, (error) => {

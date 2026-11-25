@@ -1,5 +1,7 @@
 import type {
   CheckpointBinding,
+  CheckpointEntry,
+  CheckpointEntryChanges,
   CheckpointRun,
   CheckpointStore,
 } from '../state/checkpoint-store.ts';
@@ -8,6 +10,7 @@ import type { Connection } from './connection.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Copy, CopyOutcome } from './copy.ts';
 import type { Destination, Load } from './destination.ts';
+import { entryName, plainObject } from './entry-name.ts';
 import { FileTransfer } from './file-transfer.ts';
 import type { Partition } from './partition.ts';
 import { CopyProgress, passChannels } from './pass-channels.ts';
@@ -231,19 +234,28 @@ async function transfer<Target extends DestinationTarget>(
       );
     return { run, id: replication.copy.id };
   };
+  // The checkpoint a stream resumes from: none for a full refresh, or for a
+  // read that starts from no checkpoint until its first save.
+  const resumed = (name: string) => {
+    const replication = byStream.get(name);
+    return replication === undefined ||
+      !incremental(replication) ||
+      !replication.resumes
+      ? undefined
+      : checkpoint(replication);
+  };
   // The source asks for a stream's state when it starts reading that stream.
   const states = {
     get: async (name: string) => {
-      const replication = byStream.get(name);
-      if (
-        replication === undefined ||
-        !incremental(replication) ||
-        !replication.resumes
-      )
-        return null;
-      const { run, id } = checkpoint(replication);
-      return run.state(id);
+      const from = resumed(name);
+      return from === undefined ? null : from.run.state(from.id);
     },
+  };
+  // A source asks for a space's entries whenever an extract needs them
+  // (ADR 0035).
+  const entries = async (name: string, space: string) => {
+    const from = resumed(name);
+    return from === undefined ? new Map() : from.run.entries(from.id, space);
   };
   const reading: Replicated<Target>[] = [];
   for (const replication of replications) {
@@ -291,7 +303,7 @@ async function transfer<Target extends DestinationTarget>(
     for await (const message of source.read(
       prepared.map(({ copy }) => copy.configuration),
       states,
-      { signal, clock },
+      { signal, clock, entries },
     )) {
       signal?.throwIfAborted();
       const replication = byStream.get(validStream(message));
@@ -335,7 +347,13 @@ async function transfer<Target extends DestinationTarget>(
               if (incremental(replication)) {
                 const { run, id } = checkpoint(replication);
                 if (replication.resumes) await run.reloaded(id);
-                else await run.save(id, 'null', false);
+                else
+                  await run.save(
+                    id,
+                    'null',
+                    { kind: 'replace', put: [] },
+                    false,
+                  );
               }
             }
             replication.stage = undefined;
@@ -357,7 +375,16 @@ async function transfer<Target extends DestinationTarget>(
             );
           await commit(replication, signal);
           const { run, id } = checkpoint(replication);
-          await run.save(id, operation.state, started(replication).reloading);
+          // A read that started from no checkpoint read no entries, so the
+          // saved ones are not its own.
+          await run.save(
+            id,
+            operation.state,
+            replication.resumes
+              ? { kind: 'update', ...operation.changes }
+              : { kind: 'replace', put: operation.changes.put },
+            started(replication).reloading,
+          );
           replication.resumes = true;
         } else {
           await started(replication).apply(
@@ -426,9 +453,10 @@ async function checkpointed<T>(
       try {
         return await work({
           state: (id) => raised(store, () => run.state(id)),
+          entries: (id, space) => raised(store, () => run.entries(id, space)),
           reloading: (id) => run.reloading(id),
-          save: (id, state, reloading) =>
-            durably(id, () => run.save(id, state, reloading)),
+          save: (id, state, entries, reloading) =>
+            durably(id, () => run.save(id, state, entries, reloading)),
           reloaded: (id) => durably(id, () => run.reloaded(id)),
         });
       } catch (error) {
@@ -603,12 +631,19 @@ function validStream(message: ReadMessage): string {
   return message.stream;
 }
 
-// A STATE's state is checked and kept as the JSON text it is saved as.
+// A STATE's state and entries are checked and kept as the JSON text they
+// are saved as.
 function validOperation(
   stream: Stream,
   message: ReadMessage,
   deletions: (message: DeleteMessage) => DeleteOperation,
-): WriteOperation | { readonly type: 'STATE'; readonly state: string } {
+):
+  | WriteOperation
+  | {
+      readonly type: 'STATE';
+      readonly state: string;
+      readonly changes: EntryChanges;
+    } {
   if (
     'type' in message &&
     message.type === 'STATE' &&
@@ -620,7 +655,14 @@ function validOperation(
         'Checkpoint state must be losslessly JSON serializable',
       );
     wellFormed(message.state, 'Checkpoint state');
-    return { type: 'STATE', state: JSON.stringify(message.state) };
+    return {
+      type: 'STATE',
+      state: JSON.stringify(message.state),
+      changes: {
+        clear: message.clear ?? [],
+        ...validEntries(message.entries),
+      },
+    };
   }
   if (
     'type' in message &&
@@ -657,6 +699,80 @@ function validOperation(
   }
   throw new TypeError(
     'Source must emit records with stream and data, DELETE, RESET or STATE messages',
+  );
+}
+
+// The changes of a STATE's entries.
+type EntryChanges = Omit<
+  Extract<CheckpointEntryChanges, { readonly kind: 'update' }>,
+  'kind'
+>;
+
+// A STATE's entries: an object of spaces, each an object of put, pairs of a
+// key and a value, and remove, keys. Keys and spaces are names that a store
+// keeps (entryName), each value is JSON as state is, and one STATE puts or
+// removes a key, not both; the last put of a key wins.
+function validEntries(entries: unknown): Omit<EntryChanges, 'clear'> {
+  const put: CheckpointEntry[] = [];
+  const remove: Omit<CheckpointEntry, 'value'>[] = [];
+  if (entries === undefined) return { put, remove };
+  if (!plainObject(entries))
+    throw new TypeError('Checkpoint entries must be an object of spaces');
+  for (const [name, changes] of Object.entries(entries)) {
+    const space = entryName(name, 'A space');
+    if (
+      !plainObject(changes) ||
+      Object.keys(changes).some(
+        (field) => field !== 'put' && field !== 'remove',
+      )
+    )
+      throw new TypeError(
+        `Checkpoint entries of space ${space} must be an object of put and remove`,
+      );
+    const puts = new Map<string, string>();
+    for (const pair of iterated(changes.put, `put of space ${space}`)) {
+      if (!Array.isArray(pair) || pair.length !== 2)
+        throw new TypeError(
+          `Each put of space ${space} must be a pair of a key and a value`,
+        );
+      const [key, value]: unknown[] = pair;
+      const valid = entryName(key, `A key of space ${space}`);
+      if (!lossless(value))
+        throw new TypeError(
+          `Checkpoint entry ${valid} of space ${space} must be losslessly JSON serializable`,
+        );
+      wellFormed(value, `Checkpoint entry ${valid} of space ${space}`);
+      puts.set(valid, JSON.stringify(value));
+    }
+    const removes = new Set<string>();
+    for (const key of iterated(changes.remove, `remove of space ${space}`)) {
+      const valid = entryName(key, `A key of space ${space}`);
+      if (puts.has(valid))
+        throw new TypeError(
+          `A STATE both puts and removes entry ${valid} of space ${space}`,
+        );
+      removes.add(valid);
+    }
+    for (const [key, value] of puts) put.push({ space, key, value });
+    for (const key of removes) remove.push({ space, key });
+  }
+  return { put, remove };
+}
+
+// The items of the put or remove of a space; none when it is left out.
+function iterated(value: unknown, what: string): Iterable<unknown> {
+  if (value === undefined) return [];
+  if (!iterable(value))
+    throw new TypeError(`The ${what} must be an iterable such as an array`);
+  return value;
+}
+
+function iterable(value: unknown): value is Iterable<unknown> {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    Symbol.iterator in value &&
+    typeof value[Symbol.iterator] === 'function'
   );
 }
 

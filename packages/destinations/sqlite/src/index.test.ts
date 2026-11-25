@@ -22,6 +22,7 @@ import { waitFor } from '@zukhruf/testing/async';
 import {
   Catalog,
   type ChangeSignal,
+  type CheckpointEntryChanges,
   Connection,
   Copy,
   CopyConfiguration,
@@ -37,6 +38,7 @@ import {
   type Properties,
   Source,
   type SourceMessage,
+  type SourceReadOptions,
   Stream,
   StreamChangeError,
   StreamStatus,
@@ -57,6 +59,17 @@ import {
   isReserved,
 } from './index.ts';
 import { storedRows } from './testing/stored-rows.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
+
+// A save of a test that changes no keyed entry.
+const noChanges: CheckpointEntryChanges = {
+  kind: 'update',
+  clear: [],
+  put: [],
+  remove: [],
+};
 
 // The upstream of a test source, which the test fills before it reads: a
 // watch finds it changed at its first check and unchanged after.
@@ -1712,7 +1725,10 @@ test('snapshot diffs load only changes, delete vanished keys and survive replay'
   // A failed read ends the stream with a failure the stage discards, never a
   // partial scan that would delete keys.
   const messages = await Array.fromAsync(
-    source.read([copy.configuration], new Map(), { clock: globalThis }),
+    source.read([copy.configuration], new Map(), {
+      clock: globalThis,
+      entries: noEntries,
+    }),
   );
   const failure = messages.find(
     (message) => message instanceof StreamStatus && message.status === 'FAILED',
@@ -3616,7 +3632,7 @@ test('partition declarations are validated before extraction', async () => {
           }).configuration,
         ],
         new Map(),
-        { clock: globalThis },
+        { clock: globalThis, entries: noEntries },
       ),
     );
   };
@@ -3716,7 +3732,7 @@ test('a checkpoint store keeps each acknowledged state, durable at once, and hol
       if (state !== null && typeof state === 'object')
         Reflect.set(state, 'mutated', true);
       for (const next of states)
-        await checkpoints.save('copy', JSON.stringify(next), false);
+        await checkpoints.save('copy', JSON.stringify(next), noChanges, false);
       if (fail) throw new Error('source broke');
     });
   const saved = () => {
@@ -3733,7 +3749,12 @@ test('a checkpoint store keeps each acknowledged state, durable at once, and hol
   await assert.rejects(run([{ page: 3 }], true), /source broke/);
   await store.run(bindings, async (checkpoints) => {
     assert.deepEqual(await checkpoints.state('copy'), { page: 3 });
-    await checkpoints.save('copy', JSON.stringify({ page: 4 }), false);
+    await checkpoints.save(
+      'copy',
+      JSON.stringify({ page: 4 }),
+      noChanges,
+      false,
+    );
     assert.equal(saved(), '{"page":4}');
     await assert.rejects(
       store.run(bindings, async () => {}),
@@ -3758,7 +3779,12 @@ test('replications checkpoint in parallel, and one already running is refused', 
     runner.run(bound([[id, {}]]), async (checkpoints) => {
       if (++started === 2) release();
       await bothStarted;
-      await checkpoints.save(id, JSON.stringify({ done: true }), false);
+      await checkpoints.save(
+        id,
+        JSON.stringify({ done: true }),
+        noChanges,
+        false,
+      );
     });
 
   // Both runs wait until the other has started, so both keys are held at once.
@@ -3809,8 +3835,18 @@ test('one checkpoint run holds every copy of a run, each with its own state', as
   ]);
 
   await store.run(bindings, async (checkpoints) => {
-    await checkpoints.save('left', JSON.stringify({ page: 1 }), false);
-    await checkpoints.save('right', JSON.stringify({ page: 7 }), false);
+    await checkpoints.save(
+      'left',
+      JSON.stringify({ page: 1 }),
+      noChanges,
+      false,
+    );
+    await checkpoints.save(
+      'right',
+      JSON.stringify({ page: 7 }),
+      noChanges,
+      false,
+    );
   });
   const states = await store.run(bindings, async (checkpoints) =>
     Promise.all([checkpoints.state('left'), checkpoints.state('right')]),
@@ -3834,6 +3870,7 @@ test('a changed binding is refused for its copy until the checkpoint is reset', 
         await checkpoints.save(
           id,
           JSON.stringify({ from: await checkpoints.state(id) }),
+          noChanges,
           false,
         );
     });
@@ -7842,7 +7879,7 @@ test(
     const modes = await checkpoints.run(
       new Map([['copy', { copy: {}, shape: {} }]]),
       async (run) => {
-        await run.save('copy', '{}', false);
+        await run.save('copy', '{}', noChanges, false);
         return ['', '-wal', '-shm'].map(
           (suffix) => statSync(`${checkpoints.path}${suffix}`).mode & 0o777,
         );

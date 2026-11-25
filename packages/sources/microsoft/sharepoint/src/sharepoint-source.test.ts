@@ -1530,6 +1530,7 @@ test('a field that a stream gained after its checkpoint was saved starts the sit
           ? value.filter((field) => field !== 'contentTypeId')
           : value,
       ),
+      { kind: 'update', clear: [], put: [], remove: [] },
       false,
     ),
   );

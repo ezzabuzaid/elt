@@ -62,6 +62,9 @@ import {
   validateRecords,
 } from './index.ts';
 
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
+
 // A source whose upstream is current whenever it is read.
 abstract class LiveSource<
   Context extends AsyncDisposable = AsyncDisposable,
@@ -844,7 +847,7 @@ test('closing a read releases every active extract before its shared context', a
       (stream) => new Copy(stream, new NamedTarget(stream.name)).configuration,
     ),
     new Map(),
-    { clock: globalThis },
+    { clock: globalThis, entries: noEntries },
   );
 
   try {
@@ -888,7 +891,7 @@ test('a stream that fails outside its extract ends the read, also while another 
         return null;
       },
     },
-    { clock: globalThis },
+    { clock: globalThis, entries: noEntries },
   );
 
   const outcome = await untilAborted(
@@ -920,7 +923,7 @@ test("a source's open reads the read's saved states, so a context can depend on 
       (stream) => new Copy(stream, new NamedTarget(stream.name)).configuration,
     ),
     new Map([['right', { offset: 7 }]]),
-    { clock: globalThis },
+    { clock: globalThis, entries: noEntries },
   );
 
   for await (const message of read) void message;
@@ -980,6 +983,7 @@ class MemoryCheckpoints extends CheckpointStore {
     return work({
       read: async (id) => this.saved.get(id),
       state: async (id) => this.saved.get(id)?.state,
+      entries: async () => [],
       save: async (id, checkpoint) => {
         const refusal = this.refusing.get(id);
         if (refusal !== undefined) throw refusal;

@@ -140,13 +140,13 @@ new SQLiteDestination({
 
 ## Checkpoints
 
-`SQLiteCheckpointStore({ path })` keeps the checkpoints of incremental copies in a table `checkpoints` (`id`, `binding`, `reloading`, `state`) in its own file. Use it with SQLite destinations.
+`SQLiteCheckpointStore({ path })` keeps the checkpoints of incremental copies in a table `checkpoints` (`id`, `binding`, `reloading`, `state`) in its own file, and their [keyed entries](../../elt/README.md#incremental-copies-and-checkpoints) in a table `checkpoint_entries` (`id`, `space`, `key`, `value`), `STRICT` and `WITHOUT ROWID`, with the key (`id`, `space`, `key`). Use it with SQLite destinations.
 
 - The checkpoint file and its `-wal` and `-shm` files are owner-only (`0600`). The checkpoint file has a write-ahead log, and SQLite deletes its `-wal` and `-shm` files when the last connection closes.
 - Use a file that is not a SQLite destination file. Its parent folder must exist. `:memory:` is refused.
 - The store holds one lock for each copy `id` through `SqliteStore` of `@zukhruf/mutex/sqlite`, in a `<path>.locks` folder beside the file. Different IDs run in parallel. A run that finds one ID in use releases the IDs that it took and fails with `Checkpoint <id> is in use by another run`. The kernel releases a lock when its process stops. See [ADR 0005](./docs/adr/0005-each-checkpointed-copy-has-its-own-lock.md).
-- Each save commits by itself, so no checkpoint transaction stays open while the load runs.
-- A `checkpoints` table that a different version declared in a different way is replaced with its checkpoints, so each copy starts again.
+- Each save writes the checkpoint and its entries in one transaction of its own, so no checkpoint transaction stays open while the load runs.
+- When a different version declared `checkpoints` or `checkpoint_entries` in a different way, both tables are replaced with their rows, so each copy starts again.
 
 ## Sync history
 

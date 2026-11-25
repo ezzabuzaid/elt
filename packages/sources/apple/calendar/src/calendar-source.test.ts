@@ -23,6 +23,7 @@ import {
   Pipeline,
   PipelineError,
   type Source,
+  type SourceReadOptions,
   Stream,
   StreamStatus,
   readerCatalog,
@@ -60,6 +61,9 @@ import {
 } from './apple-calendar-source.ts';
 import { googleCalendarAttachments } from './google-calendar-attachments.ts';
 import { storedRows } from './testing/stored-rows.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 const execFile = promisify(execFileCallback);
 
@@ -140,7 +144,7 @@ async function readRows(source: Source, streams: readonly Stream[]) {
   for await (const message of source.read(
     streams.map((stream) => configured(stream)),
     new Map(),
-    { clock: globalThis },
+    { clock: globalThis, entries: noEntries },
   )) {
     if (message instanceof StreamStatus && message.status === 'FAILED')
       throw message.error;

@@ -39,6 +39,7 @@ import {
   PipelineError,
   type ReadMessage,
   type Source,
+  type SourceReadOptions,
   type StateMessage,
   type Stream,
   StreamStatus,
@@ -61,6 +62,9 @@ import { VisionWorker } from '@eltjs/source-apple-macos/vision';
 import { visionKind } from '@eltjs/source-apple-macos/vision-kind';
 
 import { AppleMailSource } from './apple-mail-source.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -775,7 +779,7 @@ async function readStream(
         ).configuration,
       ],
       new Map(),
-      { clock: globalThis },
+      { clock: globalThis, entries: noEntries },
     ),
   );
   for (const message of messages)
@@ -811,7 +815,7 @@ async function readAll(
         ).configuration,
     ),
     new Map(),
-    { clock: globalThis },
+    { clock: globalThis, entries: noEntries },
   )) {
     await during(message);
     if (message instanceof StreamStatus) {
@@ -2115,7 +2119,7 @@ test('a Mail store copied to another folder keeps the identity of every unchange
           ).configuration,
         ],
         { get: () => state },
-        { clock: globalThis },
+        { clock: globalThis, entries: noEntries },
       ),
     );
     return messages.findLast(

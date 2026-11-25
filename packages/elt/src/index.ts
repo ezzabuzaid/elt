@@ -141,6 +141,7 @@ export {
   type ReadMessage,
   type RecordMessage,
   type ResetMessage,
+  type SavedEntries,
   Source,
   type SourceMessage,
   type SourceReadOptions,
@@ -174,6 +175,8 @@ export {
 } from './core/writer.ts';
 export {
   type CheckpointBinding,
+  type CheckpointEntry,
+  type CheckpointEntryChanges,
   type CheckpointRun,
   type CheckpointSession,
   CheckpointStore,

@@ -22,6 +22,7 @@ import {
   Pipeline,
   PipelineError,
   type Source,
+  type SourceReadOptions,
   Stream,
   StreamStatus,
   readerCatalog,
@@ -49,6 +50,9 @@ import {
 } from '@eltjs/sdk-apple-eventkit/test';
 
 import { AppleRemindersSource } from './apple-reminders-source.ts';
+
+// The saved entries of a read that resumes from no checkpoint.
+const noEntries: SourceReadOptions['entries'] = async () => new Map();
 
 const execFile = promisify(execFileCallback);
 
@@ -132,7 +136,7 @@ async function readRows(source: Source, streams: readonly Stream[]) {
   for await (const message of source.read(
     streams.map((stream) => configured(stream)),
     new Map(),
-    { clock: globalThis },
+    { clock: globalThis, entries: noEntries },
   )) {
     if (message instanceof StreamStatus && message.status === 'FAILED')
       throw message.error;
