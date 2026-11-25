@@ -44,7 +44,7 @@ See the READMEs for [Mail streams](packages/sources/apple/mail/README.md), [Cont
 
 ### Library
 
-[Context Compiler](https://github.com/ezzabuzaid/context-compiler) is the app built on elt: a Codex plugin and a CLI that set up, sync and query these sources on a Mac. This section uses the library directly.
+[Context Compiler](https://github.com/ezzabuzaid/context-compiler) is the app built on elt: a CLI that sets up, syncs and queries these sources on a Mac. This section uses the library directly.
 
 Use **Node.js 26** and npm. The Apple sources require macOS; Calendar and Reminders require **macOS 27**, the release the EventKit helper is built for.
 

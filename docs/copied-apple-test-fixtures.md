@@ -8,13 +8,13 @@ Paths on the left are in this repo. Paths on the right are in Context Compiler. 
 
 ## NoteStore
 
-`packages/sources/apple/notes/src/notes.test.ts` → `apps/cli/src/cli.e2e.test.ts` and `apps/server/src/plugin.e2e.test.ts`.
+`packages/sources/apple/notes/src/notes.test.ts` → `apps/cli/src/cli.e2e.test.ts`.
 
 Copied without changes: `noteStoreSchema`, `noteEntities`, `noteTable`, `protobuf`, `NoteRun`, `noteBody` and `richNote`.
 
 Copied with changes: `noteStoreFixture`.
 
-- Both copies call `openDatabase` in place of `open`. Why: in `plugin.e2e.test.ts`, `open` is the function of `node:fs/promises`.
+- The copy calls `openDatabase` in place of `open`. Why: in `cli.e2e.test.ts`, `open` is the function of `node:fs/promises`.
 - `cli.e2e.test.ts` calls `appleSeconds` in place of `coreDataSeconds`. Why: its Safari fixture already defines that function.
 
 `packages/sources/apple/notes/src/notes-source.test.ts` is a second place in the Notes package. It has the same fixture with more rows, because its tests read them:
