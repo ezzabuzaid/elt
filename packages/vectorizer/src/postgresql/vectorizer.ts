@@ -301,12 +301,16 @@ export class Vectorizer extends CompositeDataset<PostgresTable> {
           'The earliest as_of of the relations: the data that every relation holds. NULL until each holds some.',
         pending_sources: 'The source rows that wait for their passages.',
         pending_vectors: 'The passage texts that wait for their vectors.',
+        failed_sources:
+          'The source rows whose passages failed: a search finds none of their passages until a refresh cuts them.',
+        failed_vectors:
+          'The passage texts whose vectors failed: a search by meaning misses their passages until a refresh embeds them.',
       },
       sql: `WITH "members" ("dataset") AS (VALUES ${leaves
         .map((member) => `(${literal(member.qualifiedName)})`)
         .join(
           ', ',
-        )}), "rows" AS (SELECT m."dataset", coalesce(d."state", 'waiting') AS "state", d."as_of", coalesce(d."pending", 0) AS "pending" FROM "members" AS m LEFT JOIN ${inWarehouse('derived_status')} AS d ON d."dataset" = m."dataset") SELECT CASE max(CASE "state" WHEN 'failed' THEN 3 WHEN 'waiting' THEN 2 WHEN 'refreshing' THEN 1 ELSE 0 END) WHEN 3 THEN 'failed' WHEN 2 THEN 'waiting' WHEN 1 THEN 'refreshing' ELSE 'current' END AS "state", CASE WHEN count("as_of") = count(*) THEN min("as_of") END AS "as_of", (SELECT "pending" FROM "rows" WHERE "dataset" = ${literal(chunks.qualifiedName)}) AS "pending_sources", (SELECT "pending" FROM "rows" WHERE "dataset" = ${literal(chunkVectors.qualifiedName)}) AS "pending_vectors" FROM "rows"`,
+        )}), "rows" AS (SELECT m."dataset", coalesce(d."state", 'waiting') AS "state", d."as_of", coalesce(d."pending", 0) AS "pending", coalesce(d."failed", 0) AS "failed" FROM "members" AS m LEFT JOIN ${inWarehouse('derived_status')} AS d ON d."dataset" = m."dataset") SELECT CASE max(CASE "state" WHEN 'failed' THEN 3 WHEN 'waiting' THEN 2 WHEN 'refreshing' THEN 1 ELSE 0 END) WHEN 3 THEN 'failed' WHEN 2 THEN 'waiting' WHEN 1 THEN 'refreshing' ELSE 'current' END AS "state", CASE WHEN count("as_of") = count(*) THEN min("as_of") END AS "as_of", (SELECT "pending" FROM "rows" WHERE "dataset" = ${literal(chunks.qualifiedName)}) AS "pending_sources", (SELECT "pending" FROM "rows" WHERE "dataset" = ${literal(chunkVectors.qualifiedName)}) AS "pending_vectors", (SELECT "failed" FROM "rows" WHERE "dataset" = ${literal(chunks.qualifiedName)}) AS "failed_sources", (SELECT "failed" FROM "rows" WHERE "dataset" = ${literal(chunkVectors.qualifiedName)}) AS "failed_vectors" FROM "rows"`,
     });
     this.members = Object.freeze([...leaves, status]);
     this.contract = Object.freeze({

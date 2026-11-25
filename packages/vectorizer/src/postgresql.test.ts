@@ -732,6 +732,73 @@ test('a passage whose vector the model failed never reaches a vector search, and
   assert.deepEqual(ids(await search.keywords().retrieve('broken')), ['a:0']);
 });
 
+test('the status view counts the passage texts whose vectors the model refused, and the next refresh with a model that answers counts none', async () => {
+  await using database = await databases.database();
+  const url = database.connectionString;
+  const rows = () => [task('a', 'red fox'), task('b', 'brown dog')];
+  const refusing = new (class extends LetterModel {
+    override async doEmbed(): Promise<never> {
+      throw new Error('the model is down');
+    }
+  })();
+  const status = () =>
+    rowsOf(
+      url,
+      'SELECT "state", "pending_vectors"::int AS "pending_vectors", "failed_sources"::int AS "failed_sources", "failed_vectors"::int AS "failed_vectors" FROM marts.docs_status',
+    );
+
+  await tasksPipeline({ url, rows, model: refusing }).pipeline.run();
+
+  assert.deepEqual(await status(), [
+    {
+      state: 'current',
+      pending_vectors: 0,
+      failed_sources: 0,
+      failed_vectors: 2,
+    },
+  ]);
+
+  await tasksPipeline({ url, rows }).pipeline.run();
+
+  assert.deepEqual(await status(), [
+    {
+      state: 'current',
+      pending_vectors: 0,
+      failed_sources: 0,
+      failed_vectors: 0,
+    },
+  ]);
+});
+
+test('the status view counts the source rows whose passages failed', async () => {
+  await using database = await databases.database();
+  const url = database.connectionString;
+  const tasks = tasksPipeline({
+    url,
+    rows: () => [task('a', 'red fox'), task('b', 'brown dog')],
+    chunking: {
+      tokenizer: {
+        name: 'cl100k_base',
+        count: () => {
+          throw new Error('the tokenizer refuses');
+        },
+      },
+      maxTokens: 200,
+      overlapTokens: 0,
+    },
+  });
+
+  await tasks.pipeline.run();
+
+  assert.deepEqual(
+    await rowsOf(
+      url,
+      'SELECT "state", "failed_sources"::int AS "failed_sources", "failed_vectors"::int AS "failed_vectors" FROM marts.docs_status',
+    ),
+    [{ state: 'current', failed_sources: 2, failed_vectors: 0 }],
+  );
+});
+
 test('with no chunking each row is one passage whose end counts code points', async () => {
   await using database = await databases.database();
   const url = database.connectionString;

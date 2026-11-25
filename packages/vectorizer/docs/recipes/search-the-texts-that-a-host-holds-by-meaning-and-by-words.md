@@ -215,9 +215,11 @@ second run, embedded [
    item-2:0 open 0.0161
 {
   state: 'current',
-  as_of: '2026-11-25T08:19:41.660Z',
+  as_of: '2026-11-25T12:49:28.998Z',
   pending_sources: 0,
-  pending_vectors: 0
+  pending_vectors: 0,
+  failed_sources: 0,
+  failed_vectors: 0
 }
 ```
 
@@ -228,7 +230,7 @@ second run, embedded [
 - **A search gives the new metadata.** After the second run, `item-1:0` has the status `done`, the value that the host gives now.
 - **An item that the host stopped holding is not found.** After the second run, no search gives `item-3:0`, also for the words of its own title. Its row, its passage, its keywords and its vector are gone ([`src/sqlite.test.ts`](../../src/sqlite.test.ts), "a row that the host stops giving leaves the passages, the keywords and the vectors").
 - **The scores are reciprocal rank fusion.** `FusionRetriever` adds `1 / (60 + rank)` of each retriever that finds the passage. `0.0328` is `2 / 61`: both searches rank `item-1:0` first. `0.0164` is `1 / 61`: only the vector search finds `item-1:0` for "deploy the docs site", because no item holds every word of the query now.
-- **The status view is `current`.** `pending_sources` and `pending_vectors` are 0, so each passage has its vector after `run()`.
+- **The status view is `current`.** `pending_sources`, `pending_vectors`, `failed_sources` and `failed_vectors` are 0, so each passage has its vector after `run()`.
 
 ## Things to know
 

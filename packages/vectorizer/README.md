@@ -190,9 +190,11 @@ fix-git:2 software-engineering 0.0159
 "Deploy two git branches\nSet up a git server where a push to main or dev deploys that branch to its own web folder."
 {
   state: 'current',
-  as_of: '2026-11-24T17:30:59.962Z',
+  as_of: '2026-11-25T12:49:17.091Z',
   pending_sources: 0,
-  pending_vectors: 0
+  pending_vectors: 0,
+  failed_sources: 0,
+  failed_vectors: 0
 }
 ```
 
@@ -597,7 +599,9 @@ fix-git:2 software-engineering 0.0159
   state: 'current',
   as_of: 2026-11-24T18:47:45.867Z,
   pending_sources: '0',
-  pending_vectors: '0'
+  pending_vectors: '0',
+  failed_sources: '0',
+  failed_vectors: '0'
 }
 ```
 
@@ -750,7 +754,7 @@ This program did not run when this section was written, so no output is pasted h
 - Ids and sources compare in binary, so the sources `a` and `A` are two source rows and give the passages `a:0` and `A:0`, also in a database whose collation ignores case.
 - `indexing: { vectors: 'none' }` is the only declaration of the vectors index. A search compares every vector with `VECTOR_DISTANCE`. The DiskANN index of SQL Server 2025 waits for zukhruf #5475.
 - A server with no Full-Text Search makes the full-text catalog, which is only metadata, and refuses the full-text index with error 7609. The keyword index then drops the table that it made and fails with a `SqlServerSetupError`, of failure type `config`, so the run leaves no keywords table (`src/sqlserver.test.ts`, commit 0b726dd4, #5401). On Linux, install the package `mssql-server-fts`. Azure SQL Database has Full-Text Search.
-- A passage id has at most 450 characters, the most that a full-text key of SQL Server holds. A source row whose passage ids would be longer is a rule failure of its own: its row of `docs_chunks` is `failed`, with an error that names the length and the limit, and `derived_status` counts it in `failed`. The other rows go on. Give the vectorizer a shorter source key.
+- A passage id has at most 450 characters, the most that a full-text key of SQL Server holds. A source row whose passage ids would be longer is a rule failure of its own: its row of `docs_chunks` is `failed`, with an error that names the length and the limit, and `derived_status` counts it in `failed`, as `failed_sources` of `docs_status` does. The other rows go on. Give the vectorizer a shorter source key.
 
 ## The relations
 
@@ -766,12 +770,13 @@ A vectorizer named `docs` refreshes these members, in this order, where its sour
 | `docs_chunk_texts`     | The text of each part, by its part hash                                                                                                                                                                                                                                                                            |
 | `docs_chunk_vectors`   | The vector of each part text, a computed dataset of `Embedding`                                                                                                                                                                                                                                                    |
 | `docs_passage_vectors` | The vectors: `id`, `vector` and `model`, the identity of the model, for example `openai/text-embedding-3-small (1536 dimensions)`                                                                                                                                                                                  |
-| `docs_status`          | One row: `state`, `as_of`, `pending_sources` and `pending_vectors`                                                                                                                                                                                                                                                 |
+| `docs_status`          | One row: `state`, `as_of`, `pending_sources`, `pending_vectors`, `failed_sources` and `failed_vectors`                                                                                                                                                                                                             |
 
 - The id of a passage is `<source>:<seq>`.
 - The passages of a source row tile its text: `start` and `end` count code points, and `ContextWindow` merges passages by them with no gap.
 - A part text that many passages share is embedded once.
 - A vector that the model failed is not in `docs_passage_vectors`, so a vector search never gives its passage. A keyword search still gives it.
+- `docs_status` counts the work that failed: `failed_sources` the source rows whose passages failed, which no search finds, and `failed_vectors` the passage texts whose vectors failed, whose passages a search by meaning misses. These are the `failed` counts of `docs_chunks` and `docs_chunk_vectors` in `derived_status`, and the refresh after the next pass tries each such row again. A failed row does not change `state`: `current` says that each relation finished its refresh, as it does in `derived_status`, and `failed` stays the state of a relation whose refresh failed. So a search by meaning finds every passage only when `state` is `current` and `pending_vectors` and `failed_vectors` are 0 (#5660).
 - The keywords table, the FTS5 table and its three triggers are one declaration. When one of them differs from the declaration, the next refresh makes all of them again. See [ADR 0002](./docs/adr/0002-the-keyword-index-is-a-member-that-keeps-a-keywords-table-and-its-full-text-index-in-step.md).
 
 ## One passage for each row

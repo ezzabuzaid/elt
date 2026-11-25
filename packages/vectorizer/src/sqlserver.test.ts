@@ -505,12 +505,16 @@ test(
         keywordIndex: await database.rows(
           "SELECT [state] FROM marts.derived_status WHERE [dataset] = N'marts.docs_keywords'",
         ),
+        status: await database.rows(
+          'SELECT [state], CAST([failed_sources] AS int) AS [failed_sources], CAST([failed_vectors] AS int) AS [failed_vectors] FROM marts.docs_status',
+        ),
       },
       {
         found: ['b:0'],
         keywords: [{ id: 'b:0' }],
         chunks: [{ failed: 1 }],
         keywordIndex: [{ state: 'current' }],
+        status: [{ state: 'current', failed_sources: 1, failed_vectors: 0 }],
       },
     );
   },

@@ -237,7 +237,9 @@ fix-git:2 software-engineering 0.0159
   state: 'current',
   as_of: 2026-11-25T08:21:54.407Z,
   pending_sources: '0',
-  pending_vectors: '0'
+  pending_vectors: '0',
+  failed_sources: '0',
+  failed_vectors: '0'
 }
 ```
 

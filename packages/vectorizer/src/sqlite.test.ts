@@ -504,6 +504,81 @@ test('a passage whose vector the model failed never reaches a vector search, and
   );
 });
 
+test('the status view counts the passage texts whose vectors the model refused, and the next refresh with a model that answers counts none', async () => {
+  await using scratch = await new TemporaryFiles().directory('vectorizer-');
+  const rows = () => [task('a', 'red fox'), task('b', 'brown dog')];
+  const refusing = new (class extends LetterModel {
+    override async doEmbed(): Promise<never> {
+      throw new Error('the model is down');
+    }
+  })();
+  const status = () =>
+    rowsOf(
+      join(scratch.path, 'tasks.sqlite'),
+      'SELECT "state", "pending_sources", "pending_vectors", "failed_sources", "failed_vectors" FROM "docs_status"',
+    ).map((row) => ({ ...row }));
+
+  await tasksPipeline({
+    directory: scratch.path,
+    rows,
+    model: refusing,
+  }).pipeline.run();
+
+  assert.deepEqual(status(), [
+    {
+      state: 'current',
+      pending_sources: 0,
+      pending_vectors: 0,
+      failed_sources: 0,
+      failed_vectors: 2,
+    },
+  ]);
+
+  await tasksPipeline({ directory: scratch.path, rows }).pipeline.run();
+
+  assert.deepEqual(status(), [
+    {
+      state: 'current',
+      pending_sources: 0,
+      pending_vectors: 0,
+      failed_sources: 0,
+      failed_vectors: 0,
+    },
+  ]);
+});
+
+test('the status view counts the source rows whose passages failed, and the next refresh that cuts them counts none', async () => {
+  await using scratch = await new TemporaryFiles().directory('vectorizer-');
+  const rows = () => [task('a', 'red fox'), task('b', 'brown dog')];
+  const refusing: Tokenizer = {
+    name: cl100k.name,
+    count: () => {
+      throw new Error('the tokenizer refuses');
+    },
+  };
+  const status = () =>
+    rowsOf(
+      join(scratch.path, 'tasks.sqlite'),
+      'SELECT "state", "failed_sources", "failed_vectors" FROM "docs_status"',
+    ).map((row) => ({ ...row }));
+
+  await tasksPipeline({
+    directory: scratch.path,
+    rows,
+    chunking: { tokenizer: refusing, maxTokens: 200, overlapTokens: 0 },
+  }).pipeline.run();
+
+  assert.deepEqual(status(), [
+    { state: 'current', failed_sources: 2, failed_vectors: 0 },
+  ]);
+
+  await tasksPipeline({ directory: scratch.path, rows }).pipeline.run();
+
+  assert.deepEqual(status(), [
+    { state: 'current', failed_sources: 0, failed_vectors: 0 },
+  ]);
+});
+
 test('the context window of a passage of a source cut into many chunks gives the exact text of the source, with no gap', async () => {
   await using scratch = await new TemporaryFiles().directory('vectorizer-');
   const body = [
