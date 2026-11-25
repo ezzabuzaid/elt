@@ -1,12 +1,18 @@
-# Vectorizer
+# @eltjs/vectorizer
 
-`Vectorizer` is one declaration that keeps the passage contract of [`@zukhruf/retrieval`](https://github.com/JanuaryLabs/zukhruf/tree/main/packages/retrieval) in step with what an elt pipeline loads: the passages of each source row with their metadata, the vector of each passage with the identity of its model, and a keyword index. The retrievers of `@zukhruf/retrieval` then search the rows by meaning and by words. pgai's `create_vectorizer` does the same job in Postgres. The words of this package are in its [glossary](./CONTEXT.md).
+`Vectorizer` is one declaration that keeps the passage contract of [`@zukhruf/retrieval`](https://github.com/JanuaryLabs/zukhruf/tree/main/packages/retrieval) in step with what an elt pipeline loads: the passages of each source row with their metadata, the vector of each passage with the identity of its model, and a keyword index. The retrievers of `@zukhruf/retrieval` then search the rows by meaning and by words. pgai's `create_vectorizer` does the same job in Postgres.
+
+The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
+
+## Use it
 
 ```sh
 npm install @eltjs/vectorizer @eltjs/elt @eltjs/elt-sqlite @zukhruf/retrieval
 ```
 
-`@eltjs/vectorizer/sqlite` writes the contract into a SQLite file, `@eltjs/vectorizer/postgresql` into a Postgres database ([Search in Postgres](#search-in-postgres)), and `@eltjs/vectorizer/sqlserver` into a SQL Server database ([Search in SQL Server](#search-in-sql-server)).
+Each subpath writes through its engine's elt destination: `/sqlite` through `@eltjs/elt-sqlite`, `/postgresql` through `@eltjs/elt-postgresql` and `postgres`, `/sqlserver` through `@eltjs/elt-sqlserver`. These are optional peer dependencies, so a host installs only the one that it uses.
+
+`@eltjs/vectorizer/sqlite` writes the contract into a SQLite file, `@eltjs/vectorizer/postgresql` into a Postgres database ([Search in Postgres](#search-in-postgres)), and `@eltjs/vectorizer/sqlserver` into a SQL Server database ([Search in SQL Server](#search-in-sql-server)). The smallest program is in [Search the rows of a table](#search-the-rows-of-a-table), the next section.
 
 ## Search the rows of a table
 
@@ -611,6 +617,8 @@ fix-git:2 software-engineering 0.0159
 npm install @eltjs/vectorizer @eltjs/elt @eltjs/elt-sqlserver @zukhruf/retrieval mssql
 ```
 
+The program below does not define `LetterModel` and `tasks`, so it does not run as written. The recipe [Search the rows of a SQL Server table with Full-Text Search](./docs/recipes/search-the-rows-of-a-sql-server-table-with-full-text-search.md) gives the full program.
+
 ```ts
 import { FusionRetriever } from '@zukhruf/retrieval';
 import {
@@ -741,24 +749,24 @@ This program did not run when this section was written, so no output is pasted h
 - A run ends only when the full-text index holds its passages: the keyword index is `current` only when SQL Server shows no population that runs and no change that waits. So a search after `run()` finds each passage.
 - Ids and sources compare in binary, so the sources `a` and `A` are two source rows and give the passages `a:0` and `A:0`, also in a database whose collation ignores case.
 - `indexing: { vectors: 'none' }` is the only declaration of the vectors index. A search compares every vector with `VECTOR_DISTANCE`. The DiskANN index of SQL Server 2025 waits for zukhruf #5475.
-- A server with no Full-Text Search fails the keyword index with a `SqlServerSetupError`, of failure type `config`, before it makes the table. On Linux, install the package `mssql-server-fts`. Azure SQL Database has Full-Text Search.
+- A server with no Full-Text Search makes the full-text catalog, which is only metadata, and refuses the full-text index with error 7609. The keyword index then drops the table that it made and fails with a `SqlServerSetupError`, of failure type `config`, so the run leaves no keywords table (`src/sqlserver.test.ts`, commit 0b726dd4, #5401). On Linux, install the package `mssql-server-fts`. Azure SQL Database has Full-Text Search.
 - A passage id has at most 450 characters, the most that a full-text key of SQL Server holds. A source row whose passage ids would be longer is a rule failure of its own: its row of `docs_chunks` is `failed`, with an error that names the length and the limit, and `derived_status` counts it in `failed`. The other rows go on. Give the vectorizer a shorter source key.
 
 ## The relations
 
-A vectorizer named `docs` refreshes these members, in this order, in the file of its source. Each is a derived dataset of elt-sqlite with its own row of `derived_status`.
+A vectorizer named `docs` refreshes these members, in this order, where its source is: in the file of its source on SQLite, and in the database of its source on Postgres and SQL Server. Each is a derived dataset of the destination (elt-sqlite, elt-postgresql or elt-sqlserver) with its own row of `derived_status`. On Postgres and SQL Server, each relation that a reader reads is in `marts`, and the views read the raw tables in `_warehouse` (commit f845aef6).
 
-| Relation               | What it holds                                                                                                                     |
-| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| `docs_text`            | Only with `loading: { file }`: the text of each stored file, a computed dataset of `DocumentText`                                 |
-| `docs_documents`       | Only with `loading: { file }`: the text of the file of each source row, by the source key                                         |
-| `docs_chunks`          | The parts of the text of each source row, a computed dataset; its parts are in `docs_chunks_parts`                                |
-| `docs_keywords`        | The id, source, seq and text of each passage. The FTS5 table `docs_passages_fts` indexes the text                                 |
-| `docs_passages`        | The passages: `rowid`, `id`, `source`, `seq`, `start`, `end`, `text` and the metadata columns                                     |
-| `docs_chunk_texts`     | The text of each part, by its part hash                                                                                           |
-| `docs_chunk_vectors`   | The vector of each part text, a computed dataset of `Embedding`                                                                   |
-| `docs_passage_vectors` | The vectors: `id`, `vector` and `model`, the identity of the model, for example `openai/text-embedding-3-small (1536 dimensions)` |
-| `docs_status`          | One row: `state`, `as_of`, `pending_sources` and `pending_vectors`                                                                |
+| Relation               | What it holds                                                                                                                                                                                                                                                                                                      |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `docs_text`            | Only with `loading: { file }`: the text of each stored file, a computed dataset of `DocumentText`                                                                                                                                                                                                                  |
+| `docs_documents`       | Only with `loading: { file }`: the text of the file of each source row, by the source key                                                                                                                                                                                                                          |
+| `docs_chunks`          | The parts of the text of each source row, a computed dataset; its parts are in `docs_chunks_parts`                                                                                                                                                                                                                 |
+| `docs_keywords`        | The id, source, seq and text of each passage. On SQLite, the FTS5 table `docs_passages_fts` indexes the text. On Postgres, it is the table `_warehouse.raw_docs_keywords`, whose `keywords` column a GIN index indexes. On SQL Server, it is the base table `marts.docs_keywords`, which a full-text index indexes |
+| `docs_passages`        | The passages: `id`, `source`, `seq`, `start`, `end`, `text` and the metadata columns. SQLite also gives `rowid`, the rowid of the passage in the keyword index, and Postgres also gives `keywords`                                                                                                                 |
+| `docs_chunk_texts`     | The text of each part, by its part hash                                                                                                                                                                                                                                                                            |
+| `docs_chunk_vectors`   | The vector of each part text, a computed dataset of `Embedding`                                                                                                                                                                                                                                                    |
+| `docs_passage_vectors` | The vectors: `id`, `vector` and `model`, the identity of the model, for example `openai/text-embedding-3-small (1536 dimensions)`                                                                                                                                                                                  |
+| `docs_status`          | One row: `state`, `as_of`, `pending_sources` and `pending_vectors`                                                                                                                                                                                                                                                 |
 
 - The id of a passage is `<source>:<seq>`.
 - The passages of a source row tile its text: `start` and `end` count code points, and `ContextWindow` merges passages by them with no gap.
@@ -780,23 +788,166 @@ When the model or its `dimensions` change, the next refresh makes each vector ag
 
 ## Rules and failures
 
-- The constructor refuses, with a `TypeError` that names it, a metadata column that has the name of a column of the passages (`rowid`, `id`, `source`, `seq`, `start`, `end` or `text` on SQLite, and `keywords` in place of `rowid` on Postgres, in any ASCII case), and a metadata column or a key column that is listed twice.
+- The constructor refuses, with a `TypeError` that names it, a metadata column that has the name of a column of the passages, in any ASCII case, and a metadata column or a key column that is listed twice. The names of the passage columns are `rowid`, `id`, `source`, `seq`, `start`, `end` and `text` on SQLite; `id`, `source`, `seq`, `start`, `end`, `text` and `keywords` on Postgres; and `id`, `source`, `seq`, `start`, `end` and `text` on SQL Server, so a metadata column `rowid` is allowed there (`src/sqlserver.test.ts`).
+- On SQL Server, the constructor refuses with a `RangeError` a `keywords: { language }` that is not an LCID, an integer of 0 or more, such as `1033.5`, `-1` or `NaN` (`src/sqlserver.test.ts`).
 - Before it reads, the pipeline refuses a vectorizer whose table no copy loads into its file, and a key, metadata or loading column that the stream or the target does not declare. The run rejects with a `TypeError`.
 - The name of the vectorizer and the name of each relation count in the check of distinct names of the pipeline.
 - A vectorizer fails as one dataset of the pipeline ([elt ADR 0034](../elt/docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md)): the first member that fails stops the members after it, the copies and the other datasets go on, and the refresh after the next pass tries it again. A run rejects with the `DerivedDatasetError` of the vectorizer, whose `cause` is the `DerivedDatasetError` of the member. `docs_status` then has the state `failed`.
 
-## The same in other systems
+## Errors
 
-| System                         | What it is                                                                       |
-| ------------------------------ | -------------------------------------------------------------------------------- |
-| pgai `create_vectorizer`       | One call that keeps the embeddings of a Postgres table in step with its rows     |
-| Airbyte vector destinations    | `text_fields` and `metadata_fields` of each record, chunked and embedded on load |
-| LlamaIndex `IngestionPipeline` | The steps that make nodes and their embeddings from documents                    |
+| Error                                  | When                                                                                                                                                                                                                                                                                                                     |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TypeError`                            | The constructor gets a metadata column with the name of a passage column, or a key or metadata column listed twice. Or the run, before it reads, finds a table that no copy loads, a key, metadata or loading column that the stream or the target does not declare, or a copy that makes the table of the keyword index |
+| `RangeError`                           | The constructor of `@eltjs/vectorizer/sqlserver` gets a `keywords: { language }` that is not an integer of 0 or more                                                                                                                                                                                                     |
+| `DerivedDatasetError` of elt           | A member fails in a refresh. The run rejects with the `DerivedDatasetError` of the vectorizer, whose `cause` is the `DerivedDatasetError` of the member, and `docs_status` has the state `failed`                                                                                                                        |
+| `SqlServerSetupError` of elt-sqlserver | The SQL Server has no Full-Text Search. It is the `cause` of the `DerivedDatasetError` of the member `docs_keywords`, and its failure type is `config` (`src/sqlserver.test.ts`)                                                                                                                                         |
 
-## Decisions
+## The same concepts in other systems
+
+| Concept                                                                    | Other systems                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `Vectorizer`, one declaration that keeps the vectors in step with the rows | pgai [`ai.create_vectorizer`](https://github.com/timescale/pgai/blob/47d74affd8a16d0b7f11c8f5bd6e35f7cd43abc1/docs/vectorizer/api-reference.md#L107-L117), one call that keeps the embeddings of a Postgres table in step with its rows. LlamaIndex [`IngestionPipeline`](https://github.com/run-llama/llama_index/blob/99d7433f6f71888951379ccca9294e272442c832/llama-index-core/llama_index/core/ingestion/pipeline.py#L262), the steps that make nodes and their embeddings from documents, with the strategy [`UPSERTS`](https://github.com/run-llama/llama_index/blob/99d7433f6f71888951379ccca9294e272442c832/llama-index-core/llama_index/core/ingestion/pipeline.py#L240-L259) to replace a changed document |
+| `loading: { columns }`                                                     | pgai [`ai.loading_column`](https://github.com/timescale/pgai/blob/47d74affd8a16d0b7f11c8f5bd6e35f7cd43abc1/docs/vectorizer/api-reference.md#L313). The `text_fields` of an Airbyte vector destination ([`ProcessingConfigModel`](https://github.com/airbytehq/airbyte-python-cdk/blob/9b547097da5e8c1eb3fefee4aceafa98cd7f2d39/airbyte_cdk/destinations/vector_db_based/config.py#L105-L111)), which it chunks and embeds on load                                                                                                                                                                                                                                                                                    |
+| `loading: { file }`                                                        | pgai [`ai.loading_uri`](https://github.com/timescale/pgai/blob/47d74affd8a16d0b7f11c8f5bd6e35f7cd43abc1/docs/vectorizer/api-reference.md#L339)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `metadata`                                                                 | The `metadata_fields` of an Airbyte vector destination ([`ProcessingConfigModel`](https://github.com/airbytehq/airbyte-python-cdk/blob/9b547097da5e8c1eb3fefee4aceafa98cd7f2d39/airbyte_cdk/destinations/vector_db_based/config.py#L112-L118))                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `indexing: { vectors }`                                                    | pgai [`ai.indexing_hnsw`](https://github.com/timescale/pgai/blob/47d74affd8a16d0b7f11c8f5bd6e35f7cd43abc1/docs/vectorizer/api-reference.md#L1244) and [`ai.indexing_none`](https://github.com/timescale/pgai/blob/47d74affd8a16d0b7f11c8f5bd6e35f7cd43abc1/docs/vectorizer/api-reference.md#L1184)                                                                                                                                                                                                                                                                                                                                                                                                                   |
+
+## API
+
+```ts
+// @eltjs/vectorizer/sqlite, /postgresql and /sqlserver each export these four types.
+type SourceKey = string | readonly [string, string, ...string[]];
+
+type Loading =
+  | { readonly columns: readonly [string, ...string[]] }
+  | {
+      readonly file: string;
+      readonly files: FileStorage; // of @eltjs/elt
+      readonly parser: () => DocumentParser; // of @eltjs/elt
+    };
+
+type ChunkingOptions =
+  | {
+      readonly tokenizer: Tokenizer; // of @eltjs/chunking
+      readonly maxTokens: number;
+      readonly overlapTokens: number;
+    }
+  | 'none';
+
+type EmbeddingOptions = {
+  readonly model: EmbeddingModel; // of ai
+  readonly dimensions: number;
+  readonly clock: Pick<PipelineClock, 'setTimeout' | 'clearTimeout'>;
+};
+
+// @eltjs/vectorizer/sqlite
+type SqliteContract = {
+  readonly passages: string;
+  readonly vectors: string;
+  readonly index: string;
+};
+
+class Vectorizer extends CompositeDataset<SQLiteTable> {
+  constructor(
+    options: (
+      | { readonly into: SQLiteDestination; readonly from: SQLiteTable }
+      | { readonly from: View }
+    ) & {
+      readonly name: string; // the start of the name of each relation
+      readonly description: string;
+      readonly key: SourceKey;
+      readonly loading: Loading;
+      readonly chunking: ChunkingOptions;
+      readonly embedding: EmbeddingOptions;
+      readonly metadata?: readonly string[]; // none when absent
+    },
+  );
+  readonly name: string;
+  readonly contract: SqliteContract;
+  readonly into: SQLiteDestination;
+}
+
+// @eltjs/vectorizer/postgresql
+type PostgresContract = {
+  readonly schema: string; // 'marts'
+  readonly passages: string;
+  readonly vectors: string;
+  readonly index: { readonly column: string; readonly configuration: string };
+};
+
+class Vectorizer extends CompositeDataset<PostgresTable> {
+  constructor(
+    options: (
+      | { readonly into: PostgresDestination; readonly from: PostgresTable }
+      | { readonly from: View }
+    ) & {
+      readonly name: string; // the start of the name of each relation
+      readonly description: string;
+      readonly key: SourceKey;
+      readonly loading: Loading;
+      readonly chunking: ChunkingOptions;
+      readonly embedding: EmbeddingOptions;
+      readonly metadata?: readonly string[]; // none when absent
+      readonly keywords?: { readonly configuration?: string }; // 'english' when absent
+      readonly indexing?: { readonly vectors: Hnsw | 'none' }; // hnsw() when absent
+    },
+  );
+  readonly name: string;
+  readonly contract: PostgresContract;
+  readonly into: PostgresDestination;
+}
+
+// @eltjs/vectorizer/sqlserver
+type SqlServerContract = {
+  readonly schema: string; // 'marts'
+  readonly passages: string;
+  readonly vectors: string;
+  readonly index: { readonly table: string };
+};
+
+class Vectorizer extends CompositeDataset<SqlServerTable> {
+  constructor(
+    options: (
+      | { readonly into: SqlServerDestination; readonly from: SqlServerTable }
+      | { readonly from: View }
+    ) & {
+      readonly name: string; // the start of the name of each relation
+      readonly description: string;
+      readonly key: SourceKey;
+      readonly loading: Loading;
+      readonly chunking: ChunkingOptions;
+      readonly embedding: EmbeddingOptions;
+      readonly metadata?: readonly string[]; // none when absent
+      readonly keywords?: { readonly language?: number }; // an LCID, 1033 when absent
+      readonly indexing?: { readonly vectors: 'none' };
+    },
+  );
+  readonly name: string;
+  readonly contract: SqlServerContract;
+  readonly into: SqlServerDestination;
+}
+```
+
+## Documentation
+
+**Concepts**
+
+- [How the vectorizer builds on Chunking, the Embedding rule and an AI SDK embedding model](./docs/concepts/how-the-vectorizer-builds-on-chunking-and-embedding.md)
+
+**Recipes**
+
+- [Search the texts that a host holds by meaning and by words](./docs/recipes/search-the-texts-that-a-host-holds-by-meaning-and-by-words.md)
+- [Embed the passages again with a new model and read the status view](./docs/recipes/embed-the-passages-again-with-a-new-model.md)
+- [Search the rows of a Postgres table with pgvector and a reader that reads only marts](./docs/recipes/search-the-rows-of-a-postgres-table-with-pgvector.md)
+- [Search the rows of a SQL Server table with Full-Text Search](./docs/recipes/search-the-rows-of-a-sql-server-table-with-full-text-search.md)
+
+**Decisions**
 
 - [ADR 0001](./docs/adr/0001-the-vectorizer-writes-the-passage-contract-of-zukhruf-retrieval-one-subpath-per-engine.md): the vectorizer writes the passage contract of `@zukhruf/retrieval`, one subpath per engine.
 - [ADR 0002](./docs/adr/0002-the-keyword-index-is-a-member-that-keeps-a-keywords-table-and-its-full-text-index-in-step.md): the keyword index is a member that keeps a keywords table and its full-text index in step.
+
+The copies of code that this package keeps are in [docs/copied-code.md](./docs/copied-code.md).
 
 ## Development
 

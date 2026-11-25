@@ -28,12 +28,16 @@ _Avoid_: Chunk (a chunk is what `Chunking` gives; with `chunking: 'none'` a pass
 The columns of the source row that each passage gives beside its text, as the host lists them. A metadata column cannot have the name of a column of the passages.
 _Avoid_: Attributes, extra fields
 
+**Model identity**:
+The text `<provider>/<model id> (<n> dimensions)`, for example `openai/text-embedding-3-small (1536 dimensions)`, that each passage vector carries in its column `model`. It is the rule identity (elt) of `Embedding`, so a change of model embeds the vectors again in place. A vector search reads only the vectors of its own model identity (`src/sqlite.test.ts`).
+_Avoid_: Model name (the model identity also has the provider and the dimensions), model version
+
 **Keyword index**:
 The member that keeps a table of the id, source, seq and text of each passage, and a full-text index over the text, which a keyword search reads. On SQLite it is an FTS5 table whose content is that table. On SQL Server it is a full-text index on that table, which is a base table in `marts`. On Postgres it is a `tsvector` column of that table, which Postgres generates from the text, with a GIN index.
 _Avoid_: Search index, BM25 index (BM25 is how a search ranks), inverted index
 
 **Contract**:
-The names of the relations that the retrievers of `@zukhruf/retrieval` read, in the shape of their options: `passages`, `vectors` and `index`.
+The value that tells the retrievers of `@zukhruf/retrieval` which relations to read, in the shape of their options. On SQLite it is `{ passages, vectors, index }`, three names. On Postgres and SQL Server it also has `schema`, which is `marts`, and `index` is an object: `{ column, configuration }` on Postgres (`PostgresContract`), `{ table }` on SQL Server (`SqlServerContract`).
 _Avoid_: Schema, config
 
 **Status view**:
