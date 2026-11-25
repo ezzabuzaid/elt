@@ -134,7 +134,7 @@ const results = await pipeline.run(); // [{ copy, count, deleted }, ...] in decl
 
 - A `Connection` is the connection of Airbyte: the copies of one source into one destination, with the checkpoints that resume them. Readers of the sync history see its `name`.
 - A `Pipeline` is the orchestrator of one or more connections. See [Run and failures](#run-and-failures).
-- The pipeline waits and reads the time on its `clock`. An app gives `globalThis`. See [Run a pipeline on a clock](#run-a-pipeline-on-a-clock).
+- The pipeline waits and reads the time on its `clock`. A host gives `globalThis`. See [Run a pipeline on a clock](#run-a-pipeline-on-a-clock).
 - The copy of `accounts` declares its columns. The copy of `notes` infers its columns from the stream, and it deduplicates on the `id` key of the stream.
 - Apple Notes gives its streams as properties: `accounts`, `folders`, `notes`, `inlineAttachments` and `attachments`. `discover()` gives the same frozen streams to code that lists streams.
 - A declaration does not read Notes, and `discover()` does not read Notes. Neither opens a store.
@@ -1116,7 +1116,7 @@ The tests cover real file system events in temporary storage, the watch subscrip
 
 A pipeline waits and reads the time: a watch waits between its checks, before it loads a failed stream again, and between the runs of an upkeep, and a gauge can wait or read the time. All of these use the `clock` that you give to the pipeline. The pipeline gives its clock to each source and to the destination on each call, so one pipeline runs on one clock. See [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md).
 
-- An app gives `globalThis`.
+- A host gives `globalThis`.
 - A test gives `createClock()` of `@sinonjs/fake-timers` and moves it with `await clock.tickAsync(ms)`. A test that does not wait gives `globalThis`.
 - A source that reads the time reads it from the clock of the call: `changeSignals(streams, clock)` and `upkeep(clock)` for a watch, and `open(streams, signal, states, clock)` for a read. A source that reads the time in `extract` keeps the clock in its context.
 - A destination reads the time of a load from `load({ clock })`.
