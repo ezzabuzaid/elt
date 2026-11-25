@@ -207,6 +207,9 @@
       "path": "./packages/sources/opensooq/web"
     },
     {
+      "path": "./packages/sources/woocommerce/store"
+    },
+    {
       "path": "./apps/web"
     },
     {

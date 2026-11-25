@@ -1,0 +1,32 @@
+{
+  "name": "@eltjs/source-woocommerce-store",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Reads a WooCommerce shop's products through its public Store API as a web stream: one record per product, with its prices from minor units as exact decimals.",
+  "type": "module",
+  "exports": {
+    "./products": {
+      "types": "./dist/products.d.ts",
+      "default": "./dist/products.js"
+    },
+    "./store-api-extractor": {
+      "types": "./dist/store-api-extractor.d.ts",
+      "default": "./dist/store-api-extractor.js"
+    }
+  },
+  "dependencies": {
+    "@eltjs/elt": "*",
+    "@eltjs/sdk-web-crawler": "0.0.1",
+    "@eltjs/source-web-pages": "0.0.1",
+    "entities": "^9.0.0",
+    "got": "16.1.0",
+    "html-to-text": "10.0.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@eltjs/elt-sqlite": "*",
+    "@types/html-to-text": "9.0.4",
+    "@zukhruf/fs": "^0.8.109",
+    "@zukhruf/testing": "^0.8.109"
+  }
+}

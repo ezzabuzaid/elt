@@ -1,0 +1,6 @@
+{
+  "name": "source-woocommerce-store",
+  "sourceRoot": "packages/sources/woocommerce/store/src",
+  "projectType": "library",
+  "tags": ["layer:island"]
+}
