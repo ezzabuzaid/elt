@@ -290,6 +290,9 @@ export class Vectorizer extends CompositeDataset<PostgresTable> {
       chunkVectors,
       passageVectors,
     ] as const;
+    // With no files, the text member is no member: the counts read 0.
+    const [text] = files;
+    const fileText = text ? literal(text.qualifiedName) : 'NULL';
     const status = new View({
       into,
       name: names.status,
@@ -305,12 +308,16 @@ export class Vectorizer extends CompositeDataset<PostgresTable> {
           'The source rows whose passages failed: a search finds none of their passages until a refresh cuts them.',
         failed_vectors:
           'The passage texts whose vectors failed: a search by meaning misses their passages until a refresh embeds them.',
+        pending_files:
+          'The stored files that wait for their text. 0 when the vectorizer loads columns.',
+        failed_files:
+          'The stored files whose text failed: no search finds the source rows of a file until a refresh reads it. 0 when the vectorizer loads columns.',
       },
       sql: `WITH "members" ("dataset") AS (VALUES ${leaves
         .map((member) => `(${literal(member.qualifiedName)})`)
         .join(
           ', ',
-        )}), "rows" AS (SELECT m."dataset", coalesce(d."state", 'waiting') AS "state", d."as_of", coalesce(d."pending", 0) AS "pending", coalesce(d."failed", 0) AS "failed" FROM "members" AS m LEFT JOIN ${inWarehouse('derived_status')} AS d ON d."dataset" = m."dataset") SELECT CASE max(CASE "state" WHEN 'failed' THEN 3 WHEN 'waiting' THEN 2 WHEN 'refreshing' THEN 1 ELSE 0 END) WHEN 3 THEN 'failed' WHEN 2 THEN 'waiting' WHEN 1 THEN 'refreshing' ELSE 'current' END AS "state", CASE WHEN count("as_of") = count(*) THEN min("as_of") END AS "as_of", (SELECT "pending" FROM "rows" WHERE "dataset" = ${literal(chunks.qualifiedName)}) AS "pending_sources", (SELECT "pending" FROM "rows" WHERE "dataset" = ${literal(chunkVectors.qualifiedName)}) AS "pending_vectors", (SELECT "failed" FROM "rows" WHERE "dataset" = ${literal(chunks.qualifiedName)}) AS "failed_sources", (SELECT "failed" FROM "rows" WHERE "dataset" = ${literal(chunkVectors.qualifiedName)}) AS "failed_vectors" FROM "rows"`,
+        )}), "rows" AS (SELECT m."dataset", coalesce(d."state", 'waiting') AS "state", d."as_of", coalesce(d."pending", 0) AS "pending", coalesce(d."failed", 0) AS "failed" FROM "members" AS m LEFT JOIN ${inWarehouse('derived_status')} AS d ON d."dataset" = m."dataset") SELECT CASE max(CASE "state" WHEN 'failed' THEN 3 WHEN 'waiting' THEN 2 WHEN 'refreshing' THEN 1 ELSE 0 END) WHEN 3 THEN 'failed' WHEN 2 THEN 'waiting' WHEN 1 THEN 'refreshing' ELSE 'current' END AS "state", CASE WHEN count("as_of") = count(*) THEN min("as_of") END AS "as_of", (SELECT "pending" FROM "rows" WHERE "dataset" = ${literal(chunks.qualifiedName)}) AS "pending_sources", (SELECT "pending" FROM "rows" WHERE "dataset" = ${literal(chunkVectors.qualifiedName)}) AS "pending_vectors", (SELECT "failed" FROM "rows" WHERE "dataset" = ${literal(chunks.qualifiedName)}) AS "failed_sources", (SELECT "failed" FROM "rows" WHERE "dataset" = ${literal(chunkVectors.qualifiedName)}) AS "failed_vectors", coalesce((SELECT "pending" FROM "rows" WHERE "dataset" = ${fileText}), 0) AS "pending_files", coalesce((SELECT "failed" FROM "rows" WHERE "dataset" = ${fileText}), 0) AS "failed_files" FROM "rows"`,
     });
     this.members = Object.freeze([...leaves, status]);
     this.contract = Object.freeze({

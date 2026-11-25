@@ -559,7 +559,7 @@ test('the status view counts the source rows whose passages failed, and the next
   const status = () =>
     rowsOf(
       join(scratch.path, 'tasks.sqlite'),
-      'SELECT "state", "failed_sources", "failed_vectors" FROM "docs_status"',
+      'SELECT "state", "failed_sources", "failed_vectors", "pending_files", "failed_files" FROM "docs_status"',
     ).map((row) => ({ ...row }));
 
   await tasksPipeline({
@@ -568,14 +568,27 @@ test('the status view counts the source rows whose passages failed, and the next
     chunking: { tokenizer: refusing, maxTokens: 200, overlapTokens: 0 },
   }).pipeline.run();
 
+  // A vectorizer that loads columns reads no file, so it counts none.
   assert.deepEqual(status(), [
-    { state: 'current', failed_sources: 2, failed_vectors: 0 },
+    {
+      state: 'current',
+      failed_sources: 2,
+      failed_vectors: 0,
+      pending_files: 0,
+      failed_files: 0,
+    },
   ]);
 
   await tasksPipeline({ directory: scratch.path, rows }).pipeline.run();
 
   assert.deepEqual(status(), [
-    { state: 'current', failed_sources: 0, failed_vectors: 0 },
+    {
+      state: 'current',
+      failed_sources: 0,
+      failed_vectors: 0,
+      pending_files: 0,
+      failed_files: 0,
+    },
   ]);
 });
 
@@ -1181,4 +1194,158 @@ test('two rows that share one stored file give two sources with the text of the 
       { id: 'second:0', source: 'second', text: 'call the cooperative' },
     ],
   );
+});
+
+// A pipeline that copies the notes of a folder and stores each note's file,
+// and a vectorizer named docs that reads the text of each file through the
+// parser the test gives.
+function notesPipeline({
+  directory,
+  rows,
+  parser,
+}: {
+  readonly directory: string;
+  readonly rows: readonly { readonly name: string; readonly file: string }[];
+  readonly parser: DocumentParser;
+}) {
+  const source = new Notes();
+  source.rows = rows;
+  const files = new LocalFiles({ directory: join(directory, 'files') });
+  const destination = new SQLiteDestination({
+    path: join(directory, 'notes.sqlite'),
+  });
+  const notes: SQLiteTable = destination.table('notes', (c) => [
+    c.text('name').primaryKey(),
+    c.text('noteRef').from(source.notes.file.store(files)),
+  ]);
+  return new Pipeline({
+    clock: globalThis,
+    history: new SQLiteSyncHistory(),
+    connections: [
+      new Connection({
+        name: 'notes',
+        source,
+        destination,
+        steps: [new Copy(source.notes, notes)],
+      }),
+    ],
+    derived: [
+      new Vectorizer({
+        into: destination,
+        from: notes,
+        name: 'docs',
+        description: 'The notes.',
+        key: 'name',
+        loading: { file: 'noteRef', files, parser: () => parser },
+        chunking: 'none',
+        embedding: {
+          model: new LetterModel(),
+          dimensions: 26,
+          clock: globalThis,
+        },
+      }),
+    ],
+  });
+}
+
+test('the status view counts the files whose text the parser failed, and the next refresh with a parser that reads them counts none', async () => {
+  await using scratch = await new TemporaryFiles().directory('vectorizer-');
+  const folder = join(scratch.path, 'notes');
+  await mkdir(folder);
+  await writeFile(join(folder, 'good.txt'), 'call the cooperative');
+  await writeFile(join(folder, 'bad.txt'), 'renew the lease');
+  const rows = [
+    { name: 'good', file: join(folder, 'good.txt') },
+    { name: 'bad', file: join(folder, 'bad.txt') },
+  ];
+  const refusing = new (class extends TextParser {
+    override async parse(path: string) {
+      const text = await super.parse(path);
+      if (text.includes('lease')) throw new Error('the parser refuses');
+      return text;
+    }
+  })();
+  const status = () =>
+    rowsOf(
+      join(scratch.path, 'notes.sqlite'),
+      'SELECT "state", "pending_files", "failed_files", "failed_sources" FROM "docs_status"',
+    ).map((row) => ({ ...row }));
+
+  await notesPipeline({
+    directory: scratch.path,
+    rows,
+    parser: refusing,
+  }).run();
+
+  assert.deepEqual(status(), [
+    { state: 'current', pending_files: 0, failed_files: 1, failed_sources: 0 },
+  ]);
+
+  await notesPipeline({
+    directory: scratch.path,
+    rows,
+    parser: new TextParser(),
+  }).run();
+
+  assert.deepEqual(status(), [
+    { state: 'current', pending_files: 0, failed_files: 0, failed_sources: 0 },
+  ]);
+});
+
+test('while the parser reads a file, the status view counts it in pending_files', async (t) => {
+  await using scratch = await new TemporaryFiles().directory('vectorizer-');
+  const folder = join(scratch.path, 'notes');
+  await mkdir(folder);
+  await writeFile(join(folder, 'quick.txt'), 'call the cooperative');
+  await writeFile(join(folder, 'slow.txt'), 'renew the contract');
+  const rows = [
+    { name: 'quick', file: join(folder, 'quick.txt') },
+    { name: 'slow', file: join(folder, 'slow.txt') },
+  ];
+  await notesPipeline({
+    directory: scratch.path,
+    rows,
+    parser: new TextParser(),
+  }).run();
+  // A new text is a new stored file, which the next refresh reads.
+  await writeFile(join(folder, 'slow.txt'), 'renew the lease');
+  const reading = Promise.withResolvers<void>();
+  // The parser never ends on the new file, until the run stops.
+  const hanging = new (class extends TextParser {
+    override async parse(path: string, signal?: AbortSignal) {
+      const text = await super.parse(path);
+      if (!text.includes('lease')) return text;
+      reading.resolve();
+      return new Promise<string>((_, reject) =>
+        signal?.addEventListener('abort', () => reject(signal.reason)),
+      );
+    }
+  })();
+  const controller = new AbortController();
+
+  const running = notesPipeline({
+    directory: scratch.path,
+    rows,
+    parser: hanging,
+  }).run({ signal: controller.signal });
+  try {
+    await Promise.race([
+      reading.promise,
+      running.then(() => assert.fail('the run ended before the parser read')),
+    ]);
+    await waitFor(
+      () =>
+        assert.deepEqual(
+          rowsOf(
+            join(scratch.path, 'notes.sqlite'),
+            'SELECT "state", "pending_files", "failed_files" FROM "docs_status"',
+          ).map((row) => ({ ...row })),
+          [{ state: 'refreshing', pending_files: 1, failed_files: 0 }],
+        ),
+      { signal: t.signal },
+    );
+  } finally {
+    controller.abort();
+    await running.catch(() => {});
+  }
 });

@@ -3,8 +3,11 @@
 // host reads it. The embedding model is the one stand-in (LetterModel).
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { test } from 'node:test';
 
+import { TemporaryFiles } from '@zukhruf/fs';
 import {
   ContextWindow,
   FusionRetriever,
@@ -22,11 +25,18 @@ import { countTokens } from 'gpt-tokenizer/encoding/cl100k_base';
 import postgres from 'postgres';
 
 import {
+  Catalog,
   Connection,
   Copy,
+  type CopyConfiguration,
+  DocumentParser,
+  Gauge,
   IterableSource,
+  LocalFiles,
   Pipeline,
   type SnapshotStreamDeclaration,
+  Source,
+  Stream,
   type StreamSchema,
 } from '@eltjs/elt';
 import {
@@ -793,9 +803,19 @@ test('the status view counts the source rows whose passages failed', async () =>
   assert.deepEqual(
     await rowsOf(
       url,
-      'SELECT "state", "failed_sources"::int AS "failed_sources", "failed_vectors"::int AS "failed_vectors" FROM marts.docs_status',
+      'SELECT "state", "failed_sources"::int AS "failed_sources", "failed_vectors"::int AS "failed_vectors", "pending_files", "failed_files" FROM marts.docs_status',
     ),
-    [{ state: 'current', failed_sources: 2, failed_vectors: 0 }],
+    // A vectorizer that loads columns reads no file, so it counts none,
+    // bigint as the other counts, which postgres.js reads as text.
+    [
+      {
+        state: 'current',
+        failed_sources: 2,
+        failed_vectors: 0,
+        pending_files: '0',
+        failed_files: '0',
+      },
+    ],
   );
 });
 
@@ -930,4 +950,138 @@ test('the vectorizer refuses a metadata column named keywords, the tsvector colu
         /^Vectorizer docs cannot give the metadata column keywords: the passages have a column of that name/,
     },
   );
+});
+
+// Copied from src/sqlite.test.ts (docs/copied-test-helpers.md): the text of
+// a plain text file.
+class TextParser extends DocumentParser {
+  constructor() {
+    super('text/plain');
+  }
+
+  override async parse(path: string) {
+    return readFile(path, 'utf8');
+  }
+}
+
+// Copied from src/sqlite.test.ts (docs/copied-test-helpers.md): files of a
+// folder, each with the name the test gives it.
+class Notes extends Source {
+  readonly identity = 'notes';
+  rows: readonly { readonly name: string; readonly file: string }[] = [];
+  readonly notes = new Stream({
+    name: 'notes',
+    jsonSchema: {
+      type: 'object',
+      description: 'A note.',
+      properties: { name: { type: 'string', description: 'Name.' } },
+      required: ['name'],
+    },
+    primaryKey: ['name'],
+    supportedSyncModes: ['full_refresh'],
+    supportsFileTransfer: true,
+  });
+  protected readonly catalog = new Catalog([this.notes]);
+
+  override coverage() {
+    return { description: 'test', selection: {} };
+  }
+
+  override async currentAsOf() {
+    return null;
+  }
+
+  protected override async open() {
+    return new AsyncDisposableStack();
+  }
+
+  override changeSignals(streams: readonly Stream[]) {
+    const gauge = new (class extends Gauge<number> {
+      protected async read() {
+        return 0;
+      }
+    })();
+    return [{ gauge, streams, interval: 1000, timeout: 1000 }];
+  }
+
+  protected override async *extract(configuration: CopyConfiguration) {
+    for (const { name, file } of this.rows)
+      yield { stream: configuration.stream.name, data: { name }, file };
+  }
+}
+
+test('the status view counts the files whose text the parser failed, and the next refresh with a parser that reads them counts none', async () => {
+  await using database = await databases.database();
+  await using scratch = await new TemporaryFiles().directory('vectorizer-');
+  const url = database.connectionString;
+  const folder = join(scratch.path, 'notes');
+  await mkdir(folder);
+  await writeFile(join(folder, 'good.txt'), 'call the cooperative');
+  await writeFile(join(folder, 'bad.txt'), 'renew the lease');
+  const refusing = new (class extends TextParser {
+    override async parse(path: string) {
+      const text = await super.parse(path);
+      if (text.includes('lease')) throw new Error('the parser refuses');
+      return text;
+    }
+  })();
+  const run = (parser: DocumentParser) => {
+    const source = new Notes();
+    source.rows = [
+      { name: 'good', file: join(folder, 'good.txt') },
+      { name: 'bad', file: join(folder, 'bad.txt') },
+    ];
+    const files = new LocalFiles({ directory: join(scratch.path, 'files') });
+    const destination = new PostgresDestination({ url });
+    const notes = destination.table('notes', (c) => [
+      c.text('name').primaryKey(),
+      c.text('noteRef').from(source.notes.file.store(files)),
+    ]);
+    return new Pipeline({
+      clock: globalThis,
+      history: new PostgresSyncHistory({ url }),
+      connections: [
+        new Connection({
+          name: 'notes',
+          source,
+          destination,
+          checkpoints: new PostgresCheckpointStore({ url }),
+          steps: [new Copy(source.notes, notes)],
+        }),
+      ],
+      derived: [
+        new Vectorizer({
+          into: destination,
+          from: notes,
+          name: 'docs',
+          description: 'The notes.',
+          key: 'name',
+          loading: { file: 'noteRef', files, parser: () => parser },
+          chunking: 'none',
+          embedding: {
+            model: new LetterModel(),
+            dimensions: 26,
+            clock: globalThis,
+          },
+        }),
+      ],
+    }).run();
+  };
+  const status = () =>
+    rowsOf(
+      url,
+      'SELECT "state", "pending_files"::int AS "pending_files", "failed_files"::int AS "failed_files", "failed_sources"::int AS "failed_sources" FROM marts.docs_status',
+    );
+
+  await run(refusing);
+
+  assert.deepEqual(await status(), [
+    { state: 'current', pending_files: 0, failed_files: 1, failed_sources: 0 },
+  ]);
+
+  await run(new TextParser());
+
+  assert.deepEqual(await status(), [
+    { state: 'current', pending_files: 0, failed_files: 0, failed_sources: 0 },
+  ]);
 });

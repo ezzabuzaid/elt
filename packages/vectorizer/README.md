@@ -190,11 +190,13 @@ fix-git:2 software-engineering 0.0159
 "Deploy two git branches\nSet up a git server where a push to main or dev deploys that branch to its own web folder."
 {
   state: 'current',
-  as_of: '2026-11-25T12:49:17.091Z',
+  as_of: '2026-11-25T17:29:12.026Z',
   pending_sources: 0,
   pending_vectors: 0,
   failed_sources: 0,
-  failed_vectors: 0
+  failed_vectors: 0,
+  pending_files: 0,
+  failed_files: 0
 }
 ```
 
@@ -597,11 +599,13 @@ fix-git:2 software-engineering 0.0159
 "Deploy two git branches\nSet up a git server where a push to main or dev deploys that branch to its own web folder."
 {
   state: 'current',
-  as_of: 2026-11-25T12:59:05.355Z,
+  as_of: 2026-11-25T17:57:25.931Z,
   pending_sources: '0',
   pending_vectors: '0',
   failed_sources: '0',
-  failed_vectors: '0'
+  failed_vectors: '0',
+  pending_files: '0',
+  failed_files: '0'
 }
 ```
 
@@ -770,13 +774,14 @@ A vectorizer named `docs` refreshes these members, in this order, where its sour
 | `docs_chunk_texts`     | The text of each part, by its part hash                                                                                                                                                                                                                                                                            |
 | `docs_chunk_vectors`   | The vector of each part text, a computed dataset of `Embedding`                                                                                                                                                                                                                                                    |
 | `docs_passage_vectors` | The vectors: `id`, `vector` and `model`, the identity of the model, for example `openai/text-embedding-3-small (1536 dimensions)`                                                                                                                                                                                  |
-| `docs_status`          | One row: `state`, `as_of`, `pending_sources`, `pending_vectors`, `failed_sources` and `failed_vectors`                                                                                                                                                                                                             |
+| `docs_status`          | One row: `state`, `as_of`, `pending_sources`, `pending_vectors`, `failed_sources`, `failed_vectors`, `pending_files` and `failed_files`                                                                                                                                                                            |
 
 - The id of a passage is `<source>:<seq>`.
 - The passages of a source row tile its text: `start` and `end` count code points, and `ContextWindow` merges passages by them with no gap.
 - A part text that many passages share is embedded once.
 - A vector that the model failed is not in `docs_passage_vectors`, so a vector search never gives its passage. A keyword search still gives it.
-- `docs_status` counts the work that failed: `failed_sources` the source rows whose passages failed, which no search finds, and `failed_vectors` the passage texts whose vectors failed, whose passages a search by meaning misses. These are the `failed` counts of `docs_chunks` and `docs_chunk_vectors` in `derived_status`, and the refresh after the next pass tries each such row again. A failed row does not change `state`: `current` says that each relation finished its refresh, as it does in `derived_status`, and `failed` stays the state of a relation whose refresh failed. So a search by meaning finds every passage only when `state` is `current` and `pending_vectors` and `failed_vectors` are 0 (#5660).
+- `docs_status` counts the work that failed: `failed_sources` the source rows whose passages failed, which no search finds, and `failed_vectors` the passage texts whose vectors failed, whose passages a search by meaning misses. These are the `failed` counts of `docs_chunks` and `docs_chunk_vectors` in `derived_status`, and the refresh after the next pass tries each such row again. A failed row does not change `state`: `current` says that each relation finished its refresh, as it does in `derived_status`, and `failed` stays the state of a relation whose refresh failed. So a search by meaning finds every passage only when `state` is `current` and `pending_vectors` and `failed_vectors` are 0 (#5660), and with files also `pending_files` and `failed_files`.
+- With `loading: { file }`, `docs_status` also counts the stored files: `pending_files` the files that wait for their text, and `failed_files` the files whose text the parser failed, whose source rows no search finds. These are the `pending` and `failed` counts of `docs_text` in `derived_status`. They count files, not source rows, because rows can share a file. A failed file, as a failed row, does not change `state`, and the refresh after the next pass reads it again. With `loading: { columns }` the vectorizer reads no file, so both read 0: the view has the same columns for each kind of loading and each engine (#5685).
 - The keywords table, the FTS5 table and its three triggers are one declaration. When one of them differs from the declaration, the next refresh makes all of them again. See [ADR 0002](./docs/adr/0002-the-keyword-index-is-a-member-that-keeps-a-keywords-table-and-its-full-text-index-in-step.md).
 
 ## One passage for each row

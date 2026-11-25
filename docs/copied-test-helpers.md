@@ -108,3 +108,16 @@ The stand-in is an executable that replaces the codex CLI in a test, because the
 | `packages/vectorizer` | `src/testing/letter-model.ts` | Only `answers`, `hangs` and `embedded`; `modelId` is `letters` when absent. The tests of each subpath import it (`sqlite.test.ts`, `postgresql.test.ts`, `sqlserver.test.ts`) |
 
 The recipes of `packages/chunking` and `packages/destinations/sqlserver` have their own letter model, since a recipe is a full program that imports no test file.
+
+## Vectorizer notes and text parser
+
+`Notes` is a `Source` that gives one row with a stored file for each file of a folder, and `TextParser` is a `DocumentParser` that reads a plain text file. A vectorizer test with `loading: { file }` needs both, through a real `Pipeline`.
+
+### Copied, two places in one package (strike 2)
+
+| Package               | File                     | What differs                                                                              |
+| --------------------- | ------------------------ | ----------------------------------------------------------------------------------------- |
+| `packages/vectorizer` | `src/sqlite.test.ts`     | The source                                                                                |
+| `packages/vectorizer` | `src/postgresql.test.ts` | Nothing; the test that uses them builds its `PostgresDestination` pipeline inline (#5685) |
+
+A third place in the package moves both into `src/testing/`. Until then, mirror each fix in both files and name both in the commit.
