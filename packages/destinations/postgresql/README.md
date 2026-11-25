@@ -6,6 +6,70 @@ This README tells about the Postgres destination. The pipeline itself is in [elt
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md), and the glossary of [elt](../../elt/CONTEXT.md) for the words of all of elt.
 
+## Use it
+
+Install the package with the pipeline of elt:
+
+```sh
+npm install @eltjs/elt @eltjs/elt-postgresql
+```
+
+The smallest program loads the rows that the host holds into a Postgres database, through an `IterableSource` of elt:
+
+```ts
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
+import {
+  PostgresDestination,
+  PostgresSyncHistory,
+} from '@eltjs/elt-postgresql';
+
+const url = 'postgres://warehouse:warehouse@127.0.0.1:55432/warehouse';
+const source = new IterableSource({
+  identity: 'tasks',
+  streams: {
+    tasks: {
+      description: 'The tasks that the host gives.',
+      jsonSchema: {
+        type: 'object',
+        description: 'A task.',
+        properties: {
+          name: { type: 'string', description: 'Name of the task.' },
+          text: { type: 'string', description: 'What the task asks.' },
+        },
+        required: ['name', 'text'],
+      },
+      primaryKey: ['name'],
+      deletions: 'closed-world',
+      snapshot: () => [
+        { name: 'a', text: 'a' },
+        { name: 'b', text: 'b' },
+      ],
+    },
+  },
+});
+const destination = new PostgresDestination({ url });
+
+await new Pipeline({
+  clock: globalThis,
+  history: new PostgresSyncHistory({ url }),
+  connections: [
+    new Connection({
+      name: 'tasks',
+      source,
+      destination,
+      steps: [
+        new Copy(source.streams.tasks, destination.table('tasks'), {
+          syncMode: 'full_refresh',
+          destinationSyncMode: 'overwrite_dedup',
+        }),
+      ],
+    }),
+  ],
+}).run();
+```
+
+The run loads the two rows into the raw table `_warehouse.raw_tasks`, and readers query them in the reader view `marts.tasks`. A second run that gets the same rows writes no row (`src/iterable-source.test.ts`).
+
 ## Load a stream into Postgres
 
 ```ts
@@ -73,6 +137,19 @@ Inferred columns follow the stream schema. The [string formats](../../elt/README
 - Explicit columns are `columns.text`, `integer`, `real`, `boolean`, `date`, `timestamp` and `blob(field)`, with `.notNull()` and `.primaryKey()`. `columns.int64(field)` is a `BIGINT` that loads decimal text exactly, and `columns.localTimestamp(field, precision)` is a `TIMESTAMP` for SQL Server's `datetime2`, by the rows of the table above: a precision past 6 loads as text.
 - A plain `blob()` stores `BYTEA`, and `text().from(file).parse(parser)` stores the parsed text as `TEXT`. See [files](#files).
 - Table, view and column names follow the [naming rule](../../elt/README.md#names). Postgres compares names with their case, keeps 63 bytes of a name, and reserves `loaded_at`, `committed_in`, `replaced_in` and the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`. The naming rule turns a field `_elt_row_hash` into `elt_row_hash`, so no field takes that name.
+
+Give the explicit columns as the second argument of `table`. The function gets a `PostgresColumns` and returns the `PostgresColumn` of each field (`src/pass-status.test.ts`):
+
+```ts
+const bookings = destination.table('bookings', (columns) => [
+  columns.int64('id').primaryKey(),
+  columns.localTimestamp('start', 3),
+  columns.localTimestamp('exact', 7),
+]);
+```
+
+- A table with explicit columns must have at least one. An empty list throws a `TypeError` (`src/postgres-table.ts`).
+- Each explicit column needs the `description` of its field in the stream, or the declaration of the copy fails.
 
 ## Files
 
@@ -350,14 +427,6 @@ A package can declare its own kind of derived dataset for a Postgres database, f
 - `quote(name)` quotes a name for SQL: in double quotes, with each double quote inside doubled.
 - `marts` and `warehouse` are the names of the two schemas (`'marts'` and `'_warehouse'`). `inMarts(name)` and `inWarehouse(name)` give the quoted, schema-qualified name of a relation in each, for example `"_warehouse"."raw_docs_keywords"`.
 
-## When something fails
-
-- **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the refresh after the next pass tries the input again.
-- **A dataset failure**, for example a query that Postgres refuses, fails only its dataset: its row of `marts.derived_status` has the state `failed` and the error, the other datasets still refresh, and the refresh after the next pass tries it again. A watch yields it as a `DatasetFailure`, and a run rejects with the `DerivedDatasetError` of the failed dataset, or a `DerivedDatasetsError` when more than one failed. See [elt ADR 0031](../../elt/docs/adr/0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md).
-- **A table that is gone**, for example one that a person dropped by hand, is no failure. A computed dataset that reads it waits and keeps its output rows. When the copy loads the table again, the dataset asks the rule only for inputs that changed.
-- **A copy that failed** keeps its last committed rows. The derived datasets read those rows.
-- **The [failure type](../../elt/README.md#failure-types)** of an error of the destination or of `PostgresCheckpointStore` is `config` when Postgres refuses the setup with one of these SQLSTATE codes: `42501` (the role does not have a privilege that a statement needs, for example to make the schemas `_warehouse` and `marts`, or the table `_warehouse._elt_checkpoints`), `28P01` (a wrong password), `28000` (a role that cannot log in) and `3D000` (a database that is not there). A `PostgresSetupError`, such as a database with no type `vector` while the destination may not create the extension, or a server with no pgvector installed, is `config` too. Each other error, for example a server that the load cannot reach, is `system`.
-
 ## Sync history
 
 `PostgresSyncHistory({ url })` is the [sync history](../../elt/README.md#sync-history) of a pipeline that loads into Postgres. Use the same database for the history and the destinations of the connections.
@@ -406,7 +475,171 @@ Each [view](#declare-a-view) and [computed dataset](#declare-a-computed-dataset)
 - A refresh that a stopped process left stays `refreshing` until the next refresh. The status keeps no row versions, so a reading as of a position fails the view, as it fails the other views of the sync history.
 - A status write takes no commit number: it is not data of a position.
 
-## Decisions
+## When something fails
+
+Each error class that a caller handles differently:
+
+| Error                                                         | When                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `TypeError`                                                   | `new PostgresDestination({ url })` or `new PostgresCheckpointStore({ url })` gets a URL that is not `postgres://` or `postgresql://` (`src/postgres-session.ts`; the test "declarations are checked before any connection" in `src/index.test.ts`).                                              |
+| `TypeError`                                                   | A declaration that the destination cannot hold, such as a table with no columns, a reader name that the sync history publishes, a rule column with a name that the dataset keeps for itself, or an index on a column that the table does not have. The destination checks it before it connects. |
+| `TypeError`                                                   | A string that is not a position, or a commit inside a pass, goes to `positions(after)` or `reading(position)`. See [commit numbers and positions](#commit-numbers-and-positions).                                                                                                                |
+| `TypeError`                                                   | `Checkpoint <id> is in use by another run`: another run holds the checkpoint of the copy (`src/postgres-checkpoint-store.ts`; the test "replications checkpoint in parallel, and one already running is refused" in `src/index.test.ts`).                                                        |
+| `RangeError`                                                  | `new PostgresDestination({ url, retention })` gets a negative retention (`src/postgres-destination.ts`). A record that is too large to stage fails its stream with a `RangeError` too (`src/postgres-writer.ts`).                                                                                |
+| `PostgresSetupError`                                          | A computed dataset has a vector column, and the database has no type `vector` while `createExtension` is `false`, or the server has no pgvector installed. Its failure type is `config` (`src/computed-dataset.test.ts`). See [Store vectors](#store-vectors).                                   |
+| `DerivedDatasetError`, `DerivedDatasetsError` of `@eltjs/elt` | A run in which one dataset, or more than one, failed.                                                                                                                                                                                                                                            |
+
+How each failure acts:
+
+- **A rule failure** gives an output row with the status `failed` and the reason in `error`. The run continues, and the refresh after the next pass tries the input again.
+- **A dataset failure**, for example a query that Postgres refuses, fails only its dataset: its row of `marts.derived_status` has the state `failed` and the error, the other datasets still refresh, and the refresh after the next pass tries it again. A watch yields it as a `DatasetFailure`, and a run rejects with the `DerivedDatasetError` of the failed dataset, or a `DerivedDatasetsError` when more than one failed. See [elt ADR 0031](../../elt/docs/adr/0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md).
+- **A table that is gone**, for example one that a person dropped by hand, is no failure. A computed dataset that reads it waits and keeps its output rows. When the copy loads the table again, the dataset asks the rule only for inputs that changed.
+- **A copy that failed** keeps its last committed rows. The derived datasets read those rows.
+- **The [failure type](../../elt/README.md#failure-types)** of an error of the destination or of `PostgresCheckpointStore` is `config` when Postgres refuses the setup with one of these SQLSTATE codes: `42501` (the role does not have a privilege that a statement needs, for example to make the schemas `_warehouse` and `marts`, or the table `_warehouse._elt_checkpoints`), `28P01` (a wrong password), `28000` (a role that cannot log in) and `3D000` (a database that is not there). A `PostgresSetupError`, such as a database with no type `vector` while the destination may not create the extension, or a server with no pgvector installed, is `config` too. Each other error, for example a server that the load cannot reach, is `system`.
+
+## Who uses it
+
+| Consumer                                   | How                                                                                                                                                                                                                                                                                                                                               | Record                                   |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `apps/google`                              | loads Search Console and Google Health into the warehouse with `PostgresDestination`, `PostgresCheckpointStore` and `PostgresSyncHistory` (`apps/google/src/main.ts:44`)                                                                                                                                                                          | commits 2e420801 and ad616615            |
+| `apps/proactive`                           | loads each connection, such as Slack, into the warehouse with `PostgresDestination` and `PostgresCheckpointStore` (`apps/proactive/src/connections/slack.ts:17`), and reads the warehouse as `agent_reader` through `positions()` and `reading()` of a second `PostgresDestination`, for the automations of eca (`apps/proactive/src/main.ts:38`) | commit 68c5fd13; #4253 (commit 5f4781c3) |
+| `@eltjs/vectorizer`, subpath `/postgresql` | declares its datasets with `ComputedDataset`, `View` and `hnsw` (`packages/vectorizer/src/postgresql/vectorizer.ts`), and its keyword index as a kind of derived dataset of its own, with `PostgresDerivedStatus`, `rawTable`, `inWarehouse` and `quote` (`packages/vectorizer/src/postgresql/keyword-index.ts:12`)                               | #5401, #5608 (commit f845aef6)           |
+
+## API
+
+```ts
+// @eltjs/elt-postgresql
+class PostgresDestination extends Destination<PostgresTable> {
+  constructor(options: {
+    url: string; // postgres:// or postgresql://, else a TypeError
+    retention?: Temporal.Duration; // 30 days unless set; negative is a RangeError
+    createExtension?: boolean; // true unless set: CREATE EXTENSION vector when the type is missing
+  });
+  readonly retention: Temporal.Duration;
+  readonly createExtension: boolean;
+  get url(): string;
+  table(
+    name: string, // the reader name: marts.<name> over _warehouse.raw_<name>
+    configure?: (columns: PostgresColumns) => readonly PostgresColumn[],
+  ): PostgresTable;
+  location(target: PostgresTable): string; // 'raw_<name>'
+  positions(
+    after?: string,
+  ): Promise<readonly string[] | { readonly expired: string }>;
+  reading(
+    position?: string,
+  ): Promise<PostgresReading | { readonly expired: string }>;
+  files(): FileStorage; // of @eltjs/elt, in _warehouse._elt_files
+}
+
+class PostgresTable extends Target {
+  constructor(name: string, columns?: readonly PostgresColumn[]);
+  readonly name: string; // the reader name
+  readonly raw: string; // raw_<name>
+  readonly columns: readonly PostgresColumn[]; // empty: inferred from the stream
+}
+
+class PostgresColumns {
+  static fromSchema(schema: Stream['jsonSchema']): readonly PostgresColumn[];
+  text(field: string): PostgresColumn;
+  integer(field: string): PostgresColumn;
+  int64(field: string): PostgresColumn; // BIGINT from decimal text
+  real(field: string): PostgresColumn;
+  boolean(field: string): PostgresColumn;
+  date(field: string): PostgresColumn;
+  timestamp(field: string): PostgresColumn;
+  localTimestamp(field: string, precision: number): PostgresColumn; // TIMESTAMP, text past 6
+  blob(field: string): PostgresColumn;
+}
+
+class PostgresColumn {
+  readonly field: string;
+  readonly name: string;
+  primaryKey(): PostgresColumn;
+  notNull(): PostgresColumn;
+  from(file: FileReference): PostgresColumn;
+  parse(parser: DocumentParser): PostgresColumn;
+}
+
+class View {
+  constructor(options: {
+    into: PostgresDestination;
+    name: string;
+    description: string;
+    columns: Readonly<Record<string, string>>;
+    sql: string;
+  });
+}
+
+class ComputedDataset<Input> {
+  constructor(options: {
+    into: PostgresDestination;
+    name: string;
+    description: string;
+    from: readonly (PostgresTable | View)[];
+    compute:
+      Rule<Input, RuleColumns> | TableRule<Input, RuleColumns, RuleColumns>;
+    indexes?: readonly PostgresIndex[]; // of _warehouse.raw_<name>
+  });
+}
+
+// DatasetIndex and VectorMetric ('cosine' | 'euclidean' | 'dot') are of @eltjs/elt.
+type PostgresIndex = DatasetIndex<'btree', { readonly build: Hnsw }>;
+type Hnsw = {
+  readonly method: 'hnsw';
+  readonly m?: number;
+  readonly efConstruction?: number;
+};
+function hnsw(options?: { m?: number; efConstruction?: number }): Hnsw;
+
+class PostgresCheckpointStore extends CheckpointStore {
+  constructor(options: { url: string });
+}
+
+class PostgresSyncHistory extends SyncHistory<PostgresTable> {
+  constructor(options: { url: string; readers?: readonly string[] });
+}
+
+type PostgresReading = {
+  readonly sql: postgres.Sql; // of postgres.js: its own session, in a REPEATABLE READ READ ONLY transaction
+  readonly position: string;
+  readonly at: Temporal.Instant; // when the commit of the position was made
+} & AsyncDisposable;
+
+// PassState, PassStatus and StreamPassStatus are of @eltjs/elt, exported again here.
+function readPassStatus(url: string): Promise<{
+  readonly pass: PassStatus | null;
+  readonly streams: readonly StreamPassStatus[];
+}>;
+
+class PostgresSetupError extends Error {} // failure type config
+
+// For a kind of derived dataset in another package:
+class PostgresDerivedStatus extends DerivedStatus {
+  constructor(
+    sql: postgres.Sql,
+    dataset: string,
+    kind: 'view' | 'computed',
+    clock: PipelineClock,
+  );
+  // of DerivedStatus: waiting(), refreshing(counts), current(counts?), failed(error)
+}
+function rawTable(name: string): string; // raw_<name>, under the naming rule
+function quote(name: string): string; // "name", each " doubled
+const marts = 'marts';
+const warehouse = '_warehouse';
+function inMarts(name: string): string; // "marts"."<name>"
+function inWarehouse(name: string): string; // "_warehouse"."<name>"
+```
+
+## Documentation
+
+**Recipes**
+
+- [Declare a view, a computed dataset and a pgvector index on Postgres](./docs/recipes/declare-a-view-a-computed-dataset-and-a-vector-index.md)
+- [Read the warehouse as of a position as a reader role](./docs/recipes/read-the-warehouse-as-of-a-position-as-a-reader-role.md)
+
+**Decisions**
 
 - [ADR 0001](./docs/adr/0001-checkpoints-are-kept-beside-the-data.md): checkpoints are kept beside the data.
 - [ADR 0002](./docs/adr/0002-no-transaction-stays-open-between-commits.md): no transaction stays open between commits.
@@ -419,6 +652,11 @@ Each [view](#declare-a-view) and [computed dataset](#declare-a-computed-dataset)
 - [ADR 0009](./docs/adr/0009-a-running-attempt-holds-a-lock-of-its-session.md): a running attempt holds a lock of its session.
 - [ADR 0010](./docs/adr/0010-readers-look-in-marts-and-elt-keeps-its-tables-in-warehouse.md): readers look in `marts`, and elt keeps its tables in `_warehouse`.
 - [ADR 0011](./docs/adr/0011-a-vector-column-is-a-pgvector-vector-with-declared-indexes.md): a vector column is a `vector(n)` of pgvector, with declared indexes.
+- [ADR 0012](./docs/adr/0012-elt-postgresql-drops-in-where-elt-sqlite-was.md): elt-postgresql drops in where elt-sqlite was.
+
+**Copied code**
+
+- [Code copied from elt-sqlite](./docs/copied-from-elt-sqlite.md): the copies of elt-sqlite code that this package keeps, by the Rule of Three.
 
 ## Development
 
@@ -432,20 +670,40 @@ npx nx run elt-postgresql:build       # compiles src/ to dist/
 
 ```
 src/
-  postgres-destination.ts         PostgresDestination: tables and the load
+  index.ts                        the exports of the package
+  postgres-destination.ts         PostgresDestination: tables, the load, positions, readings and files
+  postgres-table.ts               PostgresTable: the reader name, the raw table and the columns
+  postgres-columns.ts             PostgresColumns: the explicit columns, and the columns of a stream schema
+  postgres-column.ts              PostgresColumn: the type of each column, and the encode of its value
+  postgres-identifiers.ts         the naming rule of Postgres, and rawTable
+  identifier.ts                   quote, and the refusal of a name that Postgres cannot hold
+  postgres-schemas.ts             marts and _warehouse, inMarts and inWarehouse
+  postgres-session.ts             one session, the URL check, and the lock and make of a schema
+  postgres-load.ts                the one connection of a run, and its record in the numbering
   postgres-writer.ts              the stage, the commit, evolve and reload of a table
-  postgres-column.ts              the type of each column
+  postgres-append-writer.ts       the writer of an append
+  postgres-overwrite-writer.ts    the writer of an overwrite, by DELETE
+  postgres-deduplicating-writer.ts the writer of a deduplicating load
+  postgres-fit.ts                 the stored columns of a table, and whether they fit the stream
+  postgres-comments.ts            the comments of a target
   postgres-reader-view.ts         the reader view of a table, as of a position
   postgres-history.ts             the history of a table, and the row hash
   postgres-numbering.ts           commit numbers, loads and positions
-  postgres-as-of.ts               a reading of the database as of a position
+  postgres-as-of.ts               PostgresReading: a reading of the database as of a position
+  postgres-files.ts               the file storage in _warehouse._elt_files
   view.ts                         View
   computed-dataset.ts             ComputedDataset
+  postgres-parts-table.ts         the parts table of a computed dataset with a TableRule
+  postgres-rule-columns.ts        the type and the value of a rule column, a vector included
+  postgres-indexes.ts             hnsw, PostgresIndex, and the declared indexes of a table
   postgres-views.ts               the publication of views, for View and the sync history
   postgres-dependents.ts          the views over a table, made again over its change
   postgres-privileges.ts          the privileges of a relation, kept across its change
-  postgres-derived-status.ts      the status that each derived dataset keeps of itself
+  postgres-derived-status.ts      PostgresDerivedStatus: the status that each derived dataset keeps of itself
   postgres-checkpoint-store.ts    PostgresCheckpointStore
   postgres-sync-history.ts        PostgresSyncHistory and the catalog
   postgres-sync-history-schema.ts the tables and views of the history
+  postgres-passes.ts              readPassStatus
+  postgres-failure-type.ts        the failure type of an error: config or system
+  postgres-setup-error.ts         PostgresSetupError
 ```

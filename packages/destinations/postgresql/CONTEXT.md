@@ -60,6 +60,10 @@ _Avoid_: Version (a version is a row of a table or of its history), log
 The id that names the numbering of a database. A new database, or one whose `_warehouse` was dropped, has a new epoch, and its numbers start again.
 _Avoid_: Generation, version
 
+**Load**:
+A row of `_warehouse._elt_loads`: one pass of a connection, under the name of the connection in `connector`, or one refresh of a computed dataset, under its name in `dataset`. A load of a connection opens when the pass starts to load, and closes when the pass ends. A load that opens closes each load of the same connector or dataset that is still open, because the process of that load ended first. A closed load cannot commit. A clear is a load of one commit.
+_Avoid_: Batch, job, run (a run is one call of `pipeline.run()`)
+
 **Position**:
 `<epoch>:<number>`: the last commit of a closed load, when no other load of the database has commits before and after it. A reader at a position sees no part of a pass.
 _Avoid_: Offset, cursor (eca keeps a cursor), checkpoint
@@ -91,3 +95,7 @@ _Avoid_: TTL, expiry (an expired position is what the retention leaves)
 **Reading**:
 A read-only transaction, of its own session, that sees the database as of one position: each reader view reads `elt.position`.
 _Avoid_: Snapshot (a reading has one, but a snapshot alone shows commits inside a pass), time travel
+
+**Reader role**:
+A Postgres role that a host names in `readers` of `PostgresSyncHistory`, for example `agent_reader`. It calls `positions()` and `reading()` with its own session. Each install grants it `USAGE` on `_warehouse` and `SELECT` on the numbering, and nothing else; who may read `marts` is a grant of the database. See [ADR 0007](./docs/adr/0007-readers-are-named-on-the-sync-history.md).
+_Avoid_: Reader user, grantee, reader (any session that queries `marts` is a reader)
