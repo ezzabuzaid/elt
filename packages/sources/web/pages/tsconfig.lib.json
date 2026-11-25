@@ -19,6 +19,9 @@
     },
     {
       "path": "../../../sdks/web/crawler/tsconfig.lib.json"
+    },
+    {
+      "path": "../../../sdks/web/product/tsconfig.lib.json"
     }
   ]
 }
