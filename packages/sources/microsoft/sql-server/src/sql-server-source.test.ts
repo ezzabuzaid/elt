@@ -147,11 +147,24 @@ function watchSqlServer(
   }).watch({ signal });
 }
 
-// The streams of the next pass of a watch, by name.
+// The streams of the next pass of a watch, by name, each of which loaded. A
+// copy that fails for a system reason loads again 10 s later on the watch's
+// clock, and that retry, which no check made, would read as a wake.
 function loadedBy(result: IteratorResult<WatchEvent<PostgresTable>>): string[] {
   assert.ok(!result.done, 'the watch ended before its pass');
   assert.equal(result.value.kind, 'pass');
-  return result.value.outcomes.map(({ copy }) => copy.from.name).sort();
+  const { outcomes } = result.value;
+  assert.deepEqual(
+    outcomes.flatMap(({ copy, failures }) =>
+      failures.map(({ failureType, error }) => [
+        copy.from.name,
+        failureType,
+        String(error),
+      ]),
+    ),
+    [],
+  );
+  return outcomes.map(({ copy }) => copy.from.name).sort();
 }
 
 // A watch on a fake clock, because a check waits 30 s and the hourly
