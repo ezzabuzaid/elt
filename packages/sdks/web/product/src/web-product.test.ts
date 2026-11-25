@@ -6,8 +6,8 @@ import { WebProduct } from './index.ts';
 // The time each page was downloaded.
 const at = Date.parse('2026-11-24T12:00:00Z');
 
-function page(blocks: readonly string[], body = '') {
-  return `<!doctype html><html><head>${blocks
+function page(blocks: readonly string[], body = '', lang = 'en') {
+  return `<!doctype html><html lang="${lang}"><head>${blocks
     .map((block) => `<script type="application/ld+json">${block}</script>`)
     .join('')}</head><body>${body}</body></html>`;
 }
@@ -19,7 +19,7 @@ const price = (amount: string, currency = 'JOD') => ({
   range: null,
 });
 
-test('a JSON-LD block that JSON.parse refuses is read, when a trailing comma, a CDATA or comment frame or HTML entities break it', () => {
+test('a JSON-LD block that JSON.parse refuses is read, when a trailing comma, a CDATA or comment frame or HTML entities break it, and one that nothing repairs leaves the next block', () => {
   const url = 'https://shop.example.jo/products/kettle';
   const product = JSON.stringify({
     '@context': 'https://schema.org',
@@ -28,19 +28,31 @@ test('a JSON-LD block that JSON.parse refuses is read, when a trailing comma, a 
     url,
     offers: { '@type': 'Offer', price: '12.000', priceCurrency: 'JOD' },
   });
-  for (const [form, block] of Object.entries({
-    'a trailing comma': product.replace(/}$/, ',}'),
-    'a CDATA frame': `/*<![CDATA[*/${product}/*]]>*/`,
-    'an HTML comment frame': `<!--${product}-->`,
-    'HTML entities': product.replaceAll('"', '&quot;'),
+  for (const [form, blocks] of Object.entries({
+    'a trailing comma': [product.replace(/}$/, ',}')],
+    'a CDATA frame': [`/*<![CDATA[*/${product}/*]]>*/`],
+    'an HTML comment frame': [`<!--${product}-->`],
+    'HTML entities': [product.replaceAll('"', '&quot;')],
+    'a block that nothing repairs before it': ['<%= product %>', product],
   })) {
-    const read = WebProduct.read(page([block]), url, at);
+    const read = WebProduct.read(page(blocks), url, at);
     assert.deepEqual(
       { name: read?.name, price: read?.price },
-      { name: 'Kettle "Black"', price: price('12.000') },
+      { name: 'Kettle "Black"', price: price('12') },
       form,
     );
   }
+  // A script element's text is raw: valid JSON keeps the entities it writes.
+  assert.equal(
+    WebProduct.read(
+      page([
+        JSON.stringify({ '@type': 'Product', name: 'Salt &amp; Pepper', url }),
+      ]),
+      url,
+      at,
+    )?.name,
+    'Salt &amp; Pepper',
+  );
 });
 
 test("a page that declares several products of which none is the page's has no product", () => {
@@ -57,14 +69,15 @@ test("a page that declares several products of which none is the page's has no p
 
 test("the page's product is the one whose url or @id is the page or its canonical URL, also when a related product comes first", () => {
   const url =
-    'https://leaders.jo/%D8%A7%D9%84%D9%85%D9%86%D8%AA%D8%AC/folg-10s/?utm_source=search';
+    'https://leaders.jo/%d8%a7%d9%84%d9%85%d9%86%d8%aa%d8%ac/folg-10s/?utm_source=search';
   const related = {
     '@type': 'Product',
     name: 'Folg 10S case',
     url: 'https://leaders.jo/case',
   };
   const cases = {
-    // leaders.jo writes its @id with Arabic letters and its page with escapes.
+    // leaders.jo writes its @id with Arabic letters and its page URL with
+    // lowercase escapes, which a URL parser writes in upper case.
     'its @id, with the escapes and a fragment': {
       '@type': 'Product',
       '@id': 'https://leaders.jo/المنتج/folg-10s/?utm_source=search#product',
@@ -94,6 +107,56 @@ test("the page's product is the one whose url or @id is the page or its canonica
       'Folg 10S',
       form,
     );
+});
+
+test("a variant is not the page's product: the group that names it is, whether it names the group or the group lists it by @id", () => {
+  const url = 'https://shop.example.jo/products/shirt';
+  const group = {
+    '@type': 'ProductGroup',
+    '@id': `${url}#group`,
+    name: 'Shirt',
+    hasVariant: [{ '@id': `${url}?size=m#variant` }],
+  };
+  const listed = {
+    '@type': 'Product',
+    '@id': `${url}?size=m#variant`,
+    name: 'Shirt - M',
+    size: 'M',
+    offers: { '@type': 'Offer', price: '15', priceCurrency: 'JOD' },
+  };
+  const naming = {
+    '@type': 'Product',
+    name: 'Shirt - L',
+    size: 'L',
+    isVariantOf: { '@id': `${url}#group` },
+  };
+
+  const read = WebProduct.read(
+    page([JSON.stringify({ '@graph': [listed, naming, group] })]),
+    'https://shop.example.jo/c/shirts',
+    at,
+  );
+  assert.deepEqual(
+    { name: read?.name, variants: read?.variants.map(({ size }) => size) },
+    { name: 'Shirt', variants: ['M'] },
+  );
+});
+
+test('a product that a page writes in both JSON-LD and microdata is one product, read from its JSON-LD', () => {
+  const url = 'https://shop.example.jo/p/1';
+  const read = WebProduct.read(
+    page(
+      [JSON.stringify({ '@type': 'Product', name: 'Kettle', url })],
+      '<div itemscope itemtype="https://schema.org/Product"><h1 itemprop="name">Kettle</h1></div>',
+    ),
+    'https://shop.example.jo/p/1?ref=home',
+    at,
+  );
+
+  assert.deepEqual(
+    { name: read?.name, syntax: read?.syntax },
+    { name: 'Kettle', syntax: 'json-ld' },
+  );
 });
 
 test('a product without a name is no product', () => {
@@ -140,17 +203,17 @@ test('the offer’s price wins over its price specifications, and a struck price
   ])
     assert.deepEqual(
       read('25.000', priceType),
-      { ...price('20.000'), regular: '25.000' },
+      { ...price('20'), regular: '25' },
       priceType,
     );
   assert.deepEqual(
     read('15.000', 'https://schema.org/ListPrice'),
-    price('20.000'),
+    price('20'),
     'a lower struck price',
   );
 });
 
-test('without an offer price, the active price specification is the price: no member tier, and inside its validFrom and validThrough', () => {
+test('without an offer price, the active price specification is the price: no price type but SalePrice, no member tier, and inside its validFrom and validThrough', () => {
   const url = 'https://shop.example.jo/p/1';
   const read = (specifications: readonly object[]) =>
     WebProduct.read(
@@ -168,6 +231,7 @@ test('without an offer price, the active price specification is the price: no me
 
   assert.deepEqual(
     read([
+      { price: '12.000', priceCurrency: 'JOD', priceType: 'ListPrice' },
       {
         price: '6.000',
         priceCurrency: 'JOD',
@@ -176,9 +240,8 @@ test('without an offer price, the active price specification is the price: no me
       { price: '7.000', priceCurrency: 'JOD', validThrough: '2026-11-01' },
       { price: '8.000', priceCurrency: 'JOD', validFrom: '2026-12-01' },
       { price: '10.000', priceCurrency: 'JOD', validThrough: '2026-12-31' },
-      { price: '12.000', priceCurrency: 'JOD', priceType: 'ListPrice' },
     ]),
-    { ...price('10.000'), regular: '12.000' },
+    { ...price('10'), regular: '12' },
   );
   // WooCommerce gives a variable product on sale a SalePrice specification.
   assert.deepEqual(
@@ -189,64 +252,87 @@ test('without an offer price, the active price specification is the price: no me
         priceType: 'https://schema.org/SalePrice',
       },
     ]),
-    price('9.000'),
+    price('9'),
   );
 });
 
-test("an AggregateOffer's lowest price is the price, with its range", () => {
+test("an AggregateOffer's lowest price is the price, with its range, and its price stands in for a lowPrice that it does not give", () => {
   const url = 'https://shop.example.jo/p/1';
-  const block = JSON.stringify({
-    '@type': 'Product',
-    name: 'Kettle',
-    url,
-    offers: {
-      '@type': 'AggregateOffer',
-      lowPrice: 5,
-      highPrice: '9.500',
-      priceCurrency: 'JOD',
-      offerCount: 3,
-    },
-  });
-
-  assert.deepEqual(WebProduct.read(page([block]), url, at)?.price, {
-    ...price('5'),
-    range: { low: '5', high: '9.500' },
-  });
-});
-
-test('of several offers, the lowest that a buyer can order wins, in the currency of the first offer', () => {
-  const url = 'https://shop.example.jo/p/1';
-  const read = (offers: readonly object[]) =>
+  const read = (offers: object) =>
     WebProduct.read(
       page([
         JSON.stringify({ '@type': 'Product', name: 'Kettle', url, offers }),
       ]),
       url,
       at,
-    );
+    )?.price;
 
-  const several = read([
-    { price: '15.000', priceCurrency: 'JOD', availability: 'OutOfStock' },
-    { price: '12.000', priceCurrency: 'USD', availability: 'InStock' },
-    {
-      price: '14.000',
+  assert.deepEqual(
+    read({
+      '@type': 'AggregateOffer',
+      lowPrice: 5,
+      highPrice: '9.500',
       priceCurrency: 'JOD',
-      availability: 'https://schema.org/InStock',
-    },
-    { price: '16.000', priceCurrency: 'JOD', availability: 'InStock' },
-  ]);
-  assert.deepEqual(
-    { price: several?.price, availability: several?.availability },
-    { price: price('14.000'), availability: 'InStock' },
+      offerCount: 3,
+    }),
+    { ...price('5'), range: { low: '5', high: '9.5' } },
   );
-  // A currency is kept as the shop gives it.
   assert.deepEqual(
-    read([{ price: '30', priceCurrency: 'USD' }])?.price,
-    price('30', 'USD'),
+    read({ '@type': 'AggregateOffer', price: '7', priceCurrency: 'JOD' }),
+    price('7'),
   );
 });
 
-test('a price is a decimal string with its decimals as written, and a value that is not one positive price is no price', () => {
+test('of several offers, the lowest that a buyer can order wins, in the currency of the first offer', () => {
+  const url = 'https://shop.example.jo/p/1';
+  const read = (offers: readonly object[]) => {
+    const product = WebProduct.read(
+      page([
+        JSON.stringify({ '@type': 'Product', name: 'Kettle', url, offers }),
+      ]),
+      url,
+      at,
+    );
+    return { price: product?.price, availability: product?.availability };
+  };
+
+  assert.deepEqual(
+    read([
+      { price: '15.000', priceCurrency: 'JOD', availability: 'InStock' },
+      { price: '10.000', priceCurrency: 'JOD', availability: 'OutOfStock' },
+      {
+        price: '14.000',
+        priceCurrency: 'JOD',
+        availability: 'https://schema.org/InStock',
+      },
+      { price: '12.000', priceCurrency: 'USD', availability: 'InStock' },
+    ]),
+    { price: price('14'), availability: 'InStock' },
+  );
+  assert.deepEqual(
+    read([
+      { price: '15.000', priceCurrency: 'JOD', availability: 'OutOfStock' },
+      { price: '13.000', priceCurrency: 'JOD', availability: 'SoldOut' },
+    ]),
+    { price: price('13'), availability: 'SoldOut' },
+    'every offer out of stock',
+  );
+  assert.deepEqual(
+    read([
+      { price: '15.000', priceCurrency: 'JOD', availability: 'OutOfStock' },
+      { price: '16.000', priceCurrency: 'JOD' },
+    ]),
+    { price: price('16'), availability: null },
+    'an offer that gives no availability',
+  );
+  // A currency is kept as the shop gives it.
+  assert.deepEqual(read([{ price: '30', priceCurrency: 'USD' }]), {
+    price: price('30', 'USD'),
+    availability: null,
+  });
+});
+
+test('a price is an exact decimal string with one spelling for each value, and a value that is not one positive price is no price', () => {
   const url = 'https://shop.example.jo/p/1';
   const read = (value: unknown) =>
     WebProduct.read(
@@ -270,18 +356,22 @@ test('a price is a decimal string with its decimals as written, and a value that
       '70.000 د.أ',
       '1,299.99',
       '١٢٠',
+      '۱۵۰',
+      '007.50',
       'Call us',
       '0',
       '0.000',
       '1.2.3',
     ].map(read),
     [
-      '12.000',
+      '12',
       '12.5',
-      '70.000',
-      '70.000',
+      '70',
+      '70',
       '1299.99',
       '120',
+      '150',
+      '7.5',
       null,
       null,
       null,
@@ -298,7 +388,8 @@ test('a WooCommerce product in a @graph is read with the objects its @id referen
   const image =
     'https://leaders.jo/wp-content/uploads/2025/06/تابلت-فولج-10S-لون-لافندر-أورا.jpg';
   // The objects of the page's @graph that the product refers to, captured on
-  // 2026-11-24, with the description and the shipping details shortened.
+  // 2026-11-24, with the description and the shipping details shortened, and
+  // a related product beside it, so the page's own is found by its @id.
   const block = JSON.stringify({
     '@context': 'https://schema.org',
     '@graph': [
@@ -314,6 +405,11 @@ test('a WooCommerce product in a @graph is read with the objects its @id referen
       {
         '@type': ['Organization', 'Place'],
         '@id': 'https://leaders.jo/#organization',
+      },
+      {
+        '@type': 'Product',
+        name: 'Folg 10S case',
+        url: 'https://leaders.jo/case/',
       },
       {
         '@type': 'Product',
@@ -371,7 +467,7 @@ test('a WooCommerce product in a @graph is read with the objects its @id referen
     color: null,
     size: null,
     rating: null,
-    price: price('104.00'),
+    price: price('104'),
     availability: 'InStock',
     itemCondition: 'NewCondition',
     variants: [],
@@ -379,18 +475,45 @@ test('a WooCommerce product in a @graph is read with the objects its @id referen
   });
 });
 
+test('an object that a product names by @id is found also where another object nests it', () => {
+  const url = 'https://shop.example.jo/p/1';
+  const block = JSON.stringify({
+    '@graph': [
+      {
+        '@type': 'WebPage',
+        '@id': url,
+        publisher: {
+          '@type': 'Organization',
+          '@id': `${url}#maker`,
+          name: 'Panasonic',
+        },
+      },
+      {
+        '@type': 'Product',
+        name: 'Trimmer',
+        url,
+        brand: { '@id': `${url}#maker` },
+      },
+    ],
+  });
+
+  assert.equal(WebProduct.read(page([block]), url, at)?.brand, 'Panasonic');
+});
+
 test('a product that a page declares only in microdata is read with its offer, its content attributes and its URLs resolved', () => {
   const url =
     'https://timemachine.jo/ar_001/shop/90100058180-black-pixoo-slingbag-spark-your-life-2108';
-  // The microdata of timemachine.jo's Odoo shop as it gave it on 2026-11-24:
-  // hidden spans, a URL and an image without the page's language prefix, and
-  // Odoo's own listPrice, which schema.org does not define. The meta element
-  // is the content form that Shopify themes use.
+  // The microdata of timemachine.jo's Odoo shop as it gave it on 2026-11-24,
+  // in a page of language ar-001: hidden spans, a URL and an image without
+  // the page's language prefix, and Odoo's own listPrice, which schema.org
+  // does not define. The meta element is the content form that Shopify
+  // themes use, and the link element a second image by a relative URL.
   const body = `
     <div itemscope="itemscope" itemtype="http://schema.org/Product" id="wrap">
       <h1 itemprop="name">Pixoo Slingbag - Spark Your Life</h1>
       <span itemprop="url" style="display:none;">https://www.TimeMachine.jo/shop/90100058180-black-pixoo-slingbag-spark-your-life-2108</span>
       <span itemprop="image" style="display:none;">https://www.TimeMachine.jo/web/image/product.template/2108/image_1920?unique=8709572</span>
+      <link itemprop="image" href="/web/image/product.template/2108/image_1024">
       <div itemprop="offers" itemscope="itemscope" itemtype="http://schema.org/Offer">
         <span itemprop="price" style="display:none;">70.0</span>
         <span itemprop="priceCurrency" style="display:none;">JOD</span>
@@ -399,7 +522,7 @@ test('a product that a page declares only in microdata is read with its offer, i
       </div>
     </div>`;
 
-  const read = WebProduct.read(page([], body), url, at);
+  const read = WebProduct.read(page([], body, 'ar-001'), url, at);
 
   assert.deepEqual(
     {
@@ -415,61 +538,64 @@ test('a product that a page declares only in microdata is read with its offer, i
       url: 'https://www.timemachine.jo/shop/90100058180-black-pixoo-slingbag-spark-your-life-2108',
       images: [
         'https://www.timemachine.jo/web/image/product.template/2108/image_1920?unique=8709572',
+        'https://timemachine.jo/web/image/product.template/2108/image_1024',
       ],
-      price: price('70.0'),
+      price: price('70'),
       availability: 'InStock',
       syntax: 'microdata',
     },
   );
 });
 
-test("a ProductGroup gives its variants, and its price is the variant's that the page's URL names, else the cheapest", () => {
+test("a ProductGroup gives its variants, and its price is the variant's that the page's URL names by its id or its SKU, else the cheapest in the first variant's currency", () => {
   const product = 'https://xmart.jo/products/trimmer';
+  const black = {
+    '@type': 'Product',
+    '@id': `${product}?variant=101#variant`,
+    name: 'Trimmer - Black',
+    sku: 'ER-B',
+    gtin13: '4549980000011',
+    color: 'Black',
+    url: `${product}?variant=101`,
+    image: `${product}-black.jpg`,
+    offers: {
+      '@type': 'Offer',
+      price: '99.0',
+      priceCurrency: 'JOD',
+      availability: 'http://schema.org/InStock',
+    },
+  };
+  const silver = {
+    '@type': 'Product',
+    '@id': `${product}?variant=102#variant`,
+    name: 'Trimmer - Silver',
+    sku: 'ER-S',
+    color: 'Silver',
+    url: `${product}?variant=102`,
+    offers: {
+      '@type': 'Offer',
+      price: '89.0',
+      priceCurrency: 'JOD',
+      availability: 'http://schema.org/OutOfStock',
+    },
+  };
   // The shape of Shopify's structured_data filter for a product with variants.
-  const block = JSON.stringify({
-    '@context': 'http://schema.org/',
-    '@type': 'ProductGroup',
-    '@id': `${product}#product`,
-    name: 'Trimmer',
-    url: product,
-    brand: { '@type': 'Brand', name: 'Panasonic' },
-    productGroupID: '8842',
-    variesBy: ['https://schema.org/color'],
-    hasVariant: [
-      {
-        '@type': 'Product',
-        '@id': `${product}?variant=101#variant`,
-        name: 'Trimmer - Black',
-        sku: 'ER-B',
-        gtin13: '4549980000011',
-        color: 'Black',
-        url: `${product}?variant=101`,
-        image: `${product}-black.jpg`,
-        offers: {
-          '@type': 'Offer',
-          price: '99.0',
-          priceCurrency: 'JOD',
-          availability: 'http://schema.org/InStock',
-        },
-      },
-      {
-        '@type': 'Product',
-        '@id': `${product}?variant=102#variant`,
-        name: 'Trimmer - Silver',
-        sku: 'ER-S',
-        color: 'Silver',
-        url: `${product}?variant=102`,
-        offers: {
-          '@type': 'Offer',
-          price: '89.0',
-          priceCurrency: 'JOD',
-          availability: 'http://schema.org/OutOfStock',
-        },
-      },
-    ],
-  });
+  const group = (variants: readonly object[]) =>
+    JSON.stringify({
+      '@context': 'http://schema.org/',
+      '@type': 'ProductGroup',
+      '@id': `${product}#product`,
+      name: 'Trimmer',
+      url: product,
+      brand: { '@type': 'Brand', name: 'Panasonic' },
+      productGroupID: '8842',
+      variesBy: ['https://schema.org/color'],
+      hasVariant: variants,
+    });
+  const read = (url: string, variants: readonly object[] = [black, silver]) =>
+    WebProduct.read(page([group(variants)]), url, at);
 
-  const named = WebProduct.read(page([block]), `${product}?variant=101`, at);
+  const named = read(`${product}?variant=101`);
   assert.deepEqual(named?.variants, [
     {
       name: 'Trimmer - Black',
@@ -480,7 +606,7 @@ test("a ProductGroup gives its variants, and its price is the variant's that the
       images: [`${product}-black.jpg`],
       color: 'Black',
       size: null,
-      price: price('99.0'),
+      price: price('99'),
       availability: 'InStock',
     },
     {
@@ -492,34 +618,62 @@ test("a ProductGroup gives its variants, and its price is the variant's that the
       images: [],
       color: 'Silver',
       size: null,
-      price: price('89.0'),
+      price: price('89'),
       availability: 'OutOfStock',
     },
   ]);
   assert.deepEqual(
     { price: named?.price, availability: named?.availability },
-    { price: price('99.0'), availability: 'InStock' },
-    'the variant that the URL names',
+    { price: price('99'), availability: 'InStock' },
+    'the variant that the URL names by its id',
   );
   assert.deepEqual(
-    WebProduct.read(page([block]), product, at)?.price,
-    price('89.0'),
-    'the cheapest variant',
+    read(`${product}?variant=ER-B`)?.price,
+    price('99'),
+    'the variant that the URL names by its SKU',
+  );
+  assert.deepEqual(read(product)?.price, price('89'), 'the cheapest variant');
+  const unpriced = {
+    '@type': 'Product',
+    name: 'Trimmer - Gold',
+    url: `${product}?variant=103`,
+  };
+  const dollars = {
+    '@type': 'Product',
+    name: 'Trimmer - Import',
+    url: `${product}?variant=104`,
+    offers: { '@type': 'Offer', price: '50', priceCurrency: 'USD' },
+  };
+  assert.deepEqual(
+    read(`${product}?variant=103`, [black, silver, unpriced, dollars])?.price,
+    price('89'),
+    'a named variant without a price, and a cheaper one in another currency',
   );
 });
 
 test("a product's identifiers, rating and attributes are read, its availability and condition as bare names, and a GTIN in URL form is left out", () => {
   const url = 'https://shop.example.jo/p/1';
-  const block = JSON.stringify({
-    '@type': 'Product',
-    name: 'MSI Crosshair 16 HX',
-    url,
+  const read = (product: object) =>
+    WebProduct.read(
+      page([
+        JSON.stringify({ '@type': 'Product', name: 'MSI', url, ...product }),
+      ]),
+      url,
+      at,
+    );
+
+  const full = read({
     sku: 'CityCenter_19067',
     productID: 'CityCenter_19067',
     mpn: '9S7-15C121-042',
     model: { '@type': 'ProductModel', name: '9S7-265343-214' },
+    gtin: '04711377183746',
+    gtin8: '47113771',
+    gtin12: '471137718374',
     gtin13: ['4711377183746', 'https://id.gs1.org/01/04711377183746'],
+    gtin14: '14711377183743',
     brand: 'MSI',
+    image: '/image/msi-crosshair-16.png',
     category: 'Laptops',
     color: 'Core Black',
     size: '16 inch',
@@ -534,39 +688,57 @@ test("a product's identifiers, rating and attributes are read, its availability 
       price: '1899',
       priceCurrency: 'JOD',
       availability: 'http://schema.org/LimitedAvailability',
+      itemCondition: 'https://schema.org/RefurbishedCondition',
     },
   });
-
-  const read = WebProduct.read(page([block]), url, at);
-
   assert.deepEqual(
     {
-      sku: read?.sku,
-      productId: read?.productId,
-      mpn: read?.mpn,
-      model: read?.model,
-      gtins: read?.gtins,
-      brand: read?.brand,
-      category: read?.category,
-      color: read?.color,
-      size: read?.size,
-      rating: read?.rating,
-      availability: read?.availability,
-      itemCondition: read?.itemCondition,
+      sku: full?.sku,
+      productId: full?.productId,
+      mpn: full?.mpn,
+      model: full?.model,
+      gtins: full?.gtins,
+      brand: full?.brand,
+      images: full?.images,
+      category: full?.category,
+      color: full?.color,
+      size: full?.size,
+      rating: full?.rating,
+      availability: full?.availability,
+      itemCondition: full?.itemCondition,
     },
     {
       sku: 'CityCenter_19067',
       productId: 'CityCenter_19067',
       mpn: '9S7-15C121-042',
       model: '9S7-265343-214',
-      gtins: [{ type: 'gtin13', value: '4711377183746' }],
+      gtins: [
+        { type: 'gtin', value: '04711377183746' },
+        { type: 'gtin8', value: '47113771' },
+        { type: 'gtin12', value: '471137718374' },
+        { type: 'gtin13', value: '4711377183746' },
+        { type: 'gtin14', value: '14711377183743' },
+      ],
       brand: 'MSI',
+      images: ['https://shop.example.jo/image/msi-crosshair-16.png'],
       category: 'Laptops',
       color: 'Core Black',
       size: '16 inch',
       rating: { value: '4.5', count: 12 },
       availability: 'LimitedAvailability',
-      itemCondition: 'UsedCondition',
+      // The offer's condition is the one of what it sells.
+      itemCondition: 'RefurbishedCondition',
     },
+  );
+  assert.deepEqual(
+    read({
+      aggregateRating: {
+        '@type': 'AggregateRating',
+        ratingValue: '3.8',
+        ratingCount: 40,
+      },
+    })?.rating,
+    { value: '3.8', count: 40 },
+    'a ratingCount',
   );
 });

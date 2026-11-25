@@ -2,7 +2,7 @@ import { type Thing, first, isThing } from './structured-data.ts';
 
 /** What a product costs at the time the page was downloaded. */
 export type Price = {
-  /** The price to pay, as a decimal string with '.' as its point, such as "12.000" for JOD. */
+  /** The price to pay, as an exact decimal string with one spelling, such as "12" for a JOD page's 12.000. */
   readonly amount: string;
   /** The ISO 4217 code, such as JOD; null when the page gives none. */
   readonly currency: string | null;
@@ -51,10 +51,11 @@ export function text(value: unknown): string | null {
 }
 
 /**
- * A price as a decimal string, as schema.org asks: '.' is the point, a comma
- * is a thousands separator, a currency symbol or code is not part of it, and
- * Arabic-Indic digits are digits. JOD's "12.000" keeps its three decimals.
- * Null for a value that is not one price.
+ * A price as an exact decimal string, as schema.org asks: '.' is the point, a
+ * comma is a thousands separator, a currency symbol or code is not part of it,
+ * and Arabic-Indic digits are digits. Each value has one spelling, with no
+ * trailing zero after the point: JOD's "12.000" is "12", so equal prices are
+ * equal text. Null for a value that is not one price.
  */
 export function decimal(value: unknown): string | null {
   const one = first(value);
@@ -69,7 +70,14 @@ export function decimal(value: unknown): string | null {
     .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 0x0660))
     .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 0x06f0))
     .replace(/[,\s]/g, '');
-  return /^\D*?(\d+(?:\.\d+)?)\D*$/.exec(digits)?.[1] ?? null;
+  const number = /^\D*?(\d+)(?:\.(\d+))?\D*$/.exec(digits);
+  if (number === null) return null;
+  // One spelling for each value, as elt's decimal format asks: no leading
+  // zero before the point, and no trailing zero after it.
+  const [, integer = '', fraction = ''] = number;
+  const whole = integer.replace(/^0+(?=\d)/, '');
+  const decimals = fraction.replace(/0+$/, '');
+  return decimals === '' ? whole : `${whole}.${decimals}`;
 }
 
 // Google shows only a price greater than zero; zero is "price on request".

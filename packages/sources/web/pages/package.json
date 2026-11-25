@@ -12,6 +12,10 @@
       "types": "./dist/page-channels.d.ts",
       "default": "./dist/page-channels.js"
     },
+    "./product-extractor": {
+      "types": "./dist/product-extractor.d.ts",
+      "default": "./dist/product-extractor.js"
+    },
     "./record-extractor": {
       "types": "./dist/record-extractor.d.ts",
       "default": "./dist/record-extractor.js"

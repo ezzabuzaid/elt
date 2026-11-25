@@ -11,14 +11,15 @@ Google's merchant listing documentation, read on 2026-11-24, sets the order: "If
 3. **An AggregateOffer gives its range.** The amount is its `lowPrice`, and the range is `lowPrice` to `highPrice`. When it nests `offers`, they decide.
 4. **Of several offers, the lowest in stock wins, in one currency.** Offers in another currency than the first offer's are not compared.
 5. **A ProductGroup's price is its variant's.** The variant that the page's URL names (Shopify's `?variant=` with the variant's id in its `url` or `sku`) gives the price, else the cheapest variant.
-6. **A price is a decimal string.** schema.org asks for `.` as the point and no symbol. The SDK keeps the digits as written, so JOD's `12.000` stays three decimals. It reads a number as its shortest decimal text, removes a currency symbol and a comma (a thousands separator), and reads Arabic-Indic digits as digits. A price that is still not a decimal is no price, and so is a price of zero, as Google's merchant listings need "a price greater than zero": a shop writes zero for "price on request", and a search would show it as the cheapest. A currency is kept as the shop gives it.
+6. **A price is an exact decimal string with one spelling.** schema.org asks for `.` as the point and no symbol. The SDK reads a number as its shortest decimal text, removes a currency symbol and a comma (a thousands separator), reads Arabic-Indic digits as digits, and writes each value one way, with no leading zero before the point and no trailing zero after it, as elt's decimal format asks: a JOD page's `12.000` is `12`, so two shops' equal prices are equal text. A display adds the currency's minor units (three for JOD, ISO 4217) itself, because shops write one JOD price as `70.0` or as `70.000`. A price that is still not a decimal is no price, and so is a price of zero, as Google's merchant listings need "a price greater than zero": a shop writes zero for "price on request", and a search would show it as the cheapest. A currency is kept as the shop gives it.
 7. **The time is an input.** `at` is when the page was downloaded, so the SDK reads no clock (zukhruf ADR 0004).
 
 ## Considered Options
 
 - **The first price of the page.** A WooCommerce page on sale lists its regular price in its specifications too. This option was rejected.
 - **`priceSpecification` before `price`.** Against Google's documented order. This option was rejected.
-- **Numbers.** A float loses JOD's three decimals and rounds other prices. This option was rejected.
+- **Numbers.** A float rounds prices, such as 0.1 + 0.2. This option was rejected.
+- **The decimals as the page writes them.** One JOD price would be `70.0` on one shop and `70.000` on another, so equal prices would differ as text, and elt's decimal format refuses a trailing zero. This option was rejected.
 - **Google's order, Zyte's regular price and Diffbot's range.** This option was selected.
 
 ## Consequences

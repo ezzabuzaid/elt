@@ -57,7 +57,7 @@ type Gtin = {
 type Rating = { readonly value: string; readonly count: number | null };
 
 type Price = {
-  /** The price to pay, as a decimal string with '.' as its point, such as "12.000" for JOD. */
+  /** The price to pay, as an exact decimal string with one spelling, such as "12" for a JOD page's 12.000. */
   readonly amount: string;
   /** The ISO 4217 code, such as JOD, as the shop gives it; null when it gives none. */
   readonly currency: string | null;
@@ -99,7 +99,7 @@ The SDK reads a price as Google's merchant listings read it ([ADR 0003](./docs/a
 5. Of several offers, the lowest that is in stock wins; prices in two currencies are never compared, and the currency of the first offer wins.
 6. A ProductGroup's price is the price of the variant that the page's URL names (Shopify's `?variant=`), else of its cheapest variant.
 
-A price is a decimal string with `.` as its point, as schema.org asks: `12.000` is twelve JOD. A comma is a thousands separator, a currency symbol or code around the number is not part of it, and Arabic-Indic digits are read as digits. A price of zero is no price, as Google shows only a price greater than zero: a shop writes it for "price on request". A currency is kept as the shop gives it, also USD.
+A price is an exact decimal string with `.` as its point, as schema.org asks, and one spelling for each value, as elt's decimal format asks: a JOD page's `12.000` is `12`, so equal prices are equal text, and a display adds the currency's minor units (three for JOD) itself. A comma is a thousands separator, a currency symbol or code around the number is not part of it, and Arabic-Indic digits are read as digits. A price of zero is no price, as Google shows only a price greater than zero: a shop writes it for "price on request". A currency is kept as the shop gives it, also USD.
 
 ## When something fails
 
