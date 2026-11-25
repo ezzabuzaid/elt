@@ -16,7 +16,8 @@
     "@eltjs/codec-segb": "0.0.1",
     "@eltjs/sdk-macos-app-database": "0.0.1",
     "@zukhruf/sqlite-data-version": "^0.8.115",
-    "@zukhruf/sqlite-snapshot": "^0.8.115"
+    "@zukhruf/sqlite-snapshot": "^0.8.115",
+    "@zukhruf/tcc": "^0.8.128"
   },
   "devDependencies": {
     "@zukhruf/fs": "^0.8.115",

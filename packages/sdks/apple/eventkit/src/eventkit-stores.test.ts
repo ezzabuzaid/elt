@@ -15,9 +15,8 @@ import { promisify } from 'node:util';
 import { ChangeWatcher } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
+import { Calendars, Client, Reminders } from '@zukhruf/tcc';
 import { waitFor } from '@zukhruf/testing/async';
-
-import { macOSAccess } from '@eltjs/sdk-macos-app-database';
 
 import {
   type AccountDocument,
@@ -523,8 +522,7 @@ test('missing access fails reads and watches with the entity’s own error', asy
   );
 });
 
-test('missing access names the program the host installed and the pane that grants it', async () => {
-  macOSAccess.install({ program: 'ChatGPT' });
+test('missing access names the client that macOS charges and the pane that grants it', async () => {
   const denied = (marker: string) =>
     `${marker}: full access is required; status=2\n`;
   await using calendarStub = await StubEventKitHelper.create();
@@ -543,8 +541,7 @@ test('missing access names the program the host installed and the pane that gran
       undefined,
     ),
     {
-      message:
-        'Calendar requires full Calendar access. Turn on ChatGPT in System Settings › Privacy & Security › Calendars. A sandbox can prevent access even when permission is granted.',
+      message: `Calendar requires full Calendar access. ${new Calendars().remedy(Client.responsibleFor(process.pid))} A sandbox can prevent access even when permission is granted.`,
     },
   );
   await assert.rejects(
@@ -553,8 +550,7 @@ test('missing access names the program the host installed and the pane that gran
       undefined,
     ),
     {
-      message:
-        'Reminders requires full Reminders access. Turn on ChatGPT in System Settings › Privacy & Security › Reminders. A sandbox can prevent access even when permission is granted.',
+      message: `Reminders requires full Reminders access. ${new Reminders().remedy(Client.responsibleFor(process.pid))} A sandbox can prevent access even when permission is granted.`,
     },
   );
 });

@@ -12,6 +12,7 @@ import { pathToFileURL } from 'node:url';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
+import { Client, Contacts } from '@zukhruf/tcc';
 import { waitFor } from '@zukhruf/testing/async';
 
 import {
@@ -32,6 +33,10 @@ import {
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleContactsSource } from './apple-contacts-source.ts';
+
+// The remedy that the denied Contacts store gives, from @zukhruf/tcc, for the
+// client that macOS charges this test process to.
+const contacts = new Contacts().remedy(Client.responsibleFor(process.pid));
 
 // The saved entries of a read that resumes from no checkpoint.
 const noEntries: SourceReadOptions['entries'] = async () => new Map();
@@ -1655,7 +1660,7 @@ test(
         assert.equal(error.cause.name, 'StoreUnavailableError');
         assert.match(
           error.cause.message,
-          /ACCOUNT-B.*Turn on the program that runs this process in System Settings › Privacy & Security › Contacts or › Full Disk Access\./,
+          new RegExp(`ACCOUNT-B.*${RegExp.escape(contacts)}`),
         );
         assert.deepEqual(failureTypes(error), ['config']);
         return true;

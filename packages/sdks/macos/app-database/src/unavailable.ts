@@ -1,15 +1,15 @@
 import { MissingError, UnavailableError } from '@zukhruf/sqlite-data-version';
+import { Client } from '@zukhruf/tcc';
 
-import { macOSAccess } from './macos-access.ts';
 import type { Store } from './store.ts';
 
 // The message names the store, says whether it is not there or the system
 // keeps the process from it, and gives what the user does for that reason:
-// for a denial, the grant, naming the program installed in this process,
-// which is the one that failed. The cause decides, not the path: an SDK can
-// name the folder of its store, which is there, for a file inside it that is
-// not. A cause that does not say which keeps the grant, since the store can
-// be there.
+// for a denial, the remedy of the store's TCC service, naming the client that
+// macOS charges the access of this process to, which is the one that failed.
+// The cause decides, not the path: an SDK can name the folder of its store,
+// which is there, for a file inside it that is not. A cause that does not say
+// which keeps the grant, since the store can be there.
 export class StoreUnavailableError extends Error {
   override name = 'StoreUnavailableError';
   readonly store: Store;
@@ -28,7 +28,9 @@ export class StoreUnavailableError extends Error {
       ? ['is not there', store.missing]
       : [
           'cannot be read',
-          store.grant === undefined ? '' : macOSAccess.remedy(store.grant),
+          store.service === undefined
+            ? ''
+            : store.service.remedy(Client.responsibleFor(process.pid)),
         ];
     super(`${store.name} at ${path} ${reason}.${remedy ? ` ${remedy}` : ''}`, {
       cause,

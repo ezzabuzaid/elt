@@ -14,6 +14,7 @@ import {
   MissingColumnsError,
   UnavailableError as SnapshotUnavailableError,
 } from '@zukhruf/sqlite-snapshot';
+import { Client, FullDiskAccess } from '@zukhruf/tcc';
 
 import {
   AppDatabase,
@@ -22,11 +23,17 @@ import {
   StoreUnavailableError,
 } from './index.ts';
 
+// The remedy that a denied store gives: the Full Disk Access sentence of
+// @zukhruf/tcc for the client that macOS charges this test process to.
+const fullDiskAccess = new FullDiskAccess().remedy(
+  Client.responsibleFor(process.pid),
+);
+
 // No test in this file installs a program, so a denial names the program
 // generically, as it does for a plain script that uses an SDK.
 const store = new Store('The store', {
   missing: 'Open the app once.',
-  grant: 'full-disk-access',
+  service: new FullDiskAccess(),
 });
 
 function database(): AppDatabase {
@@ -82,7 +89,7 @@ test(
 
     try {
       assert.throws(() => database().snapshot(path), {
-        message: `The store at ${path} cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.`,
+        message: `The store at ${path} cannot be read. ${fullDiskAccess}`,
       });
     } finally {
       await chmod(path, 0o644);
@@ -109,7 +116,7 @@ test(
 
     try {
       assert.throws(() => database().snapshot(path), {
-        message: `The store at ${path} cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.`,
+        message: `The store at ${path} cannot be read. ${fullDiskAccess}`,
       });
     } finally {
       await chmod(folder, 0o755);

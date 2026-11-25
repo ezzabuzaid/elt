@@ -1,11 +1,11 @@
-import { macOSAccess } from '@eltjs/sdk-macos-app-database';
+import { Calendars, Client, Reminders } from '@zukhruf/tcc';
 
 export class CalendarUnavailableError extends Error {
   override name = 'CalendarUnavailableError';
 
   constructor(cause: unknown) {
     super(
-      `Calendar requires full Calendar access. ${macOSAccess.remedy('calendars')} A sandbox can prevent access even when permission is granted.`,
+      `Calendar requires full Calendar access. ${new Calendars().remedy(Client.responsibleFor(process.pid))} A sandbox can prevent access even when permission is granted.`,
       { cause },
     );
   }
@@ -16,7 +16,7 @@ export class RemindersUnavailableError extends Error {
 
   constructor(cause: unknown) {
     super(
-      `Reminders requires full Reminders access. ${macOSAccess.remedy('reminders')} A sandbox can prevent access even when permission is granted.`,
+      `Reminders requires full Reminders access. ${new Reminders().remedy(Client.responsibleFor(process.pid))} A sandbox can prevent access even when permission is granted.`,
       { cause },
     );
   }

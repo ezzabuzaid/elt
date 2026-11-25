@@ -20,6 +20,7 @@ import { deflateSync } from 'node:zlib';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
+import { Client, FullDiskAccess } from '@zukhruf/tcc';
 import { waitFor } from '@zukhruf/testing/async';
 
 import { referenceDate } from '@eltjs/codec-apple-reference-date';
@@ -50,6 +51,12 @@ import {
 import type { ImportScope } from '@eltjs/source-apple-macos/import-scope';
 
 import { AppleSafariSource } from './apple-safari-source.ts';
+
+// The remedy that a denied store gives: the Full Disk Access sentence of
+// @zukhruf/tcc for the client that macOS charges this test process to.
+const fullDiskAccess = new FullDiskAccess().remedy(
+  Client.responsibleFor(process.pid),
+);
 
 // The saved entries of a read that resumes from no checkpoint.
 const noEntries: SourceReadOptions['entries'] = async () => new Map();
@@ -2111,7 +2118,9 @@ test(
     ]);
     assert.match(
       failed.bookmarks ?? '',
-      /Bookmarks\.plist cannot be read\. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access\./,
+      new RegExp(
+        `Bookmarks\\.plist cannot be read\\. ${RegExp.escape(fullDiskAccess)}`,
+      ),
     );
     assert.deepEqual(failedStreams(failure), {
       config: ['bookmarks', 'readingListItems'],
@@ -3059,7 +3068,9 @@ test(
       assert.equal(error.missing, false);
       assert.match(
         error.message,
-        /com\.apple\.Safari\.plist cannot be read\. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access\./,
+        new RegExp(
+          `com\\.apple\\.Safari\\.plist cannot be read\\. ${RegExp.escape(fullDiskAccess)}`,
+        ),
       );
     }
   },

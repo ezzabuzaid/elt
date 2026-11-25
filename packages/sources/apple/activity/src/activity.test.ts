@@ -13,6 +13,7 @@ import { crc32 } from 'node:zlib';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
+import { Client, FullDiskAccess } from '@zukhruf/tcc';
 import { waitFor } from '@zukhruf/testing/async';
 
 import {
@@ -31,6 +32,12 @@ import { AppInFocus, BiomeStore, biomeDirectory } from '@eltjs/sdk-apple-biome';
 import { knowledgeStorePath } from '@eltjs/sdk-apple-knowledge';
 
 import { AppleActivitySource } from './apple-activity-source.ts';
+
+// The remedy that a denied store gives: the Full Disk Access sentence of
+// @zukhruf/tcc for the client that macOS charges this test process to.
+const fullDiskAccess = new FullDiskAccess().remedy(
+  Client.responsibleFor(process.pid),
+);
 
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
@@ -1099,7 +1106,9 @@ test('Activity names Full Disk Access for unreadable Biome folders, refuses an u
     assert.equal(failed.devices, undefined);
     assert.match(
       failed.appMenuItems ?? '',
-      /restricted cannot be read\. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access\./,
+      new RegExp(
+        `restricted cannot be read\\. ${RegExp.escape(fullDiskAccess)}`,
+      ),
     );
     assert.match(
       failed.displayBacklight ?? '',

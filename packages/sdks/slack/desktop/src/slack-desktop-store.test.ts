@@ -4,12 +4,19 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { Client, FullDiskAccess } from '@zukhruf/tcc';
 
 import {
   SlackDesktopStore,
   StoreUnavailableError,
   slackDesktopDirectory,
 } from './index.ts';
+
+// The remedy that a denied store gives: the Full Disk Access sentence of
+// @zukhruf/tcc for the client that macOS charges this test process to.
+const fullDiskAccess = new FullDiskAccess().remedy(
+  Client.responsibleFor(process.pid),
+);
 
 const locations = {
   direct: 'Library/Application Support/Slack',
@@ -224,7 +231,7 @@ test(
           assert.equal(error.missing, false);
           assert.equal(
             error.message,
-            `The Slack app's store at ${dir.path} cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.`,
+            `The Slack app's store at ${dir.path} cannot be read. ${fullDiskAccess}`,
           );
           return true;
         },
@@ -275,7 +282,7 @@ test(
           assert.equal(error.missing, false);
           assert.equal(
             error.message,
-            `The Slack app's store at ${dir.path} cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.`,
+            `The Slack app's store at ${dir.path} cannot be read. ${fullDiskAccess}`,
           );
           return true;
         },

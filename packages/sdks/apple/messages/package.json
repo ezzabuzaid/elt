@@ -14,7 +14,8 @@
     "@eltjs/codec-plist": "0.0.1",
     "@eltjs/sdk-macos-app-database": "0.0.1",
     "@zukhruf/fs": "^0.8.115",
-    "@zukhruf/sqlite-snapshot": "^0.8.115"
+    "@zukhruf/sqlite-snapshot": "^0.8.115",
+    "@zukhruf/tcc": "^0.8.128"
   },
   "devDependencies": {
     "@zukhruf/sqlite-open": "^0.8.115",

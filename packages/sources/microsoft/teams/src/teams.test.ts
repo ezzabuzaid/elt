@@ -7,6 +7,7 @@ import { test } from 'node:test';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
+import { Client, FullDiskAccess } from '@zukhruf/tcc';
 import { waitFor } from '@zukhruf/testing/async';
 
 import {
@@ -36,6 +37,12 @@ import {
 } from '@eltjs/sdk-microsoft-teams';
 
 import { TeamsSource } from './teams-source.ts';
+
+// The remedy that a denied store gives: the Full Disk Access sentence of
+// @zukhruf/tcc for the client that macOS charges this test process to.
+const fullDiskAccess = new FullDiskAccess().remedy(
+  Client.responsibleFor(process.pid),
+);
 
 // The Teams app keeps what its web client loads in Chromium's IndexedDB for
 // teams.microsoft.com: one database per manager of the client and per
@@ -1143,7 +1150,9 @@ test('a store that stops being readable fails every stream, naming Full Disk Acc
         assert.ok(cause instanceof StoreUnavailableError);
         assert.match(
           cause.message,
-          /store at .+ cannot be read\. Turn on .+ in System Settings › Privacy & Security › Full Disk Access\.$/,
+          new RegExp(
+            `store at .+ cannot be read\\. ${RegExp.escape(fullDiskAccess)}$`,
+          ),
         );
       }
       assert.deepEqual(failureTypes(error), ['config']);

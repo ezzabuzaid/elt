@@ -11,8 +11,15 @@ import { ChangeWatcher } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
+import { Client, FullDiskAccess } from '@zukhruf/tcc';
 
 import { MailStore, StoreUnavailableError } from './index.ts';
+
+// The remedy that a denied store gives: the Full Disk Access sentence of
+// @zukhruf/tcc for the client that macOS charges this test process to.
+const fullDiskAccess = new FullDiskAccess().remedy(
+  Client.responsibleFor(process.pid),
+);
 
 const execFileAsync = promisify(execFile);
 
@@ -111,8 +118,7 @@ test(
     await mkdir(join(dir.path, 'V10/MailData'), { recursive: true });
     const index = join(dir.path, 'V10/MailData/Envelope Index');
     open(index, { journal: new RollbackJournal() }).close();
-    const grant =
-      'cannot be read. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access.';
+    const grant = `cannot be read. ${fullDiskAccess}`;
     const store = new MailStore(dir.path);
 
     // chmod stands in for a privacy denial of macOS: the file is there in

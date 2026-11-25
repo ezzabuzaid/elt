@@ -17,6 +17,7 @@
     "@zukhruf/fs": "^0.8.115",
     "@zukhruf/sqlite-data-version": "^0.8.115",
     "@zukhruf/sqlite-snapshot": "^0.8.115",
+    "@zukhruf/tcc": "^0.8.128",
     "libmime": "5.4.6"
   },
   "devDependencies": {

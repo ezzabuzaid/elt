@@ -22,6 +22,7 @@ import { promisify } from 'node:util';
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
 import { open } from '@zukhruf/sqlite-open';
+import { Client, FullDiskAccess } from '@zukhruf/tcc';
 import { waitFor } from '@zukhruf/testing/async';
 
 import { referenceDate } from '@eltjs/codec-apple-reference-date';
@@ -51,6 +52,12 @@ import {
 } from '@eltjs/sdk-apple-books';
 
 import { AppleBooksSource } from './apple-books-source.ts';
+
+// The remedy that a denied store gives: the Full Disk Access sentence of
+// @zukhruf/tcc for the client that macOS charges this test process to.
+const fullDiskAccess = new FullDiskAccess().remedy(
+  Client.responsibleFor(process.pid),
+);
 
 // The saved entries of a read that resumes from no checkpoint.
 const noEntries: SourceReadOptions['entries'] = async () => new Map();
@@ -1263,7 +1270,9 @@ test(
     assert.deepEqual(Object.keys(failed), ['readingGoal']);
     assert.match(
       failed.readingGoal ?? '',
-      /com\.apple\.iBooksX\.plist cannot be read\. Turn on the program that runs this process in System Settings › Privacy & Security › Full Disk Access\./,
+      new RegExp(
+        `com\\.apple\\.iBooksX\\.plist cannot be read\\. ${RegExp.escape(fullDiskAccess)}`,
+      ),
     );
     assert.deepEqual(failedStreams(failure), { config: ['readingGoal'] });
     assert.deepEqual(

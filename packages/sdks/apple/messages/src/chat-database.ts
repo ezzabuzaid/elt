@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import type { SQLOutputValue } from 'node:sqlite';
 
 import { type Snapshot } from '@zukhruf/sqlite-snapshot';
+import { FullDiskAccess } from '@zukhruf/tcc';
 
 import {
   AppDatabase,
@@ -41,7 +42,7 @@ export const chatDatabasePath = (home: string): string =>
 const appDatabase = new AppDatabase(
   new Store('Messages history', {
     missing: '',
-    grant: 'full-disk-access',
+    service: new FullDiskAccess(),
   }),
 );
 
