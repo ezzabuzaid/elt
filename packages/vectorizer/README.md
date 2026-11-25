@@ -597,7 +597,7 @@ fix-git:2 software-engineering 0.0159
 "Deploy two git branches\nSet up a git server where a push to main or dev deploys that branch to its own web folder."
 {
   state: 'current',
-  as_of: 2026-11-24T18:47:45.867Z,
+  as_of: 2026-11-25T12:59:05.355Z,
   pending_sources: '0',
   pending_vectors: '0',
   failed_sources: '0',
