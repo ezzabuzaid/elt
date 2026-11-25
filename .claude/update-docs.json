@@ -1,0 +1,10 @@
+{
+  "guide": "docs/writing-package-docs.md",
+  "map": "CONTEXT-MAP.md",
+  "refuse": [
+    {
+      "glob": "**/docs/copied-*.md",
+      "reason": "it is a copy ledger: edit it by hand, beside the copies it records"
+    }
+  ]
+}

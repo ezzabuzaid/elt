@@ -107,7 +107,7 @@ Test against the real dependency: a real `Pipeline`, real SQLite or Postgres, a 
 
 ## Each package owns its docs
 
-Document a package in the package, as the zukhruf packages do: `README.md`, a glossary in `CONTEXT.md`, decisions in `docs/adr/`, and recipes in `docs/recipes/` whose programs you ran and whose real output you pasted. Write in ASD-STE100 with the terms of the glossary, and add each new glossary to `CONTEXT-MAP.md`. `packages/elt` and `packages/destinations/sqlite` show the shape.
+Document a package in the package, in the shapes that [docs/writing-package-docs.md](docs/writing-package-docs.md) gives: `README.md`, a glossary in `CONTEXT.md`, decisions in `docs/adr/`, and recipes in `docs/recipes/` whose programs you ran and whose real output you pasted. The guide is a copy of zukhruf's ([docs/copied-docs-guide.md](docs/copied-docs-guide.md)). The `/coding:update-docs <project>` skill finds the gaps of a package's docs, writes them and has a judge check them against that guide; only Ezz can start it.
 
 ## Read every changed file before reporting done
 
