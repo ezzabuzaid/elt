@@ -23,6 +23,8 @@ export type Notification = {
   readonly appId: number;
   // The posting app's bundle identifier, in its own case.
   readonly bundleId: string;
+  // usernoted's delivered_date: the delivery time, or a date the posting app
+  // set before it (Calendar dates invitations and alerts at the event).
   readonly deliveredAt: string;
   // The identifier the app gave the request; legacy notifications have none.
   readonly requestId: string | null;

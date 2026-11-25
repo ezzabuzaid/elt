@@ -41,7 +41,8 @@ const properties = {
   },
   deliveredAt: {
     ...instant,
-    description: 'When Notification Center delivered it, to the microsecond.',
+    description:
+      'Notification Center’s date for it (usernoted’s delivered_date), to the microsecond: when it delivered the notification, or a date the posting app set on it before then. Calendar dates its invitations and upcoming-event alerts at the event, so such a row can be dated after it arrived, even in the future; the store keeps no other arrival time, and loaded_at is when an import first saw it. An import’s date range selects notifications by this date.',
   },
   requestId: {
     ...nullableText,
