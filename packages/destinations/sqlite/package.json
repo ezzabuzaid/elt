@@ -37,17 +37,17 @@
   },
   "dependencies": {
     "@eltjs/elt": "^0.12.0",
-    "@zukhruf/mutex": "^0.8.109",
-    "@zukhruf/sqlite-drift": "^0.8.109",
-    "@zukhruf/sqlite-open": "^0.8.109",
-    "@zukhruf/sqlite-transaction": "^0.8.109",
-    "@zukhruf/vectors": "^0.8.109"
+    "@zukhruf/mutex": "^0.8.115",
+    "@zukhruf/sqlite-drift": "^0.8.115",
+    "@zukhruf/sqlite-open": "^0.8.115",
+    "@zukhruf/sqlite-transaction": "^0.8.115",
+    "@zukhruf/vectors": "^0.8.115"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/async": "^0.8.109",
-    "@zukhruf/fs": "^0.8.109",
-    "@zukhruf/snapshot-differential": "^0.8.109",
-    "@zukhruf/testing": "^0.8.109"
+    "@zukhruf/async": "^0.8.115",
+    "@zukhruf/fs": "^0.8.115",
+    "@zukhruf/snapshot-differential": "^0.8.115",
+    "@zukhruf/testing": "^0.8.115"
   }
 }
