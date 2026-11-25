@@ -6,6 +6,82 @@ This README tells how a pipeline copies, resumes, watches, fails and records its
 
 The words in these documents have one meaning each. See the glossary in [CONTEXT.md](./CONTEXT.md).
 
+## Use it
+
+```sh
+npm install @eltjs/elt @eltjs/elt-sqlite
+```
+
+A pipeline needs a destination package: `@eltjs/elt-sqlite`, `@eltjs/elt-postgresql` or `@eltjs/elt-sqlserver`. The smallest program loads one row that the host holds into one SQLite file, with one run of the pipeline. It needs only Node, `@eltjs/elt` and `@eltjs/elt-sqlite`.
+
+```ts
+import { DatabaseSync } from 'node:sqlite';
+
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
+import { SQLiteDestination, SQLiteSyncHistory } from '@eltjs/elt-sqlite';
+
+const source = new IterableSource({
+  identity: 'tasks',
+  streams: {
+    tasks: {
+      description: 'Each task that the host holds now.',
+      jsonSchema: {
+        type: 'object',
+        description: 'A task.',
+        properties: {
+          name: { type: 'string', description: 'Name of the task.' },
+          text: { type: 'string', description: 'What the task asks.' },
+        },
+        required: ['name', 'text'],
+      },
+      primaryKey: ['name'],
+      snapshot: () => [{ name: 'fix-git', text: 'Recover the lost commit.' }],
+    },
+  },
+});
+const sqlite = new SQLiteDestination({ path: './tasks.sqlite' });
+const pipeline = new Pipeline({
+  history: new SQLiteSyncHistory(),
+  clock: globalThis,
+  connections: [
+    new Connection({
+      name: 'tasks',
+      source,
+      destination: sqlite,
+      steps: [
+        new Copy(source.streams.tasks, sqlite.table('tasks'), {
+          syncMode: 'full_refresh',
+          destinationSyncMode: 'overwrite_dedup',
+        }),
+      ],
+    }),
+  ],
+});
+
+await pipeline.run();
+const database = new DatabaseSync('./tasks.sqlite', { readOnly: true });
+console.log(
+  database
+    .prepare('SELECT name, text, committed_in FROM raw_tasks')
+    .all()
+    .map((row) => ({ ...row })),
+);
+```
+
+Output:
+
+```
+[
+  {
+    name: 'fix-git',
+    text: 'Recover the lost commit.',
+    committed_in: 1
+  }
+]
+```
+
+[Load rows that the host holds](#load-rows-that-the-host-holds) tells what `IterableSource` does with these rows. [Copy a stream](#copy-a-stream), the next section, copies the streams of a source package.
+
 ## Copy a stream
 
 This example copies two streams of Apple Notes into one SQLite file. The pipeline types come from `elt`. The SQLite destination, its checkpoint store and its sync history come from `elt-sqlite`. Each Apple source has its own package, `@eltjs/source-apple-<name>` in `packages/sources/apple`. The later examples use `notes`, `sqlite`, `checkpoints` and `history` from this example.
@@ -65,7 +141,7 @@ const results = await pipeline.run(); // [{ copy, count, deleted }, ...] in decl
 
 ## Sync modes
 
-`syncMode` selects how the source extracts. `destinationSyncMode` selects how the destination loads. The SQLite and Postgres destinations have these five pairs:
+`syncMode` selects how the source extracts. `destinationSyncMode` selects how the destination loads. The SQLite, Postgres and SQL Server destinations have these five pairs:
 
 | Extraction     | Loading           | Result                                                                        |
 | -------------- | ----------------- | ----------------------------------------------------------------------------- |
@@ -267,7 +343,7 @@ A SQL destination gives each column, table and reader view a name that it can ho
 6. A name that starts with a digit gets a `_` in front (`1st` becomes `_1st`).
 
 - Columns get their names in the order of the fields. When an earlier column has the name, the field gets `_1`, then `_2` and so on, after it (`a b` becomes `a_b`, and a later `a_b` becomes `a_b_1`).
-- The names that the destination writes come first. In the two destinations they are `loaded_at`, `committed_in`, `_elt_row_hash` and `replaced_in`. SQLite also has `_rowid_`, and Postgres has the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`. Thus a field `loaded_at` becomes `loaded_at_1`.
+- The names that the destination writes come first. In the three destinations they are `loaded_at`, `committed_in`, `_elt_row_hash` and `replaced_in`. SQLite also has `_rowid_`, Postgres has the system column names `xmin`, `xmax`, `cmin`, `cmax`, `ctid` and `tableoid`, and SQL Server has `_elt_row` and `_elt_key_hash` (`packages/destinations/sqlserver/src/sql-server-identifiers.ts`). Thus a field `loaded_at` becomes `loaded_at_1`.
 - Postgres compares names with their case. SQLite compares names without ASCII case, so `Foo` and `foo` become `Foo` and `foo_1`.
 - A table or view does not see the names of other tables. When the rule changes its name, the name gets `_` and the first 8 hex digits of the SHA-256 of the requested name (`dbo.a b` becomes `dbo_a_b_<hash>`). Thus two requested names never share a table.
 - Postgres keeps only 63 bytes of a name. A longer name keeps its first 54 bytes, then `_` and the first 8 hex digits of the SHA-256 of the field or the requested name. SQLite has no length limit.
@@ -338,7 +414,14 @@ The state belongs to the orchestration, not to the destination, as in Airbyte. T
 
 ## Snapshot streams
 
-A source with no change feed can still load incrementally with `diffSnapshot(configuration, records, state, { policy, signal })`. This is a [snapshot differential](https://github.com/JanuaryLabs/zukhruf/tree/main/packages/snapshot-differential#readme) (Labio and Garcia-Molina, VLDB 1996).
+A source with no change feed can still load incrementally with `diffSnapshot(configuration, records, state, { policy, signal })`. This is a [snapshot differential](https://github.com/JanuaryLabs/zukhruf/tree/main/packages/snapshot-differential#readme) (Labio and Garcia-Molina, VLDB 1996). The recipe [Write a source for an upstream with no change feed](./docs/recipes/write-a-source-for-an-upstream-with-no-change-feed.md) gives a full source that uses it.
+
+`SnapshotDifferential` of `@zukhruf/snapshot-differential` compares one scan with the earlier snapshot, and gives the inserts, the updates, the deletions and the new state. It knows nothing of a copy. `diffSnapshot` and `diffGroupedSnapshot` of elt use it, and add what a copy needs (`src/core/snapshot.ts`):
+
+- **The check of the copy.** The stream must declare `sourceDefinedCursor`. The key is the `primaryKey` of the stream, and each key value is checked as a deduplicating copy reads it. A stream that declares `emitsDeletes` must give a policy. A stream that does not declare it gives no policy, and each vanished key leaves the snapshot with no `DELETE`. A declaration that breaks these rules fails with a `TypeError` that names the stream, and a key value that is not valid fails with a `TypeError` that names the field.
+- **The full refresh.** A copy that is not incremental does not compare. The diff emits each record of the scan and saves no state.
+- **The messages of a source.** Each change becomes a record of the stream, a `DELETE` with the fields of the `primaryKey`, or the `STATE` of the stream.
+- **The stop.** The diff gives the event loop a turn and checks `signal`, so a cancelled run stops (see **Stop** below).
 
 - The stream declares `sourceDefinedCursor`. It declares `emitsDeletes` when its upstream deletes records. A [forgetting upstream](#forgetting-upstreams) does not declare it.
 - The source gives one complete scan, the earlier state, a deletion policy, and the signal of the run that its `extract` gets:
@@ -371,7 +454,7 @@ The policy is a `DeletionPolicy`. It is a Strategy that gives each vanished key 
 - **Replay:** when the checkpoint save fails after the data committed, the next run compares with the older snapshot. It applies the same upserts and deletions again and gets the same rows.
 - **Failures:** an empty scan deletes all rows. The source must throw on a failed read. It must never yield an empty collection in place of the read. The diff refuses a key that comes two times in one scan, so a source that reads windows that overlap must remove the duplicates first.
 - **Cost:** the source still reads all records on each run. Only the writes of the destination become fewer. The state holds one key and a fingerprint of 43 characters for each row, so it grows with the stream.
-- **Stop:** a scan that finds no change yields no message until its state. A scan that never waits for I/O would make all other tasks of the process wait until it ends, also the stop of the host. Thus the diff gives the event loop a turn every 10 ms and checks `signal` at each record or group. A cancelled run stops in moments. It never ends as a complete scan, which could delete the keys that it did not read. `signal` is required, so no source can leave it out.
+- **Stop:** a scan that finds no change yields no message until its state. A scan that never waits for I/O would make all other tasks of the process wait until it ends, also the stop of the host. Thus the diff gives the event loop a turn (`setImmediate`) after each 1,000 items, and checks `signal` at each record or group. A count of items, not a time, sets the turns, so the diff reads no clock. An item diffs in microseconds, so a turn comes in a few milliseconds (5499b8cc). A cancelled run stops in moments. It never ends as a complete scan, which could delete the keys that it did not read. `signal` is required, so no source can leave it out.
 - **Reset:** a reset of the checkpoint makes the next run load all records again, but it forgets which rows exist. Rows that the upstream deleted in that time stay. Reset and clear the target together, or run a full refresh with `overwrite`.
 - **Full refresh:** the source calls `diffSnapshot` in the same way in the two sync modes. In a full refresh, the diff checks the declaration of the stream as an incremental copy does. Then it emits each record of the scan, one at a time, as the scan yields it, and it saves no state. The copy replaces its target, so it compares nothing. The CDK of Airbyte does the same: `Stream.read` selects its checkpoint reader by the sync mode, so the mode stays a concern of the framework and never gets to the code of the stream.
 
@@ -1306,7 +1389,7 @@ const pipeline = new Pipeline({
 });
 ```
 
-`connection` copies a stream into the table `documents`, and `files` is the `LocalFiles` that keeps its stored files, which `DocumentText` reads through it. Each kind of derived dataset is a class of a destination package. The SQLite destination has `View` and `ComputedDataset`; see [elt-sqlite](../destinations/sqlite/README.md). The Postgres destination has no kinds yet. See [ADR 0001](./docs/adr/0001-derived-data-is-declared-on-the-pipeline.md).
+`connection` copies a stream into the table `documents`, and `files` is the `LocalFiles` that keeps its stored files, which `DocumentText` reads through it. Each kind of derived dataset is a class of a destination package. The SQLite, Postgres and SQL Server destinations each have `View` and `ComputedDataset`; see [elt-sqlite](../destinations/sqlite/README.md), [elt-postgresql](../destinations/postgresql/README.md#declare-a-computed-dataset) and [elt-sqlserver](../destinations/sqlserver/README.md#declare-a-computed-dataset). See [ADR 0001](./docs/adr/0001-derived-data-is-declared-on-the-pipeline.md).
 
 ## When the pipeline refreshes
 
@@ -1336,7 +1419,7 @@ The pipeline takes a composite in `derived`, beside other derived datasets:
 - A composite fails as one dataset. The first member that fails stops the members after it, and the refresh after the next pass tries the composite again from its first member. Each member keeps its own row of `derived_status`. The error names the member: a watch yields `{ kind: 'refresh', dataset: <composite>, error }` where `error` is the `DerivedDatasetError` of the member, and a run rejects with the `DerivedDatasetError` of the composite, whose `cause` is that of the member.
 - A member cannot be a composite.
 
-See [ADR 0034](./docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md).
+See [ADR 0034](./docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md). The recipe [Write a composite dataset whose members refresh in order](./docs/recipes/write-a-composite-dataset.md) gives a full program.
 
 ## Write a rule
 
@@ -1352,16 +1435,16 @@ A computed dataset gives each input to its rule. A rule is a class that extends 
 | `identity(input)`         | the rule identity of the input, or `null` when the rule does not handle it                           |
 | `compute(inputs, signal)` | one output for each input, in order: `{ value }`, `{ empty: true }`, `{ error }` or `{ gone: true }` |
 
-The dataset makes an output again when its input or its rule identity changes. See [ADR 0005](./docs/adr/0005-an-output-is-made-again-when-its-rule-identity-changes.md).
+The dataset makes an output again when its input or its rule identity changes. See [ADR 0005](./docs/adr/0005-an-output-is-made-again-when-its-rule-identity-changes.md). The recipe [Write a rule and a table rule, and compute a dataset with them](./docs/recipes/write-a-rule-for-a-computed-dataset.md) gives a full program.
 
 Each rule column has a kind. The kind sets the type of the value that `compute` gives for the column, so a rule that gives a string to a vector column does not compile:
 
-| Kind                                   | Value                                       | SQLite    | Postgres |
-| -------------------------------------- | ------------------------------------------- | --------- | -------- |
-| `{ type: 'text' }`                     | `string`                                    | `TEXT`    | `text`   |
-| `{ type: 'blob' }`                     | `Uint8Array`                                | `BLOB`    | `bytea`  |
-| `{ type: 'integer' }`                  | `number`, a safe integer                    | `INTEGER` | `bigint` |
-| `{ type: 'vector', dimensions: 1536 }` | `Vector` of `@zukhruf/vectors`, 1536 values | `BLOB`    | `bytea`  |
+| Kind                                   | Value                                       | SQLite    | Postgres       | SQL Server       |
+| -------------------------------------- | ------------------------------------------- | --------- | -------------- | ---------------- |
+| `{ type: 'text' }`                     | `string`                                    | `TEXT`    | `text`         | `nvarchar(max)`  |
+| `{ type: 'blob' }`                     | `Uint8Array`                                | `BLOB`    | `bytea`        | `varbinary(max)` |
+| `{ type: 'integer' }`                  | `number`, a safe integer                    | `INTEGER` | `bigint`       | `bigint`         |
+| `{ type: 'vector', dimensions: 1536 }` | `Vector` of `@zukhruf/vectors`, 1536 values | `BLOB`    | `vector(1536)` | `vector(1536)`   |
 
 ```ts
 const columns = {
@@ -1379,7 +1462,7 @@ class Chunks extends Rule<string, typeof columns> {
 }
 ```
 
-A column with no value is `NULL`. SQLite and Postgres keep a vector as the bytes of `toSql` of `@zukhruf/vectors/sqlite`: float32 values, little-endian. A value that does not fit its column is a rule failure of its input, with an error that names the column: an integer that is not a safe integer, or a vector of other dimensions than its column, with both counts. A `Vector` holds only finite values, so a vector with `NaN` or `Infinity` fails in the rule, where the rule makes it.
+A column with no value is `NULL`. SQLite keeps a vector as the bytes of `toSql` of `@zukhruf/vectors/sqlite`: float32 values, little-endian. Postgres keeps it as a `vector(n)` of pgvector, and sends it as the text of `toSql` of the npm package `pgvector` (55bb5503). SQL Server keeps it as a `VECTOR(n)` of float32 values, of at most 1,998 dimensions, and sends it as the JSON text of `toSql` of `@zukhruf/vectors/sqlserver`. A value that does not fit its column is a rule failure of its input, with an error that names the column: an integer that is not a safe integer, or a vector of other dimensions than its column, with both counts. A `Vector` holds only finite values, so a vector with `NaN` or `Infinity` fails in the rule, where the rule makes it.
 
 Two rules exist:
 
@@ -1421,13 +1504,39 @@ class Lines extends TableRule<string, typeof content, typeof place> {
 }
 ```
 
-The `ComputedDataset` of elt-sqlite takes a `Rule` or a `TableRule` in `compute`; that of elt-postgresql takes only a `Rule`. For a table rule, the dataset keeps one output row for each key, with no rule column, and one row for each part, with the key, `seq`, `part_hash`, the content columns and the place columns. See the README of each destination for its parts table, and [ADR 0026](./docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md).
+The `ComputedDataset` of elt-sqlite, elt-postgresql and elt-sqlserver takes a `Rule` or a `TableRule` in `compute`. For a table rule, the dataset keeps one output row for each key, with no rule column, and one row for each part, with the key, `seq`, `part_hash`, the content columns and the place columns. See the README of each destination for its parts table, and [ADR 0026](./docs/adr/0026-a-rule-can-give-many-parts-for-one-input.md).
 
 - `seq` is the order of the part in its input, from 0.
 - `part_hash` is the SHA-256, in lowercase hex, of the content columns of the part. It does not cover `seq` or the place columns, so a part that only moved keeps its part hash. Each content column that has a value counts, in the order of the names as JavaScript sorts them: first `c<n>:<name>`, then the value as `<tag><n>:<bytes>`, where `<n>` is the count of bytes in decimal. The tag is `t` with the UTF-8 bytes of a text, `n` with the decimal digits of an integer, `b` with the bytes of a blob, or `v` with the float32 values of a vector, little-endian. A column with no value does not count. elt computes the part hash, so each destination keeps the same part hash for the same part.
 - The output row and its parts are written in one commit. A part with the same values as the stored part of its key and `seq` keeps its commit. A changed part is written. A stored part with a `seq` past the new parts is deleted. An output row that is `empty` or `failed` has no parts, and the deletion of an output row deletes its parts.
 - A value of a part that does not fit its column fails the input, with an error that names the part and the column, for example `Part 0: The column start takes a safe integer, and the rule gave 0.5.`
 - `derived_status` counts the output rows, one for each key. `pending` counts the inputs, not the parts.
+
+## Write a kind of derived dataset
+
+A rule gives one output row for each key. When the output of a dataset is not one row for each key, write a kind of derived dataset that makes its data itself. For example, the `KeywordIndex` of [`@eltjs/vectorizer`](../vectorizer/README.md) keeps an FTS5 index of the passages in one transaction (`packages/vectorizer/src/sqlite/keyword-index.ts`), and the `Reports` of what-is-going-on put each crawled article in an event again at each refresh. A kind is a class that extends `DerivedDataset<Target>` (`src/core/derived-dataset.ts`):
+
+| Member                                                      | Gives                                                                                     |
+| ----------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `name`                                                      | the name of the dataset, which a failure gives                                            |
+| `validate(connections)`                                     | optional: refuses, with no I/O, a declaration that the copies of the pipeline cannot feed |
+| `refresh({ connections, clock, earlier, signal, trigger })` | brings the data in step with what the copies committed. It is safe to repeat              |
+
+The arguments of `refresh`:
+
+- `connections` are the connections of the pipeline. A kind finds in them the copies that make the relations that it reads.
+- `clock` is the clock of the pipeline. It gives the time of each change that the refresh makes.
+- `earlier` holds the derived datasets that this refresh follows, in the order of the list. Thus a dataset that reads one of them can tell an input that still waits from an input that the pipeline never makes.
+- `signal` is the signal of the run or the watch. A refresh that a stop ended is not a failure.
+- `trigger` is a `RefreshTrigger`, why the pipeline refreshes: `{ kind: 'commit', tried }` after a commit of a copy, or `{ kind: 'pass', tried }` after the passes. `tried` holds the keys that the commit refreshes of these passes tried. A commit refresh adds to it. A pass refresh tries again what failed, except these keys, which wait for the next pass. Thus a failing input is tried at most once for each pass. A kind with no keys does not read it.
+
+The rules of a kind:
+
+- A refresh can run while a copy loads, so it reads only what committed.
+- An error that `refresh` throws is a [dataset failure](#when-a-derived-dataset-fails). The kind writes its own row of `derived_status`: `refreshing`, `current`, `waiting` or `failed`. Each destination gives the parts that its own kinds use, such as the writer of that row: see [elt-sqlite](../destinations/sqlite/README.md#write-a-kind-of-derived-dataset-in-another-package), [elt-postgresql](../destinations/postgresql/README.md#write-a-kind-of-derived-dataset-in-another-package) and [elt-sqlserver](../destinations/sqlserver/README.md#write-a-kind-of-derived-dataset-in-another-package).
+- The pipeline takes a kind in `derived`, beside views, computed datasets and composite datasets. The type of each item of `derived` is `DeclaredDataset<Target>`: a `DerivedDataset` or a `CompositeDataset`.
+
+The recipe [Write a kind of derived dataset whose output is not one row for each key](./docs/recipes/write-a-kind-of-derived-dataset.md) gives a full program.
 
 ## When a derived dataset fails
 
@@ -1464,6 +1573,40 @@ Each destination keeps its own `View` and `ComputedDataset`, and drives three ru
 
 The `readPassStatus` of a destination reads its sync history and gives a `PassStatus` of `@eltjs/elt`, with a `StreamPassStatus` for each stream. `combinedPass` shows the latest passes of several connections as one pass: it runs while one of them runs, and it is only as current as the least current one. `recordedPassStatus` gives the `PassStatus` of a row of the `sync_status` view, and `recordedStreamStatus` the `StreamPassStatus` of a row of `stream_status`; the destination gives each time as ISO text, and an unknown status or failure type is a `TypeError`.
 
+## Errors
+
+| Error                                       | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `PipelineError`, an `AggregateError`        | `run()` rejects with it after each pass ends, when a copy did not load completely. `errors` holds each failure, `results` holds the committed counts and the failures of each copy, and `cause` is the first failure. See [Run and failures](#run-and-failures).                                                                                                                                                                                                                                 |
+| `StreamChangeError`, a `TypeError`          | A failure of a copy, in `PipelineError.errors`: the stream of the copy changed a declaration since its checkpoint was saved. The message names the declarations. Reset the copy to keep its rows, or clear it to drop them. See [Shape changes](#shape-changes).                                                                                                                                                                                                                                 |
+| `TargetOwnedError`, a `TypeError`           | A copy or a clear of a target that a different writer owns. The copy fails and reads nothing, and `pipeline.clear()` rejects. The message names the two writers. Clear the target with the copy that owns it. See [Target ownership](#target-ownership).                                                                                                                                                                                                                                         |
+| `WatchError`, an `AggregateError`           | `watch()` rejects with it when each connection stopped, or the signal aborted, and connections stopped. Each error has the error that stopped its connection as its `cause`. See [Watch for changes](#watch-for-changes).                                                                                                                                                                                                                                                                        |
+| `DerivedDatasetError`                       | `run()` rejects with it when the last refresh of one derived dataset failed, also when copies failed. `dataset` names the dataset, and `cause` is its own error, such as the error of the store. A watch does not reject: it yields a `DatasetFailure`. See [When a derived dataset fails](#when-a-derived-dataset-fails).                                                                                                                                                                       |
+| `DerivedDatasetsError`, an `AggregateError` | `run()` rejects with it when the last refresh of more than one derived dataset failed. `errors` holds the `DerivedDatasetError` of each, in the order of the list.                                                                                                                                                                                                                                                                                                                               |
+| `StoredFileMissingError`                    | `open(ref)` or `head(ref, length)` of a file storage, for a ref that the storage does not hold. `DocumentText` makes it a rule failure of its row. The message tells you to reload the copy that stored the file. See [Files in the database](#files-in-the-database).                                                                                                                                                                                                                           |
+| `SuppressedError`                           | `run()` or `watch()` rejects with it when the sync history cannot record a failure. Its `error` is the error of the history, and its `suppressed` is the failure. See [Run and failures](#run-and-failures).                                                                                                                                                                                                                                                                                     |
+| `TypeError`                                 | A declaration that is not valid, found before a read: connection names or copy IDs that repeat, a stream that a connection copies two times, pairs of modes that are not supported, missing keys, cursors, IDs or checkpoint stores, or a derived dataset name that repeats. Also a copy whose checkpoint binding changed, and a message that breaks the contract of its stream, such as a `StreamStatus` from `extract` or a deletion that the copy refuses: these fail the copy or the stream. |
+
+## What the package does not do
+
+- **elt has no full refresh that resumes.** A full refresh has no checkpoints. It commits one time, at the end, and a failure keeps the earlier target. See [Incremental copies and checkpoints](#incremental-copies-and-checkpoints).
+- **elt has no query API and no general transform step.** Readers query the stored tables with SQL. The step after a load is a derived dataset: a view, a computed dataset with a rule, or a kind of its own. See [Attachment text](#attachment-text).
+- **elt has no `transient_error`.** Nothing reads it yet. A failure is `config` or `system`. See [Failure types](#failure-types).
+- **elt is not compatible with the wire protocol of Airbyte.** It uses the words of the platform of Airbyte, and a protocol in the process. The wire protocol enum of Airbyte does not have `overwrite_dedup`. See [Sync modes](#sync-modes).
+- **The pipeline does not reconcile on a schedule, and it does not disable a connection.** A watch loads when a source reports a change, and it loads a stream again after a `system` failure. See [Watch for changes](#watch-for-changes).
+
+## Who uses it
+
+| Consumer                                                                                                    | How                                                                                                                                                                                                                                                                                                         | Record                                                                                                                                                                                                        |
+| ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The Context Compiler CLI (`apps/cli` of [context-compiler](https://github.com/ezzabuzaid/context-compiler)) | Each connector builds a `Pipeline` that loads into a SQLite import of its own (`packages/connectors/connector/src/connector.ts`). The CLI subscribes to `passChannels`, and shows `PassStarted`, `CopyProgress`, `PassFinished` and `PassFailed` with `passStatus` and `passError` (`apps/cli/src/sync.ts`) | context-compiler commit `7fb669b`, which made `apps/cli`; the elt packages come from a checkout beside it ([context-compiler README](https://github.com/ezzabuzaid/context-compiler#sibling-checkout-of-elt)) |
+| ipay (context-compiler `apps/ipay`)                                                                         | `Pipeline`, `Connection` and `Copy` over its own `Source`, `ImportsSource`, which diffs snapshots with `diffSnapshot`, and three `Rule` subclasses in `ComputedDataset`s of elt-sqlite                                                                                                                      | context-compiler commit `e30e754`                                                                                                                                                                             |
+| websets (context-compiler `apps/websets`)                                                                   | `Pipeline` over its own `Source`, `DefinitionsSource`, and the `Rule` subclasses `Evaluation` and `FieldValue`                                                                                                                                                                                              | context-compiler commit `e9350c6`                                                                                                                                                                             |
+| startup-credits (context-compiler `apps/startup-credits`)                                                   | `Pipeline`, and the `Rule` subclasses `PageKinds` and `ProgramOffers`                                                                                                                                                                                                                                       | context-compiler commit `a30ea48`                                                                                                                                                                             |
+| what-is-going-on (context-compiler `apps/what-is-going-on`)                                                 | `Pipeline`, and `Reports`, a kind of derived dataset that extends `DerivedDataset`                                                                                                                                                                                                                          | #3205                                                                                                                                                                                                         |
+| [`@eltjs/vectorizer`](../vectorizer/README.md)                                                              | `Vectorizer` extends `CompositeDataset`, and `KeywordIndex` extends `DerivedDataset`, for SQLite, Postgres and SQL Server                                                                                                                                                                                   | commit 86b42be2, [ADR 0034](./docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md)                                                                                             |
+| datahub (`packages/semantic-layer/elt`)                                                                     | `Pipeline` from npm (`@eltjs/elt` `^0.13.5`), with the SQL Server destination                                                                                                                                                                                                                               | #4348, #4738                                                                                                                                                                                                  |
+
 ## The same concepts in other systems
 
 | Here                       | Elsewhere                                                                    |
@@ -1483,15 +1626,754 @@ The `readPassStatus` of a destination reads its sync history and gives a `PassSt
 
 Airbyte has no step after a load. elt has one, because its hosts have no orchestrator.
 
+## API
+
+The public types of `src/index.ts`. Each `abstract` member is one that a subclass gives. The types of a destination's own work, at the end, are for the authors of a destination.
+
+```ts
+// @eltjs/elt
+
+// The pipeline
+type PipelineClock = Clock & { readonly Date: { now(): number } }; // Clock of @zukhruf/async; a host gives globalThis
+
+class Pipeline<Target extends DestinationTarget> {
+  constructor(options: {
+    connections: readonly Connection<Target>[];
+    history: SyncHistory<NoInfer<Target>>;
+    derived?: readonly DeclaredDataset<NoInfer<Target>>[];
+    clock: PipelineClock;
+  });
+  readonly connections: readonly Connection<Target>[];
+  readonly history: SyncHistory<Target>;
+  readonly derived: readonly DerivedDataset<Target>[]; // the members of each composite in its place
+  run(options?: {
+    readonly signal?: AbortSignal;
+  }): Promise<CopyResult<Target>[]>;
+  watch(options: { signal: AbortSignal }): AsyncGenerator<WatchEvent<Target>>;
+  clear(steps?: readonly Copy<Target>[]): Promise<void>;
+}
+type Pass<Target> = {
+  readonly kind: 'pass';
+  readonly connection: Connection<Target>;
+  readonly outcomes: readonly CopyOutcome<Target>[];
+};
+type WatchEvent<Target> = Pass<Target> | DatasetFailure;
+class PipelineError<Target> extends AggregateError {
+  readonly results: readonly CopyOutcome<Target>[];
+}
+class WatchError extends AggregateError {}
+
+class Connection<Target extends DestinationTarget> {
+  constructor(options: {
+    name: string;
+    source: Source;
+    destination: Destination<Target>;
+    steps: readonly Copy<NoInfer<Target>>[];
+    checkpoints?: CheckpointStore;
+  });
+  validate(): void;
+}
+
+class Copy<Target extends DestinationTarget> {
+  constructor(
+    from: Stream,
+    to: Target,
+    modes?: {
+      syncMode: SyncMode;
+      destinationSyncMode: DestinationSyncMode;
+      cursorField?: string;
+      primaryKey?: readonly string[];
+      dedupPolicy?: DedupPolicy;
+      id?: string;
+    },
+  );
+  readonly configuration: CopyConfiguration;
+  readonly to: Target;
+  readonly id?: string;
+  get from(): Stream;
+}
+type WriteCount = { readonly count: number; readonly deleted: number };
+type CopyResult<Target> = WriteCount & { readonly copy: Copy<Target> };
+type CopyOutcome<Target> = CopyResult<Target> & {
+  readonly failures: readonly LoadFailure[];
+  readonly cancelled: boolean;
+};
+type LoadFailure = {
+  readonly partition: Partition | null;
+  readonly error: unknown;
+  readonly failureType: FailureType;
+};
+type SyncMode = 'full_refresh' | 'incremental';
+type DestinationSyncMode =
+  'append' | 'overwrite' | 'append_dedup' | 'overwrite_dedup';
+type DedupPolicy = 'cursor_newer' | 'replace';
+class CopyConfiguration {
+  readonly stream: Stream;
+  readonly fileReads: readonly FileRead[];
+  readonly syncMode: SyncMode;
+  readonly destinationSyncMode: DestinationSyncMode;
+  readonly cursorField?: string;
+  readonly primaryKey?: readonly string[];
+  readonly dedupPolicy?: DedupPolicy;
+}
+// Deduplication: the type of the key and the cursor of a deduplicating copy.
+
+// Pass channels (node:diagnostics_channel)
+const passChannels: { start; progress; finish; failure }; // elt:pass.start, elt:copy.progress, elt:pass.finish, elt:pass.failure
+class PassStarted {
+  readonly connection: Connection<DestinationTarget>;
+}
+class CopyProgress {
+  readonly connection: Connection<DestinationTarget>;
+  readonly copy: Copy<DestinationTarget>;
+  readonly status: 'running' | 'complete' | 'incomplete';
+  readonly emitted: WriteCount;
+  readonly committed: WriteCount;
+}
+class PassFinished {
+  readonly connection: Connection<DestinationTarget>;
+  readonly outcomes: readonly CopyOutcome<DestinationTarget>[];
+}
+class PassFailed {
+  readonly connection: Connection<DestinationTarget>;
+  readonly error: unknown;
+  readonly failureType: FailureType;
+}
+
+// Sources and streams
+abstract class Source<Context extends AsyncDisposable = AsyncDisposable> {
+  abstract readonly identity: string;
+  protected abstract readonly catalog: Catalog;
+  protected readonly concurrency: number; // 1 unless set
+  protected readonly configErrors: readonly (abstract new (
+    ...args: never[]
+  ) => Error)[];
+  discover(): Promise<Catalog>;
+  validate(configuration: CopyConfiguration): void;
+  read(
+    catalog: readonly CopyConfiguration[],
+    states: { get(stream: string): unknown },
+    options: SourceReadOptions,
+  ): AsyncGenerator<ReadMessage>;
+  failureType(error: unknown): FailureType;
+  abstract coverage(stream: Stream): ExtractionCoverage;
+  abstract currentAsOf(stream: Stream): Promise<Date | null>;
+  abstract changeSignals(
+    streams: readonly Stream[],
+    clock: PipelineClock,
+  ): Iterable<ChangeSignal>;
+  upkeep(clock: PipelineClock): Iterable<Upkeep>;
+  protected abstract open(
+    streams: readonly Stream[],
+    signal: AbortSignal | undefined,
+    states: { get(stream: string): unknown },
+    clock: PipelineClock,
+  ): Promise<Context>;
+  protected partitions(stream: Stream): readonly Partition[];
+  protected validateExtraction(configuration: CopyConfiguration): void;
+  protected abstract extract(
+    configuration: CopyConfiguration,
+    state: unknown,
+    partition: Partition | null,
+    context: Context,
+    signal: AbortSignal | undefined,
+  ): AsyncIterable<SourceMessage>;
+}
+type SourceReadOptions = {
+  readonly signal?: AbortSignal | undefined;
+  readonly clock: PipelineClock;
+};
+type KeyValue = string | number | boolean;
+type JsonValue =
+  | string
+  | number
+  | boolean
+  | null
+  | readonly JsonValue[]
+  | { readonly [field: string]: JsonValue };
+type RecordMessage = {
+  readonly stream: string;
+  readonly data: unknown;
+  readonly file?: string | null;
+};
+type DeleteMessage = {
+  readonly type: 'DELETE';
+  readonly stream: string;
+  readonly key: Readonly<Record<string, KeyValue>>;
+  readonly cursor?: string | number; // only for a cursor_newer copy
+};
+type ResetMessage = { readonly type: 'RESET'; readonly stream: string };
+type StateMessage = {
+  readonly type: 'STATE';
+  readonly stream: string;
+  readonly state: unknown;
+};
+type SourceMessage =
+  RecordMessage | StateMessage | DeleteMessage | ResetMessage;
+type ReadMessage =
+  | RecordMessage
+  | StateMessage
+  | DeleteMessage
+  | (ResetMessage & { partition })
+  | StreamStatus;
+class StreamStatus {
+  readonly stream: string;
+  readonly status: 'STARTED' | 'FAILED' | 'ENDED';
+  readonly partition: Partition | null;
+  readonly error: unknown;
+}
+type ExtractionCoverage = {
+  readonly description: string;
+  readonly selection: { readonly [field: string]: JsonValue };
+};
+type FailureType = 'config' | 'system';
+type ChangeSignal = {
+  readonly gauge: Gauge; // Gauge and Check of @zukhruf/async
+  readonly streams: readonly Stream[];
+  readonly interval: number;
+  readonly timeout: number;
+};
+type Upkeep = {
+  readonly interval: number;
+  readonly run: (signal: AbortSignal) => Promise<void>;
+};
+
+class Catalog {
+  constructor(streams: Iterable<Stream>);
+  readonly streams: readonly Stream[];
+  get(name: string): Stream;
+  select(streams: Iterable<Stream>): Catalog;
+}
+class Stream {
+  constructor(declaration: {
+    name: string;
+    jsonSchema: StreamSchema;
+    primaryKey?: readonly string[];
+    supportedSyncModes: readonly SyncMode[];
+    supportsFileTransfer?: true;
+    sourceDefinedCursor?: true;
+    defaultCursorField?: readonly [string];
+    emitsDeletes?: true;
+    partitionKey?: readonly string[];
+    expiresBy?: string;
+  });
+  get file(): FileReference;
+}
+type Partition = Readonly<Record<string, KeyValue>>;
+type PartitionState = {
+  readonly partition: Partition;
+  readonly state: unknown;
+};
+function readPartitions(stream: Stream, value: unknown): Partition[];
+
+// Schemas and records
+type StreamSchema = {
+  readonly type: 'object';
+  readonly description?: string;
+  readonly properties?: Properties;
+  readonly required?: readonly string[];
+};
+type Properties = Readonly<Record<string, FieldSchema>>;
+// FieldSchema: a scalar, or an array of one scalar type or of objects, with its format.
+// SchemaRecord<P>: the type of a record of the properties P.
+type RecordDraft<P extends Properties> = { readonly [K in keyof P]: unknown };
+function validateRecords<P extends Properties>(
+  stream: {
+    readonly name: string;
+    readonly jsonSchema: { readonly properties?: P };
+  },
+  records: unknown,
+  source: string,
+): SchemaRecord<P>[];
+// DeclaredFormat, declaredFormat(schema), Int64Format and LocalTimestampFormat: the string formats.
+function isTimestamp(value: unknown): value is string;
+function isCalendarDate(value: unknown): value is string;
+
+// Snapshot streams
+function diffSnapshot<Data extends Record<string, unknown>>(
+  configuration: CopyConfiguration,
+  records: AsyncIterable<Data> | Iterable<Data>,
+  state: unknown,
+  options: SnapshotDiffOptions & {
+    readonly rereads?: (record: Data) => boolean;
+  },
+): AsyncGenerator<RecordMessage | DeleteMessage | StateMessage>;
+function diffGroupedSnapshot<Data extends Record<string, unknown>>(
+  configuration: CopyConfiguration,
+  groups:
+    | AsyncIterable<SnapshotGroup<Data> | KeptGroup>
+    | Iterable<SnapshotGroup<Data> | KeptGroup>,
+  state: unknown,
+  options: SnapshotDiffOptions,
+): AsyncGenerator<RecordMessage | DeleteMessage | StateMessage>;
+type SnapshotDiffOptions = {
+  readonly policy?: DeletionPolicy; // of @zukhruf/snapshot-differential
+  readonly continues?: boolean;
+  readonly signal: AbortSignal | undefined;
+};
+// KeptGroup: { key, kept: true }, of @zukhruf/snapshot-differential.
+
+// The rows that a host holds
+class IterableSource<
+  const Schemas extends Readonly<Record<string, StreamSchema>>,
+> extends Source {
+  constructor(options: {
+    readonly identity: string;
+    readonly streams: {
+      readonly [Name in keyof Schemas]: IterableStreamDeclaration<
+        Schemas[Name]
+      >;
+    };
+    readonly configErrors?: readonly (abstract new (
+      ...args: never[]
+    ) => Error)[];
+  });
+  readonly streams: { readonly [Name in keyof Schemas]: Stream };
+  changed(stream: Stream): void;
+}
+type IterableStreamDeclaration<Schema> =
+  SnapshotStreamDeclaration<Schema> | ChangesStreamDeclaration<Schema>;
+// SnapshotStreamDeclaration<Schema>: description, jsonSchema, primaryKey, snapshot,
+//   deletions?, rowVersion?, currentAsOf? and changeSignal?.
+// ChangesStreamDeclaration<Schema>: description, jsonSchema, primaryKey, changes,
+//   cursorField, ordered?, currentAsOf? and changeSignal?.
+// IterableRow<Schema>: a row of the schema, with the required fields, and the others optional.
+type IterableReadContext = { readonly signal: AbortSignal };
+type IterableVersion = string | number;
+type IterableChangesContext<Version extends IterableVersion = IterableVersion> =
+  IterableReadContext & {
+    readonly since: Version | null;
+  };
+type IterableTombstone<Version extends IterableVersion = IterableVersion> = {
+  readonly deleted: Readonly<Record<string, KeyValue>>;
+  readonly version: Version;
+};
+type IterableChangeSignal = {
+  readonly gauge: (clock: PipelineClock) => Gauge;
+  readonly interval: number;
+  readonly timeout: number;
+};
+
+// Destinations
+abstract class Destination<Target extends DestinationTarget> {
+  abstract readonly supportedDestinationSyncModes: readonly DestinationSyncMode[];
+  abstract location(target: Target): string;
+  validate(configuration: CopyConfiguration, target: Target): void;
+  protected validateConfiguration(
+    configuration: CopyConfiguration,
+    target: Target,
+  ): void;
+  abstract createWriter(
+    configuration: CopyConfiguration,
+    target: Target,
+  ): Writer;
+  abstract load(options: {
+    clock: PipelineClock;
+    connection: string;
+  }): Promise<Load<Target>>;
+  abstract failureType(error: unknown): FailureType;
+  clear(
+    configuration: CopyConfiguration,
+    target: Target,
+    clearing: Clearing,
+    committed?: (values: FieldValues) => Promise<void>,
+  ): Promise<void>;
+}
+abstract class Target {
+  constructor(fileReads?: readonly FileRead[]);
+  readonly fileReads: readonly FileRead[];
+}
+type Load<Target> = AsyncDisposable & {
+  prepare(
+    configuration: CopyConfiguration,
+    target: Target,
+    binding: { readonly writer: string; readonly reloading: boolean },
+  ): Promise<Stage>;
+};
+type Stage = AsyncDisposable & {
+  readonly fresh: boolean;
+  readonly reloading: boolean;
+  complete(): Promise<void>;
+  values: FieldValues;
+  apply(operation: WriteOperation): Promise<void>;
+  commit(): Promise<void>;
+  discard(): Promise<void>;
+};
+type WriteOperation =
+  | { readonly type: 'RECORD'; readonly data: unknown }
+  | {
+      readonly type: 'DELETE';
+      readonly key: Readonly<Record<string, KeyValue>>;
+      readonly cursor?: string | number;
+    }
+  | { readonly type: 'RESET'; readonly partition: Partition | null };
+type DeleteOperation = Extract<WriteOperation, { readonly type: 'DELETE' }>;
+type FieldValues = (field: string) => AsyncIterable<unknown>;
+type Clearing = {
+  readonly writer: string;
+  readonly clock: PipelineClock;
+  readonly connection: string;
+};
+abstract class Writer {
+  constructor(stream: Stream);
+  readonly stream: Stream;
+  abstract clear(
+    clearing: Clearing,
+    committed?: (values: FieldValues) => Promise<void>,
+  ): Promise<void>;
+}
+class TargetOwnedError extends TypeError {}
+class StreamChangeError extends TypeError {}
+
+// Checkpoints and the sync history
+abstract class CheckpointStore {
+  run<T>(
+    bindings: ReadonlyMap<string, CheckpointBinding>,
+    work: (run: CheckpointRun) => Promise<T>,
+  ): Promise<T>;
+  reset(id: string): Promise<void>;
+  clear(id: string, drop: () => Promise<void>): Promise<void>;
+  abstract failureType(error: unknown): FailureType;
+  protected abstract session<T>(
+    ids: readonly string[],
+    work: (session: CheckpointSession) => Promise<T>,
+  ): Promise<T>;
+}
+type CheckpointBinding = { readonly copy: object; readonly shape: object };
+type CheckpointRun = {
+  state(id: string): Promise<unknown>;
+  reloading(id: string): boolean;
+  save(id: string, state: string, reloading: boolean): Promise<void>;
+  reloaded(id: string): Promise<void>;
+};
+type CheckpointSession = {
+  read(id: string): Promise<StoredCheckpoint | undefined>;
+  state(id: string): Promise<string | undefined>;
+  save(
+    id: string,
+    checkpoint: StoredCheckpoint & { readonly state: string },
+  ): Promise<void>;
+  reloaded(id: string): Promise<void>;
+  remove(id: string): Promise<void>;
+};
+type StoredCheckpoint = {
+  readonly binding: string;
+  readonly reloading: boolean;
+};
+
+abstract class SyncHistory<Target extends DestinationTarget> {
+  validate(connection: Connection<Target>): void;
+  abstract install(
+    connections: readonly Connection<Target>[],
+    at: Date,
+  ): Promise<void>;
+  abstract begin(
+    connection: Connection<Target>,
+    copies: readonly DeclaredCopy<Target>[],
+    at: Date,
+  ): Promise<RecordedPass<Target>>;
+  checked(
+    connection: Connection<Target>,
+    at: Date,
+    current: (at: Date) => Promise<readonly StreamCheck[]>,
+  ): Promise<void>;
+  protected abstract recordChecks(
+    connection: Connection<Target>,
+    checks: readonly StreamCheck[],
+  ): Promise<void>;
+}
+type DeclaredCopy<Target> = {
+  readonly copy: Copy<Target>;
+  readonly coverage: ExtractionCoverage;
+};
+type RecordedPass<Target> = AsyncDisposable & {
+  finish(
+    outcomes: readonly CopyOutcome<Target>[],
+    upstream: ReadonlyMap<string, Date>,
+    at: Date,
+  ): Promise<void>;
+  fail(error: unknown, failureType: FailureType, at: Date): Promise<void>;
+};
+type StreamCheck = { readonly stream: string; readonly at: Date };
+type SyncStatus = 'succeeded' | 'partial' | 'failed' | 'cancelled';
+function copyStatus(outcome: CopyOutcome<DestinationTarget>): SyncStatus;
+function passStatus(
+  outcomes: readonly CopyOutcome<DestinationTarget>[],
+): SyncStatus;
+function passFailureType(
+  outcomes: readonly CopyOutcome<DestinationTarget>[],
+): FailureType | null;
+function passError(
+  outcomes: readonly CopyOutcome<DestinationTarget>[],
+): string | null;
+function recordedFailure(failure: LoadFailure): {
+  partition;
+  error: string;
+  failure_type: FailureType;
+  stacktrace: string;
+};
+function errorMessage(error: unknown): string;
+// syncHistoryRelations: the descriptions of sync_attempts, extraction_coverage,
+//   sync_status, stream_status and derived_status.
+type PassState = SyncStatus | 'running';
+// PassStatus: state, startedAt, completedAt, lastSucceededAt, currentAsOf, error and failureType.
+// StreamPassStatus: stream, state, lastSucceededAt, currentAsOf and error.
+// SyncStatusRow and StreamStatusRow: a row of sync_status and of stream_status.
+function combinedPass(
+  passes: readonly [PassStatus, ...PassStatus[]],
+): PassStatus;
+function recordedPassStatus(row: SyncStatusRow): PassStatus;
+function recordedStreamStatus(row: StreamStatusRow): StreamPassStatus;
+
+// Files
+class FileReference {
+  readonly stream: Stream;
+  store(storage: FileStorage): FileReference;
+  accepting(parser: DocumentParser): FileReference;
+}
+class FileRead {
+  constructor(name: string, file: FileReference, parser?: DocumentParser);
+  accepts(fileName: string): boolean;
+}
+class FileContent {
+  constructor(path: string);
+  readonly path: string;
+  chunks(size: number): AsyncGenerator<Uint8Array>;
+}
+function fileExtension(name: string): string;
+abstract class FileStorage {
+  abstract readonly identity: string;
+  abstract readonly reference: string;
+  abstract save(scope: string, content: FileContent): Promise<string>;
+  abstract flush(scope: string): Promise<void>;
+  abstract retain(
+    scope: string,
+    references: ReadonlySet<string>,
+  ): Promise<void>;
+  abstract open(
+    ref: string,
+    signal?: AbortSignal,
+  ): Promise<{ readonly path: string } & AsyncDisposable>;
+  abstract head(
+    ref: string,
+    length: number,
+    signal?: AbortSignal,
+  ): Promise<Uint8Array>;
+  abstract failureType(error: unknown): FailureType;
+}
+class StoredFileMissingError extends Error {}
+class LocalFiles extends FileStorage {
+  constructor(options: { directory: string });
+  readonly directory: string;
+}
+abstract class DatabaseFiles<
+  Connection extends AsyncDisposable | Disposable,
+> extends FileStorage {
+  constructor(table: string);
+  protected abstract connect(): Promise<Connection>; // and write, rename, remove, names and read
+}
+abstract class DocumentParser {
+  constructor(identity: string);
+  readonly identity: string;
+  abstract parse(path: string, signal?: AbortSignal): Promise<string | null>;
+  accepts(fileName: string): boolean;
+  identityFor(file: DocumentFile): Promise<string | null>;
+}
+type DocumentFile = {
+  readonly name: string;
+  head(length: number): Promise<Uint8Array>;
+};
+
+// Derived datasets
+abstract class DerivedDataset<Target extends DestinationTarget> {
+  abstract readonly name: string;
+  validate(connections: readonly Connection<Target>[]): void;
+  abstract refresh(options: {
+    readonly connections: readonly Connection<Target>[];
+    readonly clock: PipelineClock;
+    readonly earlier: readonly DerivedDataset<Target>[];
+    readonly signal?: AbortSignal;
+    readonly trigger: RefreshTrigger;
+  }): Promise<void>;
+}
+abstract class CompositeDataset<Target extends DestinationTarget> {
+  abstract readonly name: string;
+  abstract readonly members: readonly [
+    DerivedDataset<Target>,
+    ...DerivedDataset<Target>[],
+  ];
+  validate(connections: readonly Connection<Target>[]): void;
+}
+type DeclaredDataset<Target> =
+  DerivedDataset<Target> | CompositeDataset<Target>;
+type RefreshTrigger =
+  | { readonly kind: 'commit'; readonly tried: Set<string> }
+  | { readonly kind: 'pass'; readonly tried: ReadonlySet<string> };
+type DatasetFailure = {
+  readonly kind: 'refresh';
+  readonly dataset: string;
+  readonly error: unknown;
+};
+class DerivedDatasetError extends Error {
+  readonly dataset: string;
+}
+class DerivedDatasetsError extends AggregateError {
+  readonly errors: DerivedDatasetError[];
+}
+
+// Rules
+abstract class Rule<Input, Columns extends RuleColumns> {
+  abstract readonly key: {
+    readonly name: string;
+    readonly description: string;
+  };
+  abstract readonly output: Columns;
+  abstract readonly batch: number;
+  abstract readonly concurrency: number;
+  abstract read(
+    row: LoadedRow,
+  ): { readonly key: string; readonly input: Input } | null;
+  abstract identity(input: Input): Promise<string | null>;
+  abstract compute(
+    inputs: readonly Input[],
+    signal?: AbortSignal,
+  ): Promise<readonly RuleResult<RuleValues<Columns>>[]>;
+}
+abstract class TableRule<
+  Input,
+  Columns extends RuleColumns,
+  Place extends RuleColumns,
+> {
+  // key, output, batch, concurrency, read and identity as in Rule
+  abstract readonly place: Place;
+  abstract compute(
+    inputs: readonly Input[],
+    signal?: AbortSignal,
+  ): Promise<
+    readonly TableRuleResult<RuleValues<Columns> & RuleValues<Place>>[]
+  >;
+}
+type RuleColumn =
+  | { readonly type: 'text'; readonly description: string }
+  | { readonly type: 'blob'; readonly description: string }
+  | {
+      readonly type: 'vector';
+      readonly dimensions: number;
+      readonly description: string;
+    }
+  | { readonly type: 'integer'; readonly description: string };
+type RuleColumns = Readonly<Record<string, RuleColumn>>;
+// RuleValues<Columns>: for each column, an optional string, Uint8Array, Vector or number, by its kind.
+type RuleResult<Output> =
+  | { readonly value: Output }
+  | { readonly empty: true }
+  | { readonly error: string }
+  | { readonly gone: true };
+type TableRuleResult<Part> =
+  | { readonly parts: readonly [Part, ...Part[]] }
+  | { readonly empty: true }
+  | { readonly error: string }
+  | { readonly gone: true };
+type LoadedRow = Readonly<Record<string, unknown>>;
+function rowText(row: LoadedRow, fields: readonly string[]): string | null;
+class DocumentText extends Rule<string, { content }> {
+  constructor(options: {
+    parser: () => DocumentParser;
+    files: FileStorage;
+    column: string;
+  });
+}
+
+// The work of a destination. See "Positions of a destination", "Derived datasets of a
+// destination" and "Names".
+type Position = { readonly epoch: string; readonly number: number };
+type NumberedStore = { readonly engine: string; readonly noun: string };
+// Numbering: epoch, minValid, expiredBy, settled and ends.
+// numbering, parsePosition, positionsAfter, readingExpiry, readingNumber and staleness.
+// refreshComputed, refreshView, computedColumns, partsView, reservedColumns and
+//   refuseTakenColumns, with OutputRow, TableOutputRow, PartRow, PreparedOutputs and StoredOutput.
+abstract class DerivedStatus {
+  constructor(clock: PipelineClock);
+  waiting(): Promise<void>;
+  refreshing(counts: DerivedCounts): Promise<void>;
+  current(counts?: DerivedCounts): Promise<void>;
+  failed(error: string): Promise<void>;
+  protected abstract write(
+    values: Readonly<Record<string, string | number | null>>,
+  ): Promise<void>;
+}
+type DerivedCounts = {
+  readonly inputs: number;
+  readonly computed: number;
+  readonly empty: number;
+  readonly failed: number;
+  readonly pending: number;
+};
+type DatasetIndex<Ordinary extends string, Build extends object> =
+  | {
+      readonly type: Ordinary;
+      readonly columns: readonly [string, ...string[]];
+    }
+  | ({
+      readonly type: 'vector';
+      readonly column: string;
+      readonly metric: VectorMetric;
+    } & Build);
+type VectorMetric = 'cosine' | 'euclidean' | 'dot';
+type ReloadMode = 'load' | 'create' | 'evolve' | 'reload' | 'continue';
+type StoredFit = 'missing' | 'stale' | 'fits';
+function reloadMode(options: {
+  readonly reloading: boolean;
+  readonly destinationSyncMode: DestinationSyncMode;
+  readonly target: StoredFit;
+  readonly hidden: StoredFit;
+}): ReloadMode;
+type Reloads = WholeStream | SomePartitions;
+class WholeStream {}
+class SomePartitions {
+  constructor(partitions: readonly Partition[]);
+  readonly partitions: readonly Partition[];
+  with(partition: Partition): SomePartitions;
+}
+const wholeStream: WholeStream;
+abstract class Identifiers {
+  protected abstract readonly maxBytes: number;
+  protected abstract readonly ownColumns: readonly string[];
+  abstract key(name: string): string;
+  columns<Column extends { readonly field: string }>(
+    columns: readonly Column[],
+  ): readonly (readonly [Column, string])[];
+  relation(name: string): string;
+  reader(name: string): string;
+}
+type ReaderRelation = {
+  readonly name: string;
+  readonly description: string;
+  readonly columns: Readonly<Record<string, string>>;
+};
+const readerCatalog: ReaderRelation;
+// targetFileReads, schemaColumns, requireDescribed, deduplicationColumns and describeTarget,
+//   with DeduplicationColumns, DescribedColumn and TargetDescription.
+```
+
+## Recipes
+
+One use case each, with a full program that you can run:
+
+- [Write a rule and a table rule, and compute a dataset with them](./docs/recipes/write-a-rule-for-a-computed-dataset.md)
+- [Write a kind of derived dataset whose output is not one row for each key](./docs/recipes/write-a-kind-of-derived-dataset.md)
+- [Write a composite dataset whose members refresh in order](./docs/recipes/write-a-composite-dataset.md)
+- [Write a source for an upstream with no change feed](./docs/recipes/write-a-source-for-an-upstream-with-no-change-feed.md)
+
 ## Decisions
 
 - [ADR 0001](./docs/adr/0001-derived-data-is-declared-on-the-pipeline.md): derived data is declared on the pipeline.
 - [ADR 0002](./docs/adr/0002-a-run-refreshes-its-derived-data-also-when-copies-failed.md): a run refreshes its derived data also when copies failed.
-- [ADR 0003](./docs/adr/0003-a-watch-refreshes-in-the-background-one-refresh-at-a-time.md): a watch refreshes in the background, one refresh at a time.
-- [ADR 0004](./docs/adr/0004-a-rule-failure-stays-on-its-output.md): a rule failure stays on its output.
+- [ADR 0003](./docs/adr/0003-a-watch-refreshes-in-the-background-one-refresh-at-a-time.md): a watch refreshes in the background, one refresh at a time. [ADR 0031](./docs/adr/0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md) supersedes it in part.
+- [ADR 0004](./docs/adr/0004-a-rule-failure-stays-on-its-output.md): a rule failure stays on its output. Superseded in part on 2026-11-23 (datahub #5453) by [ADR 0031](./docs/adr/0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md).
 - [ADR 0005](./docs/adr/0005-an-output-is-made-again-when-its-rule-identity-changes.md): an output is made again when its rule identity changes.
 - [ADR 0006](./docs/adr/0006-a-stream-whose-fields-change-keeps-its-rows-and-its-checkpoint.md): a stream whose fields change keeps its rows and its checkpoint.
-- [ADR 0007](./docs/adr/0007-a-stream-that-starts-over-reloads-into-a-hidden-target.md): a stream that starts over reloads into a hidden target.
+- [ADR 0007](./docs/adr/0007-a-stream-that-starts-over-reloads-into-a-hidden-target.md): a stream that starts over reloads into a hidden target. Superseded in part on 2026-11-22 (#5170).
 - [ADR 0008](./docs/adr/0008-a-target-has-one-writer.md): a target has one writer.
 - [ADR 0009](./docs/adr/0009-a-target-is-named-by-its-address-inside-the-destination.md): a target is named by its address inside the destination.
 - [ADR 0010](./docs/adr/0010-a-watch-keeps-watching-after-an-incomplete-pass.md): a watch keeps watching after an incomplete pass.
@@ -1501,7 +2383,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0014](./docs/adr/0014-a-source-says-how-current-each-stream-s-upstream-is.md): a source says how current the upstream of each stream is.
 - [ADR 0015](./docs/adr/0015-a-stored-file-s-ref-is-relative-to-its-folder.md): a stored file's ref is relative to its folder. [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md) supersedes it in part.
 - [ADR 0016](./docs/adr/0016-a-watch-watches-again-after-its-watcher-fails-for-a-system-reason.md): a watch watches again after its watcher fails for a system reason. [ADR 0020](./docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md) supersedes it in part.
-- [ADR 0017](./docs/adr/0017-each-commit-asks-for-a-refresh.md): each commit asks for a refresh.
+- [ADR 0017](./docs/adr/0017-each-commit-asks-for-a-refresh.md): each commit asks for a refresh. Superseded in part on 2026-11-23 (datahub #5453) by [ADR 0031](./docs/adr/0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md).
 - [ADR 0018](./docs/adr/0018-the-streams-of-a-read-are-one-task-group.md): the streams of a read are one task group.
 - [ADR 0019](./docs/adr/0019-a-pipeline-waits-and-reads-the-time-on-the-clock-that-its-caller-gives.md): a pipeline waits and reads the time on the clock that its caller gives.
 - [ADR 0020](./docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md): a source gives its change signals, and a failed signal fails only its streams.
@@ -1515,6 +2397,7 @@ Airbyte has no step after a load. elt has one, because its hosts have no orchest
 - [ADR 0028](./docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md): a host names each relation that readers query once.
 - [ADR 0029](./docs/adr/0029-the-side-that-raised-a-failure-names-its-type.md): the side that raised a failure names its type.
 - [ADR 0030](./docs/adr/0030-a-rule-reads-a-stored-file-through-its-storage.md): a rule reads a stored file through its storage.
+- [ADR 0031](./docs/adr/0031-a-dataset-failure-fails-only-its-dataset-and-a-watch-gives-it-beside-its-passes.md): a dataset failure fails only its dataset, and a watch gives it beside its passes.
 - [ADR 0032](./docs/adr/0032-a-deletion-older-than-the-stored-row-deletes-nothing.md): a deletion older than the stored row deletes nothing.
 - [ADR 0033](./docs/adr/0033-a-host-loads-the-rows-it-holds-through-an-iterable-source.md): a host loads the rows that it holds through an `IterableSource`.
 - [ADR 0034](./docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md): a composite dataset refreshes its members in order as one dataset.

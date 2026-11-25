@@ -20,6 +20,14 @@ _Avoid_: Sink, warehouse (eca uses warehouse for the data its conditions read), 
 One stream of a source into one target of a destination.
 _Avoid_: Sync, job, replication
 
+**Sync mode**:
+The pair of modes that a copy selects, as the [sync modes of Airbyte](https://docs.airbyte.com/platform/using-airbyte/core-concepts/sync-modes): `syncMode` (`full_refresh` or `incremental`) tells how the source extracts, and `destinationSyncMode` (`append`, `overwrite`, `append_dedup` or `overwrite_dedup`) tells how the destination loads. A copy with no modes is `full_refresh` with `overwrite`.
+_Avoid_: Write disposition (dlt's word), load strategy
+
+**Dedup policy**:
+The rule that a deduplicating copy (`append_dedup` or `overwrite_dedup`) uses on a conflict of its key, of the type `DedupPolicy`: `cursor_newer` keeps the row with the higher cursor, and `replace` keeps the newest extraction. A copy with no `dedupPolicy` uses `cursor_newer`, or `replace` for a stream with `sourceDefinedCursor`.
+_Avoid_: Merge strategy, conflict resolution, deletion policy (a deletion policy is for the vanished keys of a snapshot stream)
+
 **Connection**:
 The copies of one source into one destination, with the checkpoints that resume them, as Airbyte's connection is.
 _Avoid_: Integration, pipeline
@@ -80,9 +88,17 @@ _Avoid_: Table (a table is a target), collection, entity
 The stored object of a destination that one copy loads, for example one table.
 _Avoid_: Sink, table (a target of a different destination can be a file)
 
+**Reader view**:
+The view that readers query for the rows of one target, with the name that the host gives in `destination.table(name)`. It shows the columns of the stream and `loaded_at`, now and as of a position, and hides the internal columns of the destination ([ADR 0028](./docs/adr/0028-a-host-names-each-relation-that-readers-query-once.md)).
+_Avoid_: View (a view is a derived dataset), raw table (the reader view is over it)
+
 **Writer**:
 The copy that owns a target: its `id`, or the source identity and the stream name for a copy with no `id`. A target has one writer.
 _Avoid_: Owner claim, producer
+
+**Stage**:
+The open load of one stream into its target in a pass, of the type `Stage`. What the copy applies between two commits becomes durable and visible together at `commit()`, or not at all. `discard()` drops what the copy applied after the last commit.
+_Avoid_: Transaction (a stage has many commits), buffer, batch
 
 **Checkpoint**:
 The state of a source that a copy saved after the rows before it committed. The next pass resumes from it.
@@ -108,6 +124,10 @@ _Avoid_: Migrate, rebuild
 A stream starts again in a hidden target. The hidden target takes the place of the target when the stream ends with no failure.
 _Avoid_: Refresh (a refresh is for a derived dataset), backfill
 
+**Hidden target**:
+The target that a reload commits into, which readers cannot see. When the stream ends with no failure, `complete()` of the stage puts it in the place of the target. A reload that fails stays hidden, and the next run continues it from its checkpoint. The destination drops a hidden target that no checkpoint continues ([ADR 0024](./docs/adr/0024-a-reset-of-a-partition-reloads-it-into-a-hidden-target.md)).
+_Avoid_: Shadow table, staging table, temporary table
+
 **Snapshot stream**:
 A stream with no change feed whose source compares each complete scan with the snapshot in its checkpoint.
 _Avoid_: Full scan stream, polling stream
@@ -124,6 +144,10 @@ _Avoid_: Retention policy (a retention is one kind)
 A source whose streams read the rows that the host gives at each pass, as an iterable, with no source subclass of the host.
 _Avoid_: Push source (a push source puts rows in a queue, and elt pulls them), memory source, resource (a resource is a stream)
 
+**Tombstone**:
+A change of an iterable source's `changes` stream that tells of a row that the host deleted: `{ deleted: key, version }`, of the type `IterableTombstone`. It loads as a deletion whose deletion cursor is its `version`, so a tombstone older than the stored row deletes nothing ([ADR 0033](./docs/adr/0033-a-host-loads-the-rows-it-holds-through-an-iterable-source.md)).
+_Avoid_: Delete marker, soft delete (the row goes from the target)
+
 **Partition**:
 One part of a stream that a source reads apart, with its own checkpoint, for example one Search Console property.
 _Avoid_: Shard, slice
@@ -135,6 +159,10 @@ _Avoid_: Session, snapshot (a snapshot is the state of a snapshot stream)
 **Check**:
 One look of a watch at its upstream. A check that finds no change makes the unchanged streams current as of that check.
 _Avoid_: Poll, heartbeat
+
+**Gauge**:
+A value that a change signal reads at a moment, for example the `data_version` of a SQLite file, as the `Gauge` of `@zukhruf/async` that elt exports. `value(check)` reads it at most one time in a check. A changed value tells the watch that its streams changed. A gauge opens what it reads in its first read, and a gauge that holds a native resource is disposable, so the pipeline disposes it when the watch stops ([ADR 0020](./docs/adr/0020-a-source-gives-its-change-signals-and-a-failed-signal-fails-only-its-streams.md)).
+_Avoid_: Probe, version (a version is a row of a table or of its history), watcher
 
 **Change signal**:
 A gauge that a watch reads at each check, the streams that it tells about, and the interval and timeout of its checks. A source declares its change signals, and a failed change signal fails only its streams.
