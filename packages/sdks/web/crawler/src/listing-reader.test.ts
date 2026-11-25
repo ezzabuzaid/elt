@@ -52,7 +52,8 @@ function allReaders(limits: { maxDepth: number; maxPages: number }) {
 async function crawl(crawler: WebCrawler, start: string, signal: AbortSignal) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawler.crawl([start], null, { signal }))
-    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry) && !('gone' in entry))
+      entries.push(entry);
   return entries;
 }
 

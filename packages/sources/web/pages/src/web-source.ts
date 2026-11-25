@@ -1,10 +1,12 @@
 import { hash } from 'node:crypto';
 
+import type { SnapshotGroup } from '@zukhruf/snapshot-differential';
 import { z } from 'zod';
 
 import {
   Catalog,
   type CopyConfiguration,
+  type FailedGroup,
   type KeptGroup,
   type Partition,
   type PipelineClock,
@@ -21,6 +23,7 @@ import { DueTime } from './due-time.ts';
 import { failureRecords, failuresStream } from './failures-stream.ts';
 import { WebClient } from './http/web-http.ts';
 import { InputList } from './input-list.ts';
+import { ListedPages } from './listed-pages.ts';
 import { PageExtracted, pageChannels } from './page-channels.ts';
 import { routeRecords, routesState, routesStream } from './routes-stream.ts';
 import { InputError, type WebInput, webInputs } from './web-input.ts';
@@ -218,7 +221,7 @@ export class WebSource extends Source<WebRead> {
           jsonSchema: {
             type: 'object',
             description:
-              'Records extracted from the pages crawled for each chosen input. Incremental scans retain records absent from later listings.',
+              'Records extracted from the pages crawled for each chosen input. Incremental scans delete the records of a page that is gone or that a read no longer gives, and retain records absent from later listings.',
             properties,
             required: Object.keys(properties),
           },
@@ -226,6 +229,7 @@ export class WebSource extends Source<WebRead> {
           partitionKey: ['inputUrl'],
           supportedSyncModes: ['full_refresh', 'incremental'],
           sourceDefinedCursor: true,
+          emitsDeletes: true,
         });
       }),
       ...streams.map(({ stream }) => routesStream(routesName(stream))),
@@ -269,7 +273,7 @@ export class WebSource extends Source<WebRead> {
           ? 'Whether the last crawl of each chosen website or feed is complete, and when the first crawl that gave that answer ended.'
           : this.#failures.has(stream.name)
             ? 'The pages of the crawls of chosen websites and feeds whose last visit failed, as the last crawl of each left them.'
-            : 'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; listing disappearance does not imply deletion.',
+            : 'Records extracted from the pages crawled from chosen websites and feeds that match the configured URL patterns; a page that is gone, or read again, replaces its records, and listing disappearance does not imply deletion.',
       // The patterns the stream keeps pages by, and those it expands pages by
       // on the websites a list links, each by the parts of the pattern.
       selection: {
@@ -542,6 +546,27 @@ export class WebSource extends Source<WebRead> {
         savedAt = clock.performance.now();
         return { diff, crawl: crawl.snapshot(), outbox: routes };
       };
+      const policy = new ListedPages();
+      // The diff of groups of the scan, as one part of it or as its last
+      // part, with the crawl and the outbox saved beside each state it commits.
+      const diffed = async function* (
+        groups: readonly (
+          SnapshotGroup<Record<string, unknown>> | KeptGroup | FailedGroup
+        )[],
+        { last }: { readonly last: boolean },
+      ): AsyncGenerator<SourceMessage> {
+        for await (const message of diffGroupedSnapshot(
+          configuration,
+          groups,
+          diff,
+          { continues: !last, signal, policy },
+        ))
+          if ('type' in message && message.type === 'STATE') {
+            diff = message.state;
+            yield { ...message, state: checkpoint() };
+            await committed();
+          } else yield message;
+      };
       try {
         for await (const entry of crawl) {
           if ('deferred' in entry) {
@@ -573,6 +598,15 @@ export class WebSource extends Source<WebRead> {
             await committed();
             continue;
           }
+          if ('gone' in entry) {
+            // A gone page gives no records any more, so the records it gave
+            // vanish from a page the scan listed (ADR 0019).
+            yield* diffed(
+              [{ key: entry.gone.url, fingerprint: null, records: () => [] }],
+              { last: false },
+            );
+            continue;
+          }
           try {
             const reading = clock.performance.now();
             const output = await run
@@ -580,8 +614,7 @@ export class WebSource extends Source<WebRead> {
               .catch(pageFailure);
             const read = clock.performance.now() - reading;
             let extracted: { records: number; duration: number } | null = null;
-            for await (const message of diffGroupedSnapshot(
-              configuration,
+            yield* diffed(
               [
                 {
                   key: entry.url,
@@ -621,15 +654,8 @@ export class WebSource extends Source<WebRead> {
                   },
                 },
               ],
-              diff,
-              { continues: true, signal },
-            )) {
-              if ('type' in message && message.type === 'STATE') {
-                diff = message.state;
-                yield { ...message, state: checkpoint() };
-                await committed();
-              } else yield message;
-            }
+              { last: false },
+            );
             pageChannels.extract.publish(
               new PageExtracted(
                 crawl,
@@ -663,25 +689,18 @@ export class WebSource extends Source<WebRead> {
           };
           await committed();
         } else
-          for await (const message of diffGroupedSnapshot(
-            configuration,
-            kept,
-            diff,
-            {
-              signal,
-            },
-          ))
-            if ('type' in message && message.type === 'STATE') {
-              yield {
-                ...message,
-                state: {
-                  diff: message.state,
-                  crawl: crawl.snapshot(),
-                  outbox: routes,
-                },
-              };
-              await committed();
-            } else yield message;
+          yield* diffed(
+            [
+              ...kept,
+              // A page whose last visit failed keeps its records until a
+              // visit reads it again or finds it gone, also in a run that
+              // does not request it (ADR 0019).
+              ...crawl
+                .failures()
+                .map((url) => ({ key: url, failed: true }) as const),
+            ],
+            { last: true },
+          );
         ended = end(crawl.snapshot().crawl === null);
         due = crawl.nextDue();
       } catch (error) {

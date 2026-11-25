@@ -40,7 +40,7 @@
     "@eltjs/sdk-web-crawler": "0.0.1",
     "@eltjs/sdk-web-product": "0.0.1",
     "@zukhruf/async": "^0.8.109",
-    "@zukhruf/snapshot-differential": "^0.8.109",
+    "@zukhruf/snapshot-differential": "^0.8.115",
     "got": "16.1.0",
     "keyv": "6.1.0",
     "zod": "4.6.5"

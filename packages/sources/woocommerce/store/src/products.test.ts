@@ -12,6 +12,7 @@ import {
   SQLiteDestination,
   SQLiteSyncHistory,
 } from '@eltjs/elt-sqlite';
+import { day } from '@eltjs/sdk-web-crawler';
 import { WebSource } from '@eltjs/source-web-pages/web-source';
 
 import { products } from './products.ts';
@@ -81,7 +82,9 @@ function shop(pages: readonly (readonly object[] | object)[]) {
           ? { link: `<${list}&page=${page + 1}#038;page=${page}>; rel="next"` }
           : {}),
       })
-      .end(JSON.stringify(pages[page - 1]));
+      // A page past the last answers an empty list, as highhawks.jo's did on
+      // 2026-11-25.
+      .end(JSON.stringify(pages[page - 1] ?? []));
   });
 }
 
@@ -411,4 +414,37 @@ test("the products of every page of a shop's Store API are stored, with their pr
       regularPrice: null,
     },
   ]);
+});
+
+test('a product that the shop removes is deleted, and the product that moves to the page before keeps its row', async (t) => {
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  const second = { ...laptop, id: 2 };
+  const third = { ...laptop, id: 3 };
+  const pages = [[laptop, second], [third]];
+  await using upstream = await shop(pages);
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const run = () =>
+    ingestion(
+      upstream.origin,
+      database.path,
+      checkpoints.path,
+      cache.path,
+    ).then((ingested) => ingested.run());
+  await run();
+  // The shop removes the laptop: the third product moves to the first page.
+  pages.splice(0, pages.length, [second, third]);
+  // Each page of the list is due again a day after its first read.
+  t.mock.timers.setTime(Date.now() + 2 * day);
+
+  await run();
+
+  assert.deepEqual(
+    database.connection
+      .prepare('SELECT productId FROM woocommerce_products ORDER BY productId')
+      .all()
+      .map((row) => row.productId),
+    ['2', '3'],
+  );
 });

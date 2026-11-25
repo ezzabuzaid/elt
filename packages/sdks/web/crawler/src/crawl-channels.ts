@@ -113,12 +113,12 @@ export class CrawlRequested {
 export class CrawlHandedOff {
   readonly crawl: Crawl;
   readonly url: string;
-  readonly kind: 'page' | 'failure' | 'progress' | 'deferral';
+  readonly kind: 'page' | 'failure' | 'progress' | 'deferral' | 'gone';
   readonly duration: number;
   constructor(
     crawl: Crawl,
     url: string,
-    kind: 'page' | 'failure' | 'progress' | 'deferral',
+    kind: 'page' | 'failure' | 'progress' | 'deferral' | 'gone',
     duration: number,
   ) {
     this.crawl = crawl;

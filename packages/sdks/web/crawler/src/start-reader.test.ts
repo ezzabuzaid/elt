@@ -34,7 +34,8 @@ function pathOf(url: string) {
 async function pages(crawl: Crawl) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawl)
-    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry) && !('gone' in entry))
+      entries.push(entry);
   return entries.map((entry) => {
     if ('error' in entry) throw entry.error;
     return { url: pathOf(entry.url), listingUrl: pathOf(entry.listingUrl) };

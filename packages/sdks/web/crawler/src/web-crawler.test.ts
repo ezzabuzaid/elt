@@ -47,7 +47,8 @@ function pageOf(entry: CrawledPage | CrawlFailure): CrawledPage {
 async function results(crawl: Crawl) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawl)
-    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry) && !('gone' in entry))
+      entries.push(entry);
   return entries;
 }
 
@@ -284,7 +285,7 @@ test('consumer backpressure and early break stop fetching, and crawls remain iso
   for await (const entry of crawler.crawl(['https://site.test/'], null, {
     signal: t.signal,
   })) {
-    if ('progress' in entry || 'deferred' in entry) continue;
+    if ('progress' in entry || 'deferred' in entry || 'gone' in entry) continue;
     assert.equal(pageOf(entry).url, 'https://site.test/child');
     assert.deepEqual(requests, ['/', '/child']);
     break;
@@ -500,7 +501,7 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
   });
   const handed: string[] = [];
   for await (const entry of first) {
-    if ('progress' in entry || 'deferred' in entry) continue;
+    if ('progress' in entry || 'deferred' in entry || 'gone' in entry) continue;
     handed.push(pathOf(pageOf(entry).url));
     if (handed.length === 2) break;
   }
@@ -610,7 +611,9 @@ test('every downloaded URL that is not handed back as a page or failure is hande
     'progress' in entry ? [pathOf(entry.progress)] : [],
   );
   const handed = entries.flatMap((entry) =>
-    'progress' in entry || 'deferred' in entry ? [] : [pathOf(entry.url)],
+    'progress' in entry || 'deferred' in entry || 'gone' in entry
+      ? []
+      : [pathOf(entry.url)],
   );
   // The starting page, the feed, robots.txt's tolerated 404 and a page read only for its links.
   assert.deepEqual(progress, ['/', '/feed.xml', '/robots.txt', '/hub']);

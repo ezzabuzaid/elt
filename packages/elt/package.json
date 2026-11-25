@@ -40,7 +40,7 @@
   "dependencies": {
     "@zukhruf/async": "^0.8.109",
     "@zukhruf/fs": "^0.8.109",
-    "@zukhruf/snapshot-differential": "^0.8.109",
+    "@zukhruf/snapshot-differential": "^0.8.115",
     "@zukhruf/vectors": "^0.8.109"
   },
   "devDependencies": {

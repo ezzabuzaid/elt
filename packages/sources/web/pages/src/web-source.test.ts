@@ -670,7 +670,8 @@ test('failed articles do not block later articles or later refreshes', async () 
         `<rss><channel>${(added ? ['c', 'b', 'a', 'aa'] : ['c', 'b', 'a']).map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
       );
     } else if (url.pathname === '/b' && failing) {
-      response.writeHead(404).end();
+      // A 404 would be a gone page, which is no failure.
+      response.writeHead(503).end();
     } else {
       response.setHeader('content-type', 'text/html');
       response.end(
@@ -704,7 +705,7 @@ test('failed articles do not block later articles or later refreshes', async () 
       .map((row) => row.pageUrl),
     [`${upstream.origin}/a`, `${upstream.origin}/c`],
   );
-  // Feed order: the article after the failure still downloads, and a 404 is not retried within the run.
+  // Feed order: the article after the failure still downloads, and a 503 is not retried within the run.
   assert.deepEqual(requests, ['/feed.xml', '/c', '/b', '/a']);
   added = true;
   const refresh = await pipeline(
@@ -721,6 +722,8 @@ test('failed articles do not block later articles or later refreshes', async () 
     );
     return true;
   });
+  // /b failed twice in a row; a third failed visit would make it gone
+  // (crawler ADR 0008), so it answers now.
   failing = false;
   requests.length = 0;
   const resumed = await pipeline(
@@ -770,7 +773,8 @@ test(
           }),
         );
       } else if (phase === 0 && url.pathname === '/a') {
-        response.writeHead(404).end();
+        // A 404 would be a gone page, which is no failure.
+        response.writeHead(503).end();
       } else if (phase === 0 && url.pathname === '/b') {
         response
           .writeHead(200, { 'content-type': 'application/json' })
@@ -1518,7 +1522,17 @@ test('a failed full refresh tries later articles and preserves the last complete
   revised = true;
   failing = true;
   requests.length = 0;
-  await assert.rejects(refresh.run(), PipelineError);
+  await assert.rejects(refresh.run(), (error) => {
+    assert(error instanceof PipelineError);
+    // The read fails with the page's own failure, not with the diff's.
+    const failure = error.results[0]?.failures[0]?.error;
+    assert(failure instanceof AggregateError);
+    assert.deepEqual(
+      failure.errors.map((cause) => cause instanceof CrawlError && cause.url),
+      [`${upstream.origin}/b`],
+    );
+    return true;
+  });
   assert(requests.includes('/c'));
   assert.deepEqual(
     database.connection

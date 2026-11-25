@@ -115,6 +115,7 @@ export {
 export {
   diffGroupedSnapshot,
   diffSnapshot,
+  type FailedGroup,
   type KeptGroup,
   type SnapshotDiffOptions,
 } from './core/snapshot.ts';

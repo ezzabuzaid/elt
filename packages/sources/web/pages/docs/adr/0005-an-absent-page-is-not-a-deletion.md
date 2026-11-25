@@ -1,5 +1,7 @@
 # An absent page is not a deletion
 
+Status: amended by [ADR 0019](./0019-a-page-is-a-partition-whose-records-a-read-replaces.md). The stream now declares deletions: a page that the crawl reads again, or finds gone, replaces its records. What still holds: a page that only left its listings keeps its rows, until a request of it finds it gone.
+
 Feeds roll over, and sitemaps and archives change. A page that a listing no longer names can still exist. The source cannot know whether the publisher deleted a page.
 
 Thus the stream declares no deletions. When a complete crawl does not hand back a page, the diff of elt removes the page from its state and emits no DELETE. The row of that page stays in the destination.

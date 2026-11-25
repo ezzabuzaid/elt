@@ -56,6 +56,7 @@ export {
   type WebCrawler,
   type Crawl,
   type CrawlDeferral,
+  type CrawlGone,
   type CrawlFailure,
   type CrawlMemento,
   type CrawlOptions,

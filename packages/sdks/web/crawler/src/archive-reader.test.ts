@@ -31,7 +31,8 @@ function listings() {
 async function crawl(crawler: WebCrawler, start: string, signal: AbortSignal) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawler.crawl([start], null, { signal }))
-    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry) && !('gone' in entry))
+      entries.push(entry);
   return entries;
 }
 
@@ -488,7 +489,7 @@ test('new feed pages are handed back before a long archive chain finishes, and t
     signal: t.signal,
     include: [new URLPattern({ pathname: '/new/*' })],
   }))
-    if (!('progress' in entry) && !('deferred' in entry))
+    if (!('progress' in entry) && !('deferred' in entry) && !('gone' in entry))
       handed.push(location(entry).url);
   assert.deepEqual(
     handed,
@@ -544,7 +545,7 @@ test('archive backfill keeps progressing while many listed pages wait', async (t
     signal: t.signal,
     include: [new URLPattern({ pathname: '/new/*' })],
   }))
-    if (!('progress' in entry) && !('deferred' in entry))
+    if (!('progress' in entry) && !('deferred' in entry) && !('gone' in entry))
       handed.push(location(entry).url);
   assert.equal(handed.length, 30);
   const waiting = requests.slice(0, requests.lastIndexOf('/new/30'));
@@ -584,7 +585,7 @@ test('a URL found as an archive and then listed as a page downloads in the page 
   for await (const entry of listings().crawl([upstream.origin], null, {
     signal: t.signal,
   }))
-    if (!('progress' in entry) && !('deferred' in entry))
+    if (!('progress' in entry) && !('deferred' in entry) && !('gone' in entry))
       handed.push(location(entry).url);
   assert.deepEqual(handed, [`${upstream.origin}/2020/`]);
   // As backfill, /2020/ would wait behind the nineteen years found before it.

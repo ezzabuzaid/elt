@@ -746,7 +746,8 @@ test("requests are counted and timed in seconds by origin, lane and status, and 
     ],
   });
 
-  await assert.rejects(pipeline.run(), /could not read .*\/missing: .*404/);
+  // /missing answers 404, so the crawl hands it out as gone, which fails no read.
+  await pipeline.run();
 
   const metrics = await telemetry.metrics();
   const metric = (name: string) =>

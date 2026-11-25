@@ -130,7 +130,9 @@ test('a discovered article retains its introductory summary before the main body
   )
     // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
     .flatMap((entry) =>
-      'progress' in entry || 'deferred' in entry ? [] : [entry],
+      'progress' in entry || 'deferred' in entry || 'gone' in entry
+        ? []
+        : [entry],
     );
   assert.equal(pages.length, 1);
   const page = pages[0];
@@ -199,7 +201,9 @@ test('a feed article retains a figure caption containing a descriptive link', as
   )
     // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
     .flatMap((entry) =>
-      'progress' in entry || 'deferred' in entry ? [] : [entry],
+      'progress' in entry || 'deferred' in entry || 'gone' in entry
+        ? []
+        : [entry],
     );
   assert.equal(pages.length, 1);
   const page = pages[0];
@@ -281,7 +285,9 @@ test('a feed article retains acknowledgments and an authorship disclosure after 
   )
     // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
     .flatMap((entry) =>
-      'progress' in entry || 'deferred' in entry ? [] : [entry],
+      'progress' in entry || 'deferred' in entry || 'gone' in entry
+        ? []
+        : [entry],
     );
   assert.equal(pages.length, 1);
   const page = pages[0];

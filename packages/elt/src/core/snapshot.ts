@@ -2,6 +2,7 @@ import { setImmediate } from 'node:timers/promises';
 
 import {
   DeletionPolicy,
+  type FailedGroup,
   type KeptGroup,
   type SnapshotChange,
   SnapshotDifferential,
@@ -14,8 +15,9 @@ import { Deduplication } from './deduplication.ts';
 import type { StateMessage, UnversionedDelete } from './source.ts';
 import type { Stream } from './stream.ts';
 
-// A group the source lists without reading, because it knows the group did not change.
-export type { KeptGroup };
+// A group the source lists without reading, because it knows the group did
+// not change; and one it could not read, which keeps what the snapshot has.
+export type { FailedGroup, KeptGroup };
 
 export type SnapshotDiffOptions = {
   // What a vanished key means. A stream that emits deletions names one, such
@@ -98,8 +100,8 @@ export async function* diffGroupedSnapshot<
 >(
   { stream, syncMode }: CopyConfiguration,
   groups:
-    | AsyncIterable<SnapshotGroup<Data> | KeptGroup>
-    | Iterable<SnapshotGroup<Data> | KeptGroup>,
+    | AsyncIterable<SnapshotGroup<Data> | KeptGroup | FailedGroup>
+    | Iterable<SnapshotGroup<Data> | KeptGroup | FailedGroup>,
   state: unknown,
   options: SnapshotDiffOptions,
 ): AsyncGenerator<SnapshotMessage<Data>> {
@@ -107,6 +109,9 @@ export async function* diffGroupedSnapshot<
   const differential = differentialOf<Data>(deduplication, options);
   if (syncMode !== 'incremental') {
     for await (const group of groups) {
+      // A failed group gives no records to replace the target with; its
+      // failure fails the read, so the target keeps its last complete scan.
+      if ('failed' in group) continue;
       // A full refresh replaces its target, so it must read every group.
       if ('kept' in group)
         throw new TypeError(

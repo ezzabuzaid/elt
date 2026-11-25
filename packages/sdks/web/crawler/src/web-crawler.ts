@@ -100,6 +100,16 @@ export type CrawlProgress = {
 };
 /** A known page the crawl did not request, whose last download succeeded: it still exists, unchanged as far as the crawl knows. */
 export type CrawlDeferral = { readonly deferred: PageLocation };
+/**
+ * A page the crawl would hand back whose visit is gone: it answered 404 or
+ * 410, or failed a third visit in a row (ADR 0008). It is an answer, not a
+ * failure, as Nutch's STATUS_FETCH_GONE is a status (ADR 0010).
+ */
+export type CrawlGone = {
+  readonly gone: PageLocation;
+  /** What this read of the URL named; none when no reader read it. */
+  readonly routes: readonly ListingRoutes[];
+};
 
 // What a response tells of its request: Got times each request it sends.
 function answered(response: Response): Answered {
@@ -179,6 +189,9 @@ const lastSchema = z.discriminatedUnion('kind', [
     digest: digestSchema,
     failures: z.number().int().nonnegative(),
     gone: z.number().int().nonnegative(),
+    // The last visit was a gone visit: a 404 or a 410, or a third failed
+    // visit in a row (ADR 0008).
+    goneVisit: z.boolean(),
   }),
 ]);
 type Last = z.infer<typeof lastSchema>;
@@ -229,7 +242,7 @@ export type CrawlOptions = {
 };
 
 export interface Crawl extends AsyncIterable<
-  CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral
+  CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral | CrawlGone
 > {
   /** The crawl so far as plain data. The entry handed out last stays unfinished until the next is requested. */
   snapshot(): CrawlMemento;
@@ -589,7 +602,8 @@ class CrawlRun implements Crawl {
       known.set(this.#turn.visit.after.entry.url, this.#turn.visit.after);
     return [...known.values()]
       .filter(
-        ({ entry, last }) => last.kind === 'failed' && this.#handedBack(entry),
+        ({ entry, last }) =>
+          last.kind === 'failed' && !last.goneVisit && this.#handedBack(entry),
       )
       .map(({ entry }) => entry.url)
       .toSorted();
@@ -598,7 +612,7 @@ class CrawlRun implements Crawl {
   // Each entry as the crawl hands it out, with what the crawl publishes
   // around it: its start and end, and the consumer's time with each entry.
   async *[Symbol.asyncIterator](): AsyncGenerator<
-    CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral
+    CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral | CrawlGone
   > {
     crawlChannels.start.publish(
       new CrawlStarted(
@@ -624,6 +638,10 @@ class CrawlRun implements Crawl {
           crawlChannels.handOff.publish(
             new CrawlHandedOff(this, entry.progress, 'progress', duration),
           );
+        else if ('gone' in entry)
+          crawlChannels.handOff.publish(
+            new CrawlHandedOff(this, entry.gone.url, 'gone', duration),
+          );
         else
           crawlChannels.handOff.publish(
             new CrawlHandedOff(this, entry.deferred.url, 'deferral', duration),
@@ -637,7 +655,7 @@ class CrawlRun implements Crawl {
   }
 
   async *#visits(): AsyncGenerator<
-    CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral
+    CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral | CrawlGone
   > {
     const { signal } = this.#options;
     signal.throwIfAborted();
@@ -689,15 +707,18 @@ class CrawlRun implements Crawl {
           this.#requested(entry, 'network', waited, { error: cause });
           const errorResponse =
             cause instanceof RequestError ? cause.response : undefined;
-          this.#visit(before, this.#failed(entry, 'failed', null, before));
-          yield this.#tolerates(entry, errorResponse?.statusCode)
-            ? { progress: entry.url, routes: [] }
-            : this.#failure(
-                entry,
-                page,
-                errorResponse?.url ?? entry.url,
-                cause,
-              );
+          const visit = this.#failed(entry, 'failed', null, before);
+          this.#visit(before, visit);
+          if (this.#gone(entry, visit)) yield this.#goneEntry(entry, []);
+          else
+            yield this.#tolerates(entry, errorResponse?.statusCode)
+              ? { progress: entry.url, routes: [] }
+              : this.#failure(
+                  entry,
+                  page,
+                  errorResponse?.url ?? entry.url,
+                  cause,
+                );
           continue;
         }
         this.#requested(entry, 'network', waited, answered(response));
@@ -761,13 +782,7 @@ class CrawlRun implements Crawl {
         );
         yield this.#hands(entry)
           ? {
-              deferred: {
-                url: entry.url,
-                listingUrl: entry.listingUrl,
-                lastModified: entry.lastModified,
-                published: entry.published,
-                localizedVersions: entry.localizedVersions,
-              },
+              deferred: this.#location(entry),
             }
           : {
               progress: entry.url,
@@ -783,17 +798,17 @@ class CrawlRun implements Crawl {
       }
       const failed = statusCode < 200 || statusCode > 299;
       let change: Change = 'unknown';
-      if (failed)
-        this.#visit(
+      let gone = false;
+      if (failed) {
+        const visit = this.#failed(
+          entry,
+          [404, 410].includes(statusCode) ? 'gone' : 'failed',
+          headers,
           before,
-          this.#failed(
-            entry,
-            [404, 410].includes(statusCode) ? 'gone' : 'failed',
-            headers,
-            before,
-          ),
         );
-      else {
+        this.#visit(before, visit);
+        gone = this.#gone(entry, visit);
+      } else {
         const digest = hash('sha256', response.rawBody);
         if (known !== null)
           change = known === digest ? 'unmodified' : 'modified';
@@ -806,7 +821,9 @@ class CrawlRun implements Crawl {
         );
       }
       if (failed && !tolerated) {
-        yield this.#failure(entry, page, response.url, new HTTPError(response));
+        yield gone
+          ? this.#goneEntry(entry, [])
+          : this.#failure(entry, page, response.url, new HTTPError(response));
         continue;
       }
       const type =
@@ -884,16 +901,13 @@ class CrawlRun implements Crawl {
       if (included && !failed && !this.#handed.has(entry.url)) {
         this.#turn = { ...this.#turn, hand: entry.url };
         yield {
-          url: entry.url,
-          listingUrl: entry.listingUrl,
-          lastModified: entry.lastModified,
-          published: entry.published,
-          localizedVersions: entry.localizedVersions,
+          ...this.#location(entry),
           response,
           change,
           routes,
         };
-      } else yield { progress: entry.url, routes };
+      } else if (gone) yield this.#goneEntry(entry, routes);
+      else yield { progress: entry.url, routes };
     }
     // Entries of a blocked or spent origin remain: the crawl is unfinished.
     if (this.#held.size > 0) return;
@@ -904,13 +918,7 @@ class CrawlRun implements Crawl {
         this.#hands(entry)
       )
         yield {
-          deferred: {
-            url,
-            listingUrl: entry.listingUrl,
-            lastModified: entry.lastModified,
-            published: entry.published,
-            localizedVersions: entry.localizedVersions,
-          },
+          deferred: this.#location(entry),
         };
     this.#phase = new Finished();
   }
@@ -1023,7 +1031,13 @@ class CrawlRun implements Crawl {
     const gone = isGone ? since.gone + 1 : since.gone;
     return {
       entry,
-      last: { kind: 'failed', digest: digestOf(before), failures, gone },
+      last: {
+        kind: 'failed',
+        digest: digestOf(before),
+        failures,
+        gone,
+        goneVisit: isGone,
+      },
       ...this.#schedule(entry, isGone ? { gone } : 'failed', headers, before),
     };
   }
@@ -1043,6 +1057,23 @@ class CrawlRun implements Crawl {
       },
       before?.history ?? null,
     );
+  }
+
+  // Whether a failed visit hands its page out as gone: a page the crawl
+  // hands back, not handed out yet in this run, whose visit was gone.
+  #gone(entry: Entry, visit: KnownUrl) {
+    return (
+      visit.last.kind === 'failed' &&
+      visit.last.goneVisit &&
+      this.#handedBack(entry) &&
+      !this.#handed.has(entry.url)
+    );
+  }
+
+  // A gone page as the crawl hands it out, once in a run, as a page is.
+  #goneEntry(entry: Entry, routes: readonly ListingRoutes[]): CrawlGone {
+    this.#turn = { ...this.#turn, hand: entry.url };
+    return { gone: this.#location(entry), routes };
   }
 
   #commit() {
@@ -1300,6 +1331,17 @@ class CrawlRun implements Crawl {
     );
   }
 
+  // Where a known URL is, as each entry that names a page hands it out.
+  #location(entry: Entry): PageLocation {
+    return {
+      url: entry.url,
+      listingUrl: entry.listingUrl,
+      lastModified: entry.lastModified,
+      published: entry.published,
+      localizedVersions: entry.localizedVersions,
+    };
+  }
+
   #failure(
     entry: Entry,
     page: boolean,
@@ -1307,11 +1349,7 @@ class CrawlRun implements Crawl {
     cause: unknown,
   ): CrawlFailure {
     return {
-      url: entry.url,
-      listingUrl: entry.listingUrl,
-      lastModified: entry.lastModified,
-      published: entry.published,
-      localizedVersions: entry.localizedVersions,
+      ...this.#location(entry),
       error: new CrawlError(url, cause, page),
     };
   }

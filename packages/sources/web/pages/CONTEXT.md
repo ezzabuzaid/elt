@@ -99,3 +99,7 @@ _Avoid_: Schedule alone, poll interval (a watch checks again when the earliest k
 **Deferred page**:
 A known page that the crawl did not request because it is not due, and whose last download succeeded. Its row stays.
 _Avoid_: Skipped page, cached page
+
+**Gone page**:
+A page that the crawl hands out as gone, because it answered 404 or 410, or its third visit in a row failed. It gives no records, so its rows are deleted. It is no failure ([ADR 0019](./docs/adr/0019-a-page-is-a-partition-whose-records-a-read-replaces.md)).
+_Avoid_: Dead page, removed page, missing page (a page that only left its listings is not gone)

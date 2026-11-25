@@ -484,3 +484,37 @@ test('a crawl stopped at any entry and resumed from its snapshot expands the sam
     assert.deepEqual([...pages].toSorted(), expected, `stop ${stop}`);
   }
 });
+
+test('a gone page that a list on another origin names after its download, which adds the step role, is downloaded again and handed out as gone once', async (t) => {
+  const company: string[] = [];
+  // The company's website answers every path with 404.
+  await using site = await new HttpServer().start(website(company, () => ({})));
+  await using list = await new HttpServer().start(
+    website([], () => ({
+      '/sitemap.xml': xml(
+        `<urlset><url><loc>${site.origin}/</loc></url></urlset>`,
+      ),
+      '/programs': '<link rel="next" href="/programs?page=2">',
+      '/programs?page=2': `<main><a href="${site.origin}/">Company</a></main>`,
+    })),
+  );
+
+  const gone: string[] = [];
+  for await (const entry of programs({ maxDepth: 0, maxPages: 0 }).crawl(
+    [`${list.origin}/sitemap.xml`, `${list.origin}/programs`],
+    null,
+    {
+      signal: t.signal,
+      include: [new URLPattern(`${site.origin}/*`)],
+      expand,
+    },
+  ))
+    if ('gone' in entry) gone.push(entry.gone.url);
+
+  // The sitemap's page is downloaded first; the list's second page names it
+  // after that download, as a one-step page, so it is downloaded again.
+  assert.deepEqual(
+    { gone, downloads: company.filter((path) => path === '/') },
+    { gone: [`${site.origin}/`], downloads: ['/', '/'] },
+  );
+});

@@ -36,7 +36,8 @@ async function crawl(
 ) {
   const entries: (CrawledPage | CrawlFailure)[] = [];
   for await (const entry of crawler.crawl([start], null, { signal, include }))
-    if (!('progress' in entry) && !('deferred' in entry)) entries.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry) && !('gone' in entry))
+      entries.push(entry);
   return entries;
 }
 
@@ -250,7 +251,7 @@ test("a list served as a JSON format of the +json suffix, such as JSON:API's, is
   );
 });
 
-test('a listed page that is gone is skipped, not a failure', async (t) => {
+test('a listed page that is gone is handed out as gone, not as a failure', async (t) => {
   const requests: string[] = [];
   await using upstream = await new HttpServer().start((request, response) => {
     requests.push(request.url ?? '');
@@ -264,11 +265,15 @@ test('a listed page that is gone is skipped, not a failure', async (t) => {
     else response.end('<p>An item.</p>');
   });
 
-  const entries = await crawl(
-    pagination(),
-    `${upstream.origin}/category`,
-    t.signal,
-  );
+  const crawl = pagination().crawl([`${upstream.origin}/category`], null, {
+    signal: t.signal,
+  });
+  const entries: (CrawledPage | CrawlFailure)[] = [];
+  const gone: string[] = [];
+  for await (const entry of crawl)
+    if ('gone' in entry) gone.push(entry.gone.url);
+    else if (!('progress' in entry) && !('deferred' in entry))
+      entries.push(entry);
 
   assert.deepEqual(entries.map(location), [
     {
@@ -276,6 +281,10 @@ test('a listed page that is gone is skipped, not a failure', async (t) => {
       lastModified: null,
       listingUrl: `${upstream.origin}/category`,
     },
+  ]);
+  assert.deepEqual(gone.toSorted(), [
+    `${upstream.origin}/item/removed`,
+    `${upstream.origin}/item/sold`,
   ]);
   assert.ok(requests.includes('/item/sold'), requests.join(' '));
   assert.ok(requests.includes('/item/removed'), requests.join(' '));
@@ -466,7 +475,8 @@ test('a crawl stopped inside the pagination and resumed from its snapshot reads 
   for await (const entry of crawler.crawl([], snapshot, {
     signal: t.signal,
   }))
-    if (!('progress' in entry) && !('deferred' in entry)) resumed.push(entry);
+    if (!('progress' in entry) && !('deferred' in entry) && !('gone' in entry))
+      resumed.push(entry);
 
   assert.deepEqual(
     resumed

@@ -465,6 +465,7 @@ Some records come from inputs that the source can fingerprint and not read, such
 - Each group is `{ key, fingerprint, records() }`: one input, a fingerprint of it, and a function that reads its records.
 - In an incremental copy, a group whose fingerprint is equal to the saved fingerprint of its key keeps its saved rows. The diff does not call its `records()`. The diff reads and compares each other group, and each group whose fingerprint is `null`, record by record.
 - A source that knows that a group did not change can give a kept group, `{ key, kept: true }`, with no fingerprint. The group keeps its saved rows. A kept group that the snapshot does not have fails the diff. A full refresh reads each group, so it refuses a kept group.
+- A source that could not read an input, such as a page that answered 503, can give a failed group, `{ key, failed: true }`. The group keeps its saved rows, so a failure deletes nothing, and a row that another group gives moved out of it. A failed group that the snapshot does not have keeps nothing. A full refresh gives no rows for a failed group: the failure fails the read, so the target keeps its last complete scan.
 - The state is `{ groups: { <group key>: { fingerprint, snapshot } } }`, with `snapshot` as above. It also has `unknown`, the keys that the policy judged unknown, when there is one.
 - **Deletions:** the policy judges each key that no group gave in this run, kept or read. With `ClosedWorld`, a vanished input deletes its rows, and a changed input deletes the rows that it does not give now. The groups must still come from a complete list: the source lists each input on each run, and it skips only the read.
 - **Fingerprints:** a fingerprint must change each time that the records of the group can change, also when the parse code of the source changes. A version constant in the fingerprint does this. A fingerprint that misses a change keeps old rows, and no error tells of it.
@@ -1901,8 +1902,8 @@ function diffSnapshot<Data extends Record<string, unknown>>(
 function diffGroupedSnapshot<Data extends Record<string, unknown>>(
   configuration: CopyConfiguration,
   groups:
-    | AsyncIterable<SnapshotGroup<Data> | KeptGroup>
-    | Iterable<SnapshotGroup<Data> | KeptGroup>,
+    | AsyncIterable<SnapshotGroup<Data> | KeptGroup | FailedGroup>
+    | Iterable<SnapshotGroup<Data> | KeptGroup | FailedGroup>,
   state: unknown,
   options: SnapshotDiffOptions,
 ): AsyncGenerator<RecordMessage | DeleteMessage | StateMessage>;
@@ -1911,7 +1912,8 @@ type SnapshotDiffOptions = {
   readonly continues?: boolean;
   readonly signal: AbortSignal | undefined;
 };
-// KeptGroup: { key, kept: true }, of @zukhruf/snapshot-differential.
+// KeptGroup: { key, kept: true }, and FailedGroup: { key, failed: true },
+// of @zukhruf/snapshot-differential.
 
 // The rows that a host holds
 class IterableSource<

@@ -33,6 +33,7 @@ import {
 } from '@eltjs/sdk-web-crawler';
 
 import { ArticleExtractor } from './article-extractor.ts';
+import { ListedPages } from './listed-pages.ts';
 import { type ExtractorRun } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
@@ -111,7 +112,8 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
         },
       ],
       state,
-      { signal },
+      // The web stream emits deletions, with the policy its source gives.
+      { signal, policy: new ListedPages() },
     )) {
       if ('type' in message && message.type === 'STATE') next = message.state;
       if ('data' in message) records++;

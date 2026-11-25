@@ -70,15 +70,15 @@ test('chosen websites and feeds compose with extraction without merging URL vari
   for (const input of ['/', '/feed.xml']) {
     // Each origin answers one request a second, so a crawl takes seconds.
     const signal = t.signal;
-    const pages = (
-      await Array.fromAsync(
-        crawler.crawl([`${upstream.origin}${input}`], null, { signal }),
-      )
-    )
-      // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
-      .flatMap((entry) =>
-        'progress' in entry || 'deferred' in entry ? [] : [entry],
-      );
+    const entries = await Array.fromAsync(
+      crawler.crawl([`${upstream.origin}${input}`], null, { signal }),
+    );
+    // Progress entries only mark documents the crawl read for its readers; a crawl with no memento defers nothing.
+    const pages = entries.flatMap((entry) =>
+      'progress' in entry || 'deferred' in entry || 'gone' in entry
+        ? []
+        : [entry],
+    );
     assert.deepEqual(
       pages.map((page) => page.url),
       [
@@ -87,8 +87,12 @@ test('chosen websites and feeds compose with extraction without merging URL vari
         `${upstream.origin}/story`,
         `${upstream.origin}/story/`,
         `${upstream.origin}/empty`,
-        `${upstream.origin}/missing`,
       ],
+    );
+    // The feed's item that answers 404 is gone, so a host fetches no article for it.
+    assert.deepEqual(
+      entries.flatMap((entry) => ('gone' in entry ? [entry.gone.url] : [])),
+      [`${upstream.origin}/missing`],
     );
     assert.ok(
       pages.every((page) => page.listingUrl === `${upstream.origin}/feed.xml`),
@@ -112,10 +116,6 @@ test('chosen websites and feeds compose with extraction without merging URL vari
       assert.ok(result.value.textContent.includes(paragraphs[0]));
     }
     assert.deepEqual(results[4], { status: 'fulfilled', value: null });
-    const missing = results[5];
-    assert.ok(missing?.status === 'rejected');
-    assert.ok(missing.reason instanceof ArticleError);
-    assert.equal(missing.reason.url, `${upstream.origin}/missing`);
   }
 });
 
