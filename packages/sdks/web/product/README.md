@@ -1,7 +1,5 @@
 # Web product
 
-> **Design for review.** This is the API on paper of `@eltjs/sdk-web-product` (backlog item 5577). No code exists yet.
-
 The product that a shop's page declares in its schema.org data, as one record: its name, identifiers, images, price and variants. The SDK reads JSON-LD and microdata. It knows no elt type, as the crawler and `@eltjs/sdk-web-article` know none; `ProductExtractor` of `@eltjs/source-web-pages` gives its record to a web stream.
 
 On 2026-11-24, 18 of the 46 Jordanian shop hosts with 20 or more product URLs in Common Crawl `CC-MAIN-2026-43` declared a schema.org `Product` on a product page: 16 in JSON-LD (WooCommerce, Shopify, OpenCart and custom Next.js shops) and 2 in microdata only (an Odoo shop and one other). One reader thus serves every shop platform, and a shop needs no wrapper of its own.
@@ -24,18 +22,21 @@ type Product = {
   readonly name: string;
   /** The product's own URL as the page declares it, resolved; else the page's URL. */
   readonly url: string;
+  /** The canonical URL that the page declares in its head; null when it declares none. */
+  readonly canonicalUrl: string | null;
   readonly description: string | null;
   readonly brand: string | null;
+  readonly category: string | null;
   readonly sku: string | null;
   readonly mpn: string | null;
   /** schema.org model, such as a maker's part number: OpenCart's City Center gives MSI's 9S7-265343-214 there. */
   readonly model: string | null;
   readonly productId: string | null;
-  readonly gtins: readonly {
-    readonly type: 'gtin' | 'gtin8' | 'gtin12' | 'gtin13' | 'gtin14';
-    readonly value: string;
-  }[];
+  readonly gtins: readonly Gtin[];
   readonly images: readonly string[];
+  readonly color: string | null;
+  readonly size: string | null;
+  readonly rating: Rating | null;
   readonly price: Price | null;
   /** The bare schema.org name, such as InStock; null when the page gives none. */
   readonly availability: string | null;
@@ -44,12 +45,21 @@ type Product = {
   /** The variants of a ProductGroup; empty for a Product. */
   readonly variants: readonly ProductVariant[];
   readonly syntax: 'json-ld' | 'microdata';
+  /** The product's object as the page declares it, JSON-LD-shaped, for what the record has no field for. */
+  readonly data: Thing;
 };
+
+type Gtin = {
+  readonly type: 'gtin' | 'gtin8' | 'gtin12' | 'gtin13' | 'gtin14';
+  readonly value: string;
+};
+
+type Rating = { readonly value: string; readonly count: number | null };
 
 type Price = {
   /** The price to pay, as a decimal string with '.' as its point, such as "12.000" for JOD. */
   readonly amount: string;
-  /** The ISO 4217 code, such as JOD; null when the page gives none. */
+  /** The ISO 4217 code, such as JOD, as the shop gives it; null when it gives none. */
   readonly currency: string | null;
   /** The price before a sale, only when it is higher than amount. */
   readonly regular: string | null;
@@ -59,9 +69,20 @@ type Price = {
 
 type ProductVariant = Pick<
   Product,
-  'name' | 'url' | 'sku' | 'mpn' | 'gtins' | 'images' | 'price' | 'availability'
+  | 'name'
+  | 'url'
+  | 'sku'
+  | 'mpn'
+  | 'gtins'
+  | 'images'
+  | 'color'
+  | 'size'
+  | 'price'
+  | 'availability'
 >;
 ```
+
+The typed fields are those that a consumer decides with: the identifiers, the price, the availability, the attributes that tell variants apart, the rating and the category. `data` keeps the product's object as the page declares it, as Airbyte keeps `_airbyte_data`, so a value that the record has no field for, such as `priceValidUntil` or `additionalProperty`, is not lost.
 
 | Call                             | What happens underneath                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -78,7 +99,7 @@ The SDK reads a price as Google's merchant listings read it ([ADR 0003](./docs/a
 5. Of several offers, the lowest that is in stock wins; prices in two currencies are never compared, and the currency of the first offer wins.
 6. A ProductGroup's price is the price of the variant that the page's URL names (Shopify's `?variant=`), else of its cheapest variant.
 
-A price is a decimal string with `.` as its point, as schema.org asks: `12.000` is twelve JOD. A comma is a thousands separator. Arabic-Indic digits are read as digits.
+A price is a decimal string with `.` as its point, as schema.org asks: `12.000` is twelve JOD. A comma is a thousands separator, a currency symbol or code around the number is not part of it, and Arabic-Indic digits are read as digits. A price of zero is no price, as Google shows only a price greater than zero: a shop writes it for "price on request". A currency is kept as the shop gives it, also USD.
 
 ## When something fails
 

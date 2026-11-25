@@ -198,6 +198,9 @@
       "path": "./packages/sdks/web/article"
     },
     {
+      "path": "./packages/sdks/web/product"
+    },
+    {
       "path": "./packages/sources/web/pages"
     },
     {

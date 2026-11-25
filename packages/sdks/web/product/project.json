@@ -1,0 +1,6 @@
+{
+  "name": "sdk-web-product",
+  "sourceRoot": "packages/sdks/web/product/src",
+  "projectType": "library",
+  "tags": ["layer:island", "layer:sdk"]
+}

@@ -11,7 +11,7 @@ Google's merchant listing documentation, read on 2026-11-24, sets the order: "If
 3. **An AggregateOffer gives its range.** The amount is its `lowPrice`, and the range is `lowPrice` to `highPrice`. When it nests `offers`, they decide.
 4. **Of several offers, the lowest in stock wins, in one currency.** Offers in another currency than the first offer's are not compared.
 5. **A ProductGroup's price is its variant's.** The variant that the page's URL names (Shopify's `?variant=` with the variant's id in its `url` or `sku`) gives the price, else the cheapest variant.
-6. **A price is a decimal string.** schema.org asks for `.` as the point and no symbol. The SDK keeps the digits as written, so JOD's `12.000` stays three decimals. It reads a number as its shortest decimal text, removes a currency symbol and a comma (a thousands separator), and reads Arabic-Indic digits as digits. A price that is still not a decimal is no price.
+6. **A price is a decimal string.** schema.org asks for `.` as the point and no symbol. The SDK keeps the digits as written, so JOD's `12.000` stays three decimals. It reads a number as its shortest decimal text, removes a currency symbol and a comma (a thousands separator), and reads Arabic-Indic digits as digits. A price that is still not a decimal is no price, and so is a price of zero, as Google's merchant listings need "a price greater than zero": a shop writes zero for "price on request", and a search would show it as the cheapest. A currency is kept as the shop gives it.
 7. **The time is an input.** `at` is when the page was downloaded, so the SDK reads no clock (zukhruf ADR 0004).
 
 ## Considered Options
