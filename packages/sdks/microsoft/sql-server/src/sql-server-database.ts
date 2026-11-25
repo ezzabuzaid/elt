@@ -3,6 +3,7 @@ import sql from 'mssql';
 import { cellNumber } from './cells.ts';
 import { SqlServerVersionError } from './errors.ts';
 import { SqlServerConnection } from './sql-server-connection.ts';
+import { SqlServerPool } from './sql-server-pool.ts';
 import {
   type SqlServerRead,
   connectionFailure,
@@ -76,6 +77,12 @@ export class SqlServerDatabase {
   // table, or a lock of the session. It waits on clock while it runs nothing.
   connect(clock: SqlServerRead['clock']): Promise<SqlServerConnection> {
     return SqlServerConnection.open(this.#config, this.location, clock);
+  }
+
+  // A pool of connections, for statements that each stand alone. Dispose it
+  // to close its connections.
+  pool(): Promise<SqlServerPool> {
+    return SqlServerPool.open(this.#config, this.location);
   }
 
   // The signal cancels the queries that open the session, and an aborted

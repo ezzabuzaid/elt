@@ -252,11 +252,11 @@ test(
       await passing;
     }
 
-    // The history and the lock of the checkpoint hold a lock each; the
-    // checkpoints and the load hold none.
+    // The history holds the lock of the attempt; the checkpoints, the load
+    // and the pool that renews the lease of the checkpoint hold none.
     assert.deepEqual(
       before.map(({ locks }) => locks).toSorted(),
-      [0, 0, 1, 1],
+      [0, 0, 0, 1],
       inspect(before),
     );
     assert.deepEqual(

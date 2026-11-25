@@ -28,28 +28,18 @@ import { inWarehouse, warehouse } from './sql-server-schemas.ts';
 // each UTF-16 code unit, as binding and state do: the JSON type would refuse
 // \u0000 and lone surrogates.
 const table = inWarehouse('_elt_checkpoints');
-// The fencing tokens of the locks of the copies.
+// The fencing tokens of the leases of the copies.
 const tokens = inWarehouse('_elt_checkpoint_tokens');
+// The lease of each copy id, one row each, that SqlServerStore of
+// @zukhruf/mutex/sqlserver grants and renews.
+const leases = inWarehouse('_elt_checkpoint_leases');
 
 export class SqlServerCheckpointStore extends CheckpointStore {
   readonly #database: SqlServerDatabase;
-  // One key for each copy id, on a session of its own (ADR 0009). The server
-  // releases a key when the session that holds it ends. The heartbeat runs
-  // on real time, as no caller has another correct value.
-  readonly #locks: Mutex;
 
   constructor({ login }: { login: SqlServerLogin }) {
     super();
-    const database = new SqlServerDatabase(login);
-    this.#database = database;
-    this.#locks = new Mutex(
-      new SqlServerStore({
-        connect: () => database.connect(globalThis),
-        sequence: tokens,
-        heartbeatInterval: 10_000,
-        clock: globalThis,
-      }),
-    );
+    this.#database = new SqlServerDatabase(login);
     Object.freeze(this);
   }
 
@@ -63,21 +53,39 @@ export class SqlServerCheckpointStore extends CheckpointStore {
   ): Promise<T> {
     await using connection = await connect(this.#database, globalThis);
     await create(connection);
-    return await this.#held(ids, () => withTable(connection, work));
+    // A lease for each copy id (ADR 0009), which the run renews every 10 s
+    // on the connections of a pool of its own, so a renewal logs in only when
+    // the pool has no idle connection. The heartbeat runs on real time, as no
+    // caller has another correct value.
+    await using pool = await this.#database.pool();
+    const locks = new Mutex(
+      new SqlServerStore({
+        connect: () => pool.connect(),
+        table: leases,
+        sequence: tokens,
+        heartbeatInterval: 10_000,
+        clock: globalThis,
+      }),
+    );
+    return await held(locks, ids, () => withTable(connection, work));
   }
+}
 
-  // Holds each copy's key in turn, then works. A copy already running fails
-  // the run fast; others run in parallel.
-  async #held<T>(ids: readonly string[], work: () => Promise<T>): Promise<T> {
-    const [id, ...rest] = ids;
-    if (id === undefined) return await work();
-    const held = await this.#locks.acquire(id, () => this.#held(rest, work), {
-      mode: Modes.skipIfBusy(),
-    });
-    if (!held.acquired)
-      throw new TypeError(`Checkpoint ${id} is in use by another run`);
-    return held.value;
-  }
+// Holds each copy's key in turn, then works. A copy already running fails the
+// run fast; others run in parallel.
+async function held<T>(
+  locks: Mutex,
+  ids: readonly string[],
+  work: () => Promise<T>,
+): Promise<T> {
+  const [id, ...rest] = ids;
+  if (id === undefined) return await work();
+  const lease = await locks.acquire(id, () => held(locks, rest, work), {
+    mode: Modes.skipIfBusy(),
+  });
+  if (!lease.acquired)
+    throw new TypeError(`Checkpoint ${id} is in use by another run`);
+  return lease.value;
 }
 
 // Each save commits on its own, so it is durable when it resolves.
@@ -132,7 +140,7 @@ function withTable<T>(
 // the lock of _warehouse makes them take turns.
 async function create(connection: SqlServerConnection): Promise<void> {
   const [found] = await connection.query(
-    `SELECT IIF(OBJECT_ID(N'${table}', N'U') IS NULL OR OBJECT_ID(N'${tokens}', N'SO') IS NULL, 0, 1) AS [made]`,
+    `SELECT IIF(OBJECT_ID(N'${table}', N'U') IS NULL OR OBJECT_ID(N'${leases}', N'U') IS NULL OR OBJECT_ID(N'${tokens}', N'SO') IS NULL, 0, 1) AS [made]`,
   );
   if (found?.made === 1) return;
   await transaction(connection, async () => {
@@ -141,6 +149,8 @@ async function create(connection: SqlServerConnection): Promise<void> {
       `IF SCHEMA_ID(N'${warehouse}') IS NULL EXEC (N'CREATE SCHEMA ${quote(warehouse)}');
        IF OBJECT_ID(N'${table}', N'U') IS NULL
          CREATE TABLE ${table} ([id] nvarchar(max) NOT NULL, [key] AS CAST(HASHBYTES('SHA2_256', [id]) AS binary(32)) PERSISTED NOT NULL PRIMARY KEY, [binding] nvarchar(max) NOT NULL, [reloading] bit NOT NULL, [state] nvarchar(max) NOT NULL);
+       IF OBJECT_ID(N'${leases}', N'U') IS NULL
+         CREATE TABLE ${leases} ([name] binary(16) NOT NULL PRIMARY KEY, [holder] uniqueidentifier NULL, [token] bigint NOT NULL, [renewed] datetime2 NOT NULL, [duration] int NOT NULL);
        IF OBJECT_ID(N'${tokens}', N'SO') IS NULL
          EXEC (N'CREATE SEQUENCE ${tokens} AS bigint START WITH 1');`,
     );

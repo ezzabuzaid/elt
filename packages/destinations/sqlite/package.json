@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@eltjs/elt": "^0.12.0",
-    "@zukhruf/mutex": "^0.8.115",
+    "@zukhruf/mutex": "^0.8.119",
     "@zukhruf/sqlite-drift": "^0.8.115",
     "@zukhruf/sqlite-open": "^0.8.115",
     "@zukhruf/sqlite-transaction": "^0.8.115",

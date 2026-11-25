@@ -41,7 +41,7 @@
     "@eltjs/elt": "^0.12.0",
     "@eltjs/sdk-microsoft-sql-server": "^0.12.0",
     "@zukhruf/async": "^0.8.115",
-    "@zukhruf/mutex": "^0.8.115",
+    "@zukhruf/mutex": "^0.8.119",
     "@zukhruf/vectors": "^0.8.115"
   },
   "devDependencies": {

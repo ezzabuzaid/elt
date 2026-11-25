@@ -698,6 +698,29 @@ test('a session that reads 35 seconds after its last read, longer than a watch w
   assert.deepEqual(await loggedIn(), first);
 });
 
+test('two sessions of a pool, one after the other, run on the server session that the first logged in to', async () => {
+  await using scratch = await sqlServer.database();
+  await using pool = await new SqlServerDatabase(
+    scratch.connectionString,
+  ).pool();
+  const serverSession = async () => {
+    const session = await pool.connect();
+    try {
+      return await session.query(
+        `SELECT CONCAT(session_id, ' ', CONVERT(varchar(27), login_time, 126)) AS session FROM sys.dm_exec_sessions WHERE session_id = @@SPID`,
+      );
+    } finally {
+      session.close();
+    }
+  };
+
+  const first = await serverSession();
+  const second = await serverSession();
+
+  assert.equal(first.length, 1);
+  assert.deepEqual(second, first);
+});
+
 test('discovery lists user tables but not views, each with its key in key order, its rowversion, its Change Tracking and its descriptions', async () => {
   await using scratch = await sqlServer.database();
   await using clients = new AsyncDisposableStack();

@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { once } from 'node:events';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
+import { pathToFileURL } from 'node:url';
 import { inspect } from 'node:util';
 
+import { waitFor } from '@zukhruf/testing/async';
 import { SqlServer } from '@zukhruf/testing/sqlserver';
 
 import {
@@ -924,6 +929,83 @@ test(
     );
     assert.deepEqual(refused.states, []);
     assert.deepEqual(after.states, [{ after: 1 }]);
+  },
+);
+
+// datahub #5617: a holder that vanished tells the server nothing, and behind
+// the gateway of Azure SQL a dead session kept the lock of a copy for 51
+// minutes. The holder below is a process that the test stops with SIGSTOP
+// while it holds the copy: its connections stay open, so the server never
+// sees its session end, and only a lease that ends unless its holder renews
+// it frees the copy, 30 s after the last renewal. The test waits for that with
+// no upper bound on real time.
+test(
+  'a run of a copy whose holder stopped with its connections open, so the server never sees its session end, takes the copy once the lease of the holder ends',
+  { skip: emulation },
+  async (t) => {
+    await using database = await scratch();
+    const holding = `
+      import { SqlServerCheckpointStore } from ${JSON.stringify(pathToFileURL(join(import.meta.dirname, 'index.ts')).href)};
+      const login = JSON.parse(process.env.LOGIN);
+      await new SqlServerCheckpointStore({ login }).run(
+        new Map([['notes:notes', { copy: {}, shape: {} }]]),
+        async () => {
+          process.stdout.write('held\\n');
+          await new Promise(() => setInterval(() => {}, 1 << 30));
+        },
+      );
+    `;
+    const holder = spawn(
+      process.execPath,
+      ['--input-type=module', '-e', holding],
+      {
+        cwd: import.meta.dirname,
+        env: { ...process.env, LOGIN: JSON.stringify(database.login) },
+        stdio: ['ignore', 'pipe', 'inherit'],
+      },
+    );
+    const exited = once(holder, 'exit');
+    try {
+      await Promise.race([
+        once(holder.stdout, 'data'),
+        exited.then(() =>
+          assert.fail('the holder ended before it held the copy'),
+        ),
+      ]);
+      holder.kill('SIGSTOP');
+      const refused = new Notes();
+      const taking = new Notes();
+      taking.upstream = [{ n: 1, text: 'taken' }];
+
+      const failure = await pipeline(database.login, refused)
+        .pipeline.run()
+        .then(
+          () => assert.fail('a run took the copy of a holder that holds it'),
+          (error: unknown) => error,
+        );
+      await waitFor(() => pipeline(database.login, taking).pipeline.run(), {
+        signal: t.signal,
+        interval: 2_000,
+      });
+
+      assert.match(
+        inspect(failure),
+        /Checkpoint notes:notes is in use by another run/,
+      );
+      assert.deepEqual(
+        { exitCode: holder.exitCode, signalCode: holder.signalCode },
+        { exitCode: null, signalCode: null },
+        'The holder must still be there, stopped, when the copy is taken',
+      );
+      assert.deepEqual(taking.states, [null]);
+      assert.deepEqual(
+        await database.admin.query('SELECT n FROM marts.notes'),
+        [{ n: '1' }],
+      );
+    } finally {
+      holder.kill('SIGKILL');
+      await exited;
+    }
   },
 );
 
