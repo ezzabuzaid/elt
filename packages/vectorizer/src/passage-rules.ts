@@ -38,27 +38,36 @@ export function sourceOf(key: SourceKey): (row: LoadedRow) => string | null {
   };
 }
 
+// The input of a passage rule: the text of a source row, or, when the ids of
+// the passages have a most length, the text with the source that each id
+// starts with, so the rule can fail the input whose ids are too long.
+type PassageInput = string | { readonly source: string; readonly text: string };
+
 // The rule that cuts the text of the fields of each source row: the chunks of
-// @eltjs/chunking, or one passage for each row.
+// @eltjs/chunking, or one passage for each row. maxIdLength: the most UTF-16
+// units of a passage id <source>:<seq> that the destination holds, such as
+// 450 on SQL Server; none when absent.
 export function passageRule({
   key,
   fields,
   chunking,
+  maxIdLength,
 }: {
   readonly key: SourceKey;
   readonly fields: readonly [string, ...string[]];
   readonly chunking: ChunkingOptions;
+  readonly maxIdLength?: number;
 }): PassageChunks | OnePart {
   return chunking === 'none'
-    ? new OnePart({ key, fields })
-    : new PassageChunks({ key, fields, chunking });
+    ? new OnePart({ key, fields, maxIdLength })
+    : new PassageChunks({ key, fields, chunking, maxIdLength });
 }
 
 // The chunks of Chunking, keyed by the source of each row (a Decorator):
 // Chunking cuts and names what made the chunks; the vectorizer reads the key,
 // which may span several columns.
 export class PassageChunks extends TableRule<
-  string,
+  PassageInput,
   Chunking['output'],
   Chunking['place']
 > {
@@ -70,15 +79,18 @@ export class PassageChunks extends TableRule<
   readonly #chunking: Chunking;
   readonly #source: (row: LoadedRow) => string | null;
   readonly #fields: readonly string[];
+  readonly #maxIdLength: number | undefined;
 
   constructor({
     key,
     fields,
     chunking,
+    maxIdLength,
   }: {
     key: SourceKey;
     fields: readonly [string, ...string[]];
     chunking: Exclude<ChunkingOptions, 'none'>;
+    maxIdLength: number | undefined;
   }) {
     super();
     this.#chunking = new Chunking({ ...chunking, key: source.name, fields });
@@ -88,27 +100,31 @@ export class PassageChunks extends TableRule<
     this.concurrency = this.#chunking.concurrency;
     this.#source = sourceOf(key);
     this.#fields = Object.freeze([...fields]);
+    this.#maxIdLength = maxIdLength;
     Object.freeze(this);
   }
 
   override read(
     row: LoadedRow,
-  ): { readonly key: string; readonly input: string } | null {
-    return readPassage(row, this.#source, this.#fields);
+  ): { readonly key: string; readonly input: PassageInput } | null {
+    return readPassage(row, this.#source, this.#fields, this.#maxIdLength);
   }
 
   override identity(): Promise<string> {
     return this.#chunking.identity();
   }
 
-  override compute(
-    texts: readonly string[],
+  override async compute(
+    inputs: readonly PassageInput[],
   ): Promise<
     readonly TableRuleResult<
       RuleValues<Chunking['output']> & RuleValues<Chunking['place']>
     >[]
   > {
-    return this.#chunking.compute(texts);
+    const results = await this.#chunking.compute(inputs.map(textOf));
+    return results.map((result, index) =>
+      fitIds(inputs[index], result, this.#maxIdLength),
+    );
   }
 }
 
@@ -135,7 +151,11 @@ const span = {
 // are rows of one parts table and one SQL reads them (pgai chunking_none).
 // Offsets count code points, as ContextWindow of @zukhruf/retrieval merges
 // by them.
-export class OnePart extends TableRule<string, typeof whole, typeof span> {
+export class OnePart extends TableRule<
+  PassageInput,
+  typeof whole,
+  typeof span
+> {
   override readonly key = source;
   override readonly output = whole;
   override readonly place = span;
@@ -144,24 +164,28 @@ export class OnePart extends TableRule<string, typeof whole, typeof span> {
   override readonly concurrency = 1;
   readonly #source: (row: LoadedRow) => string | null;
   readonly #fields: readonly string[];
+  readonly #maxIdLength: number | undefined;
 
   constructor({
     key,
     fields,
+    maxIdLength,
   }: {
     key: SourceKey;
     fields: readonly [string, ...string[]];
+    maxIdLength: number | undefined;
   }) {
     super();
     this.#source = sourceOf(key);
     this.#fields = Object.freeze([...fields]);
+    this.#maxIdLength = maxIdLength;
     Object.freeze(this);
   }
 
   override read(
     row: LoadedRow,
-  ): { readonly key: string; readonly input: string } | null {
-    return readPassage(row, this.#source, this.#fields);
+  ): { readonly key: string; readonly input: PassageInput } | null {
+    return readPassage(row, this.#source, this.#fields, this.#maxIdLength);
   }
 
   // The code makes every passage, so its version names them (elt ADR 0005).
@@ -170,25 +194,64 @@ export class OnePart extends TableRule<string, typeof whole, typeof span> {
   }
 
   override async compute(
-    texts: readonly string[],
+    inputs: readonly PassageInput[],
   ): Promise<
     readonly TableRuleResult<
       RuleValues<typeof whole> & RuleValues<typeof span>
     >[]
   > {
-    return texts.map((text) => ({
-      parts: [{ text, start: 0, end: [...text].length }],
-    }));
+    return inputs.map((input) => {
+      const text = textOf(input);
+      return fitIds(
+        input,
+        { parts: [{ text, start: 0, end: [...text].length }] },
+        this.#maxIdLength,
+      );
+    });
   }
 }
 
+// The source and the text of a row as the input of a passage rule: the text
+// alone when the ids have no most length, so the input hash of a host with no
+// limit stays the hash of its text.
 function readPassage(
   row: LoadedRow,
   source: (row: LoadedRow) => string | null,
   fields: readonly string[],
-): { readonly key: string; readonly input: string } | null {
+  maxIdLength: number | undefined,
+): { readonly key: string; readonly input: PassageInput } | null {
   const key = source(row);
   if (key === null) return null;
   const text = rowText(row, fields);
-  return text === null ? null : { key, input: text };
+  if (text === null) return null;
+  return {
+    key,
+    input: maxIdLength === undefined ? text : { source: key, text },
+  };
+}
+
+const textOf = (input: PassageInput | undefined) =>
+  typeof input === 'object' ? input.text : String(input);
+
+// The result of an input, or a rule failure of the input when the id of its
+// last passage, <source>:<seq>, has more UTF-16 units than maxIdLength, the
+// unit that NVARCHAR(n) of SQL Server counts. The other inputs go on, and no
+// part of the input reaches the keyword index.
+function fitIds<Part>(
+  input: PassageInput | undefined,
+  result: TableRuleResult<Part>,
+  maxIdLength: number | undefined,
+): TableRuleResult<Part> {
+  if (
+    maxIdLength === undefined ||
+    typeof input !== 'object' ||
+    !('parts' in result)
+  )
+    return result;
+  const length = `${input.source}:${result.parts.length - 1}`.length;
+  return length > maxIdLength
+    ? {
+        error: `The passage ids of this source row have up to ${length} characters, more than ${maxIdLength}, the most that the passage ids of the destination hold: give the vectorizer a shorter source key.`,
+      }
+    : result;
 }

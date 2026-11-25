@@ -14,6 +14,8 @@ import {
 } from '@eltjs/elt-sqlite';
 import { Embedding } from '@eltjs/embedding';
 
+import { copiesInto } from '../copies.ts';
+import { refuseUndeclaredColumns } from '../declared-columns.ts';
 import {
   type ChunkingOptions,
   type EmbeddingOptions,
@@ -291,31 +293,19 @@ export class Vectorizer extends CompositeDataset<SQLiteTable> {
   override validate(connections: readonly Connection<SQLiteTable>[]): void {
     const from = this.#from;
     if (!(from instanceof SQLiteTable)) return;
-    const copy = connections
-      .filter(
-        ({ destination }) =>
+    refuseUndeclaredColumns({
+      vectorizer: this.name,
+      from,
+      copies: copiesInto(
+        connections,
+        (destination) =>
           destination instanceof SQLiteDestination &&
           destination.path === this.into.path,
-      )
-      .flatMap(({ steps }) => steps)
-      .find(({ to }) => to === from);
-    if (copy === undefined)
-      throw new TypeError(
-        `Vectorizer ${this.name} reads ${from.name}, which no copy of the pipeline loads into ${this.into.path}`,
-      );
-    const declared = new Set([
-      ...Object.keys(copy.from.jsonSchema.properties ?? {}),
-      ...from.columns.map(({ name }) => name),
-    ]);
-    const loading = this.#loading;
-    for (const column of [
-      ...keyColumns(this.#key),
-      ...this.#metadata,
-      ...('columns' in loading ? loading.columns : [loading.file]),
-    ])
-      if (!declared.has(column))
-        throw new TypeError(
-          `Vectorizer ${this.name} reads the column ${column} of ${from.name}, which the stream ${copy.from.name} does not declare`,
-        );
+      ),
+      destination: this.into.path,
+      key: this.#key,
+      metadata: this.#metadata,
+      loading: this.#loading,
+    });
   }
 }

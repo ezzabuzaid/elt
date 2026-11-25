@@ -297,6 +297,7 @@ A computed dataset whose rule is a `TableRule` keeps two tables in `_warehouse`.
 - The history of `raw_<name>_parts` keeps each part that a commit changes or deletes, and the view `<name>_parts` reads as of the position of its reading. Thus a reading shows each output row with its own parts.
 - The two tables are one declaration. When the stored columns of either table differ from its declaration, the refresh makes both again: the history of each keeps the rows of its old table, and the views over `<name>` and `<name>_parts` read the new tables.
 - `derived_status` counts the output rows, one for each key. `pending` counts the inputs, not the parts.
+- `raw_<name>_parts` has an index on `part_hash`, a managed `ix_elt_` index, so a dataset keyed by part hash finds the parts of each of its rows by an index: for example the vectors of the part texts that `Embedding` makes, and the search of `@eltjs/vectorizer`. Each refresh brings it in place, also on a parts table made before it.
 - `raw_<name>_parts` has `committed_in` and `_elt_row_hash` after the place columns. The view `<name>_parts` shows the key, `seq`, `part_hash`, the content columns and the place columns.
 - A column of the rule, in `output` or in `place`, cannot have the name of the key, `seq`, `part_hash`, an engine column, `committed_in`, `_elt_row_hash` or `replaced_in`, and a name cannot be in both `output` and `place`. Postgres keeps the case of a quoted name, so these names are compared as they are written. The constructor of `ComputedDataset` refuses such a rule with a `TypeError` that names the column and the dataset. A pipeline whose copy makes `marts.<name>_parts` or `_warehouse.raw_<name>_parts` is refused before it reads.
 
@@ -339,6 +340,15 @@ const vectors = new ComputedDataset({
 - When the declaration of the table changes, for example the dimensions of a vector column, the refresh makes the table again, and the same refresh makes its declared indexes on the new table.
 
 See [ADR 0011](./docs/adr/0011-a-vector-column-is-a-pgvector-vector-with-declared-indexes.md).
+
+## Write a kind of derived dataset in another package
+
+A package can declare its own kind of derived dataset for a Postgres database, for example the keyword index of [`@eltjs/vectorizer`](../../vectorizer/README.md). elt-postgresql gives it the parts that its own kinds use:
+
+- `new PostgresDerivedStatus(sql, dataset, kind, clock)` writes the row of the dataset in `_warehouse.derived_status`, on a postgres.js session outside a transaction. `dataset` is the relation that the dataset makes, schema-qualified, and `kind` is `'view'` or `'computed'`. Call `refreshing(counts)`, `current(counts)`, `waiting()` or `failed(error)`, as `View` and `ComputedDataset` do.
+- `rawTable(name)` gives the name of the table in `_warehouse` of the relation `name` under the naming rule, for example `raw_docs_chunks_parts` for the parts of the computed dataset `docs_chunks`.
+- `quote(name)` quotes a name for SQL: in double quotes, with each double quote inside doubled.
+- `marts` and `warehouse` are the names of the two schemas (`'marts'` and `'_warehouse'`). `inMarts(name)` and `inWarehouse(name)` give the quoted, schema-qualified name of a relation in each, for example `"_warehouse"."raw_docs_keywords"`.
 
 ## When something fails
 

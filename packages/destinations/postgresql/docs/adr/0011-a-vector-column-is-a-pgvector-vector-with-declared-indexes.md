@@ -35,6 +35,14 @@ elt-sqlserver ADR 0013 kept its index declaration in its own package (strike 1) 
 - `SqlServerIndex` is `DatasetIndex<'nonclustered', Record<never, never>>`. Its declarations do not change.
 - The refusals, the names of the indexes and the reconcile stay in each destination. They read different catalogs (`sys.indexes`, `pg_index`) and follow different rules of the engines (error 574 in SQL Server).
 
+## Amendment 2026-11-25: the parts table has an index on part_hash
+
+Added by step E8 of the S9 plan (#5401). The main session decided it, on the probe of E8; it is not Ezz's ruling.
+
+- The parts table `raw_<name>_parts` of a table rule has a managed btree index on `part_hash`. Its name is `ix_elt_` and the hash of its statement, as for a declared index, and each refresh reconciles it in the transaction that makes the tables. So a parts table that an older version made gets it at its next refresh, with no make of the table again.
+- The reason is the destination's own: a computed dataset keyed by part hash, such as the vectors of the part texts that `Embedding` makes, is joined to its parts by part hash. A vector search through such a join takes the nearest vectors from the HNSW index and finds the parts of each. With no index each vector read every part. Probe of E8 on 20,000 parts: one query took 12.9 ms (`Join Filter: (v.id = p.part_hash)`, `Rows Removed by Join Filter: 236501`, over a `Seq Scan` of the parts), and 0.5 ms with the index (`Index Cond: (part_hash = v.id)`). A batch of 3 queries took 25.3 ms and 1.4 ms.
+- It is not a declaration of the host. `indexes` of `ComputedDataset` stays the indexes of `raw_<name>`: no host needs to declare this one, and an option would let a host leave it out.
+
 ## Considered Options
 
 - **Keep `BYTEA`.** No search and no index in Postgres; the retriever of `@zukhruf/retrieval` cannot read the column.

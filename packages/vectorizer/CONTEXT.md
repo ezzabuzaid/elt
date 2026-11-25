@@ -29,7 +29,7 @@ The columns of the source row that each passage gives beside its text, as the ho
 _Avoid_: Attributes, extra fields
 
 **Keyword index**:
-The member that keeps a table of the id, source, seq and text of each passage, and a full-text index over the text, which a keyword search reads. On SQLite it is an FTS5 table whose content is that table.
+The member that keeps a table of the id, source, seq and text of each passage, and a full-text index over the text, which a keyword search reads. On SQLite it is an FTS5 table whose content is that table. On SQL Server it is a full-text index on that table, which is a base table in `marts`. On Postgres it is a `tsvector` column of that table, which Postgres generates from the text, with a GIN index.
 _Avoid_: Search index, BM25 index (BM25 is how a search ranks), inverted index
 
 **Contract**:

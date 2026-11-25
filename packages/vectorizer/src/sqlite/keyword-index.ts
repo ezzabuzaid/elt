@@ -15,6 +15,8 @@ import {
   quote,
 } from '@eltjs/elt-sqlite';
 
+import { copiesInto } from '../copies.ts';
+
 // The keyword index of the passages of a vectorizer: the table <name> keeps
 // the id, source, seq and text of each passage, and the FTS5 table <index>
 // indexes its text, as @zukhruf/retrieval's SqliteBM25Retriever reads it
@@ -68,13 +70,12 @@ export class KeywordIndex extends DerivedDataset<SQLiteTable> {
   }
 
   override validate(connections: readonly Connection<SQLiteTable>[]): void {
-    const made = connections
-      .filter(
-        ({ destination }) =>
-          destination instanceof SQLiteDestination &&
-          destination.path === this.#into.path,
-      )
-      .flatMap(({ steps }) => steps)
+    const made = copiesInto(
+      connections,
+      (destination) =>
+        destination instanceof SQLiteDestination &&
+        destination.path === this.#into.path,
+    )
       .flatMap(({ to }) => [to.name, to.raw])
       .map((name) => name.toLowerCase());
     for (const name of [this.name, this.index])

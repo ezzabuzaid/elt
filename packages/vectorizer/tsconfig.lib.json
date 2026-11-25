@@ -6,13 +6,19 @@
     "tsBuildInfoFile": "dist/tsconfig.lib.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/**/*.test.ts"],
+  "exclude": ["src/**/*.test.ts", "src/testing/**"],
   "references": [
     {
       "path": "../elt/tsconfig.lib.json"
     },
     {
       "path": "../destinations/sqlite/tsconfig.lib.json"
+    },
+    {
+      "path": "../destinations/postgresql/tsconfig.lib.json"
+    },
+    {
+      "path": "../destinations/sqlserver/tsconfig.lib.json"
     },
     {
       "path": "../chunking/tsconfig.lib.json"

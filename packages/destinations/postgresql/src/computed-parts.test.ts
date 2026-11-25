@@ -557,6 +557,42 @@ test('derived_status counts the inputs and the output rows of a table rule, one 
   );
 });
 
+test('the parts table of a table rule has an index on part_hash after a refresh, and a refresh adds it to a parts table that has none', async () => {
+  await using database = await databases.database();
+  await using clients = new AsyncDisposableStack();
+  const { host, pipeline, rows } = pieces(database.connectionString, clients);
+  host.rows = [{ id: 'a', text: 'one|two' }];
+  const indexes = async () =>
+    (
+      await rows(
+        `SELECT c.relname AS "name", pg_get_indexdef(i.indexrelid) AS "definition" FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE i.indrelid = '_warehouse.raw_pieces_parts'::regclass AND NOT i.indisprimary`,
+      )
+    ).map(({ name, definition }) => ({
+      name: String(name),
+      definition: String(definition).replace(
+        /ix_elt_[0-9a-f]{16}/,
+        'ix_elt_<hash>',
+      ),
+    }));
+  await pipeline.run();
+  const made = await indexes();
+  // A parts table that a version before the index made: no operation of
+  // the destination drops a managed index, so the test drops it by hand.
+  for (const { name } of made) await rows(`DROP INDEX _warehouse."${name}"`);
+
+  await pipeline.run();
+
+  const definition =
+    'CREATE INDEX ix_elt_<hash> ON _warehouse.raw_pieces_parts USING btree (part_hash)';
+  assert.deepEqual(
+    {
+      made: made.map((index) => index.definition),
+      added: (await indexes()).map((index) => index.definition),
+    },
+    { made: [definition], added: [definition] },
+  );
+});
+
 test('a changed declaration of the parts makes both tables again, a view over <name>_parts reads the new table, and a reading before shows the parts of the old declaration', async () => {
   await using database = await databases.database();
   await using clients = new AsyncDisposableStack();

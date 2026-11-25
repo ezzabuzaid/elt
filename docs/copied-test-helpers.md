@@ -102,9 +102,9 @@ The stand-in is an executable that replaces the codex CLI in a test, because the
 
 ### Copied, one place in each package
 
-| Package               | File                    | What differs                                                                                                         |
-| --------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| `packages/embedding`  | `src/embedding.test.ts` | The source: it also refuses calls (`refusing`), answers a status for a call (`answer`) and keeps each call (`calls`) |
-| `packages/vectorizer` | `src/sqlite.test.ts`    | Only `answers`, `hangs` and `embedded`; `modelId` is `letters` when absent                                           |
+| Package               | File                          | What differs                                                                                                                                                                  |
+| --------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `packages/embedding`  | `src/embedding.test.ts`       | The source: it also refuses calls (`refusing`), answers a status for a call (`answer`) and keeps each call (`calls`)                                                          |
+| `packages/vectorizer` | `src/testing/letter-model.ts` | Only `answers`, `hangs` and `embedded`; `modelId` is `letters` when absent. The tests of each subpath import it (`sqlite.test.ts`, `postgresql.test.ts`, `sqlserver.test.ts`) |
 
 The recipes of `packages/chunking` and `packages/destinations/sqlserver` have their own letter model, since a recipe is a full program that imports no test file.

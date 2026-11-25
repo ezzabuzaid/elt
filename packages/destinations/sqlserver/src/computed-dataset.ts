@@ -25,7 +25,11 @@ import { makeSchema } from './sql-server-connection.ts';
 import { refreshDependents } from './sql-server-dependents.ts';
 import { SqlServerDerivedStatus } from './sql-server-derived-status.ts';
 import { TargetDescriptions } from './sql-server-descriptions.ts';
-import { SqlServerDestination, database } from './sql-server-destination.ts';
+import {
+  SqlServerDestination,
+  database,
+  sameDatabase,
+} from './sql-server-destination.ts';
 import { storedColumns } from './sql-server-fit.ts';
 import { TargetHistory, rowHash } from './sql-server-history.ts';
 import { identifiers, quote, rawTable } from './sql-server-identifiers.ts';
@@ -566,11 +570,9 @@ export class ComputedDataset<Input> extends DerivedDataset<SqlServerTable> {
     connections: readonly Connection<SqlServerTable>[],
     target: SqlServerTable,
   ): boolean {
-    const { location } = this.into[database];
     return connections.some(
       ({ destination, steps }) =>
-        destination instanceof SqlServerDestination &&
-        destination[database].location === location &&
+        sameDatabase(destination, this.into) &&
         steps.some(({ to }) => to === target),
     );
   }

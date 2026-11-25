@@ -11,6 +11,7 @@ import { identifier, quote } from './identifier.ts';
 import { TargetComments } from './postgres-comments.ts';
 import { TargetHistory, rowHash } from './postgres-history.ts';
 import { rawTable } from './postgres-identifiers.ts';
+import { TableIndexes } from './postgres-indexes.ts';
 import type { Transaction } from './postgres-load.ts';
 import { TargetReaderView } from './postgres-reader-view.ts';
 import { ruleColumnType, ruleValue } from './postgres-rule-columns.ts';
@@ -22,6 +23,10 @@ import { inWarehouse, marts, warehouse } from './postgres-schemas.ts';
 // place columns of the rule. Readers query the view <name>_parts of marts.
 // Each row names the commit that last wrote it, and the history
 // keeps each row a commit replaced or removed, as for the output rows.
+// An index on part_hash finds the parts of a part hash, as a computed
+// dataset keyed by part hash reads them, such as the vectors of the parts'
+// texts that Embedding makes: each refresh brings it in place, also on a
+// parts table made before the index was declared.
 export class PostgresPartsTable {
   readonly table: string;
   readonly history: TargetHistory;
@@ -33,6 +38,8 @@ export class PostgresPartsTable {
     constraint: string;
   }[];
   readonly statement: string;
+  // The managed indexes of the table: the one on part_hash.
+  readonly indexes: TableIndexes;
   // The relations that a copy of the pipeline must not make, qualified.
   readonly names: readonly string[];
   readonly #key: string;
@@ -79,6 +86,12 @@ export class PostgresPartsTable {
       ),
       `PRIMARY KEY (${this.#key}, "seq")`,
     ].join(', ')})`;
+    this.indexes = new TableIndexes({
+      dataset,
+      table: this.table,
+      columns: this.declared,
+      indexes: [{ type: 'btree', columns: ['part_hash'] }],
+    });
     this.history = new TargetHistory(hash('sha256', this.table).slice(0, 40));
     this.view = new TargetReaderView(
       view,

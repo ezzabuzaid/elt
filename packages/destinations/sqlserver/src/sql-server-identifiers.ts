@@ -30,3 +30,9 @@ export const rawTable = (name: string) => identifiers.relation(`raw_${name}`);
 export function quote(name: string): string {
   return `[${name.replaceAll(']', ']]')}]`;
 }
+
+// A string as a Unicode string literal of T-SQL: in N'', with each ' inside
+// doubled.
+export function literal(text: string): string {
+  return `N'${text.replaceAll("'", "''")}'`;
+}

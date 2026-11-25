@@ -4,7 +4,7 @@ import type {
   SqlServerRead,
 } from '@eltjs/sdk-microsoft-sql-server';
 
-import { quote } from './sql-server-identifiers.ts';
+import { literal, quote } from './sql-server-identifiers.ts';
 
 // The parts of a SQL Server login, or an ADO.NET connection string.
 export type SqlServerLogin = ConstructorParameters<typeof SqlServerDatabase>[0];
@@ -85,7 +85,7 @@ export async function makeSchema(
   await transaction(connection, async () => {
     await takeLock(connection, schema);
     await connection.query(
-      `IF SCHEMA_ID(@schema) IS NULL EXEC (N'CREATE SCHEMA ${quote(schema).replaceAll("'", "''")}')`,
+      `IF SCHEMA_ID(@schema) IS NULL EXEC (${literal(`CREATE SCHEMA ${quote(schema)}`)})`,
       { schema },
     );
   });

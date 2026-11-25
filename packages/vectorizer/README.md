@@ -6,7 +6,7 @@
 npm install @eltjs/vectorizer @eltjs/elt @eltjs/elt-sqlite @zukhruf/retrieval
 ```
 
-`@eltjs/vectorizer/sqlite` writes the contract into a SQLite file. Postgres and SQL Server come later, each in its own subpath.
+`@eltjs/vectorizer/sqlite` writes the contract into a SQLite file, `@eltjs/vectorizer/postgresql` into a Postgres database ([Search in Postgres](#search-in-postgres)), and `@eltjs/vectorizer/sqlserver` into a SQL Server database ([Search in SQL Server](#search-in-sql-server)).
 
 ## Search the rows of a table
 
@@ -392,6 +392,358 @@ The output:
 monday.txt:0 "Call the cooperative about the cold store." 0 42
 ```
 
+## Search in Postgres
+
+`@eltjs/vectorizer/postgresql` writes the same contract into the database of a `PostgresDestination` of [elt-postgresql](../destinations/postgresql/README.md), and the Postgres retrievers of `@zukhruf/retrieval` read it. The server needs pgvector, for example the image `pgvector/pgvector:pg18`. The destination creates the extension `vector` when the database has none.
+
+```sh
+npm install @eltjs/vectorizer @eltjs/elt @eltjs/elt-postgresql @zukhruf/retrieval postgres
+```
+
+The program loads the tasks of "Search the rows of a table" into Postgres, and searches them as that program does. `DATABASE_URL` names the database. It gives the passages and scores of the SQLite program. postgres.js reads a `bigint` as text, so the counts of `docs_status` are text.
+
+```ts
+import type {
+  EmbeddingModelV4,
+  EmbeddingModelV4CallOptions,
+  EmbeddingModelV4Result,
+} from '@ai-sdk/provider';
+import { ContextWindow, FusionRetriever } from '@zukhruf/retrieval';
+import {
+  PgvectorEmbeddingRetriever,
+  PgvectorKeywordRetriever,
+  PostgresPassageStore,
+  type PostgresSession,
+} from '@zukhruf/retrieval/postgres';
+import { countTokens } from 'gpt-tokenizer/encoding/cl100k_base';
+import postgres from 'postgres';
+
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
+import {
+  PostgresDestination,
+  PostgresSyncHistory,
+} from '@eltjs/elt-postgresql';
+import { Vectorizer } from '@eltjs/vectorizer/postgresql';
+
+// A local embedding model with no network, as in the first example.
+class LetterModel implements EmbeddingModelV4 {
+  readonly specificationVersion = 'v4';
+  readonly provider = 'readme';
+  readonly modelId = 'letters';
+  readonly maxEmbeddingsPerCall = undefined;
+  readonly supportsParallelCalls = true;
+
+  async doEmbed({
+    values,
+  }: EmbeddingModelV4CallOptions): Promise<EmbeddingModelV4Result> {
+    return {
+      embeddings: values.map((text) =>
+        Array.from(
+          { length: 26 },
+          (_, letter) =>
+            [...text.toLowerCase()].filter(
+              (character) => character.charCodeAt(0) - 97 === letter,
+            ).length,
+        ),
+      ),
+      warnings: [],
+    };
+  }
+}
+
+const tasks = [
+  {
+    name: 'fix-git',
+    title: 'Fix a broken git history',
+    body: 'A rebase went wrong and two commits are lost. Find them in the reflog and put them back on main.',
+    category: 'software-engineering',
+  },
+  {
+    name: 'train-fasttext',
+    title: 'Train a fastText model',
+    body: 'Train a text classifier on the reviews in the data folder, and save a model of less than 150 MB.',
+    category: 'model-training',
+  },
+  {
+    name: 'git-multibranch',
+    title: 'Deploy two git branches',
+    body: 'Set up a git server where a push to main or dev deploys that branch to its own web folder.',
+    category: 'system-administration',
+  },
+];
+
+// A database whose server has pgvector, such as the image
+// pgvector/pgvector:pg18.
+const url = process.env['DATABASE_URL'] ?? 'postgres://localhost/tasks';
+const model = new LetterModel();
+const source = new IterableSource({
+  identity: 'terminal-bench',
+  streams: {
+    tasks: {
+      description: 'The tasks of Terminal-Bench 2.',
+      jsonSchema: {
+        type: 'object',
+        description: 'A task.',
+        properties: {
+          name: { type: 'string', description: 'The name of the task.' },
+          title: { type: 'string', description: 'Its title.' },
+          body: { type: 'string', description: 'What it asks.' },
+          category: { type: 'string', description: 'Its category.' },
+        },
+        required: ['name', 'title', 'body', 'category'],
+      },
+      primaryKey: ['name'],
+      snapshot: () => tasks,
+    },
+  },
+});
+const destination = new PostgresDestination({ url });
+const table = destination.table('tasks');
+const vectorizer = new Vectorizer({
+  into: destination,
+  from: table,
+  name: 'docs',
+  description: 'The tasks of Terminal-Bench 2.',
+  key: 'name',
+  loading: { columns: ['title', 'body'] },
+  chunking: {
+    tokenizer: { name: 'cl100k_base', count: countTokens },
+    maxTokens: 16,
+    overlapTokens: 0,
+  },
+  embedding: { model, dimensions: 26, clock: globalThis },
+  metadata: ['category'],
+});
+
+await new Pipeline({
+  clock: globalThis,
+  history: new PostgresSyncHistory({ url }),
+  connections: [
+    new Connection({
+      name: 'terminal-bench',
+      source,
+      destination,
+      steps: [
+        new Copy(source.streams.tasks, table, {
+          syncMode: 'full_refresh',
+          destinationSyncMode: 'overwrite_dedup',
+        }),
+      ],
+    }),
+  ],
+  derived: [vectorizer],
+}).run();
+
+// The retrievers send their SQL through a session that the host writes over
+// its own driver, here postgres.js.
+const sql = postgres(url, { max: 1 });
+try {
+  const session: PostgresSession = {
+    query: async (text, parameters) => [
+      ...(await sql.unsafe(
+        text,
+        parameters.map((value) =>
+          typeof value === 'number' ? value : String(value),
+        ),
+      )),
+    ],
+  };
+  const store = new PostgresPassageStore({
+    session,
+    schema: vectorizer.contract.schema,
+    passages: vectorizer.contract.passages,
+  });
+  const meaning = new PgvectorEmbeddingRetriever({
+    store,
+    vectors: vectorizer.contract.vectors,
+    model,
+  });
+  const words = new PgvectorKeywordRetriever({
+    store,
+    index: vectorizer.contract.index,
+  });
+  const search = new FusionRetriever({ retrievers: [meaning, words] });
+
+  const found = await search.retrieve('deploy git branches', { topK: 3 });
+  for (const { passage, score } of found)
+    console.log(passage.id, passage.metadata['category'], score.toFixed(4));
+
+  const [widened] = await new ContextWindow({
+    store,
+    windowSize: 5,
+  }).postprocess(found, 'deploy git branches');
+  console.log(JSON.stringify(widened?.passage.text));
+
+  console.log({ ...(await sql`SELECT * FROM marts.docs_status`)[0] });
+} finally {
+  await sql.end();
+}
+```
+
+The output:
+
+```text
+git-multibranch:0 system-administration 0.0328
+git-multibranch:1 system-administration 0.0161
+fix-git:2 software-engineering 0.0159
+"Deploy two git branches\nSet up a git server where a push to main or dev deploys that branch to its own web folder."
+{
+  state: 'current',
+  as_of: 2026-11-24T18:47:45.867Z,
+  pending_sources: '0',
+  pending_vectors: '0'
+}
+```
+
+- `vectorizer.contract` is `{ schema: 'marts', passages, vectors, index: { column, configuration } }`, the options of `PostgresPassageStore`, `PgvectorEmbeddingRetriever` and `PgvectorKeywordRetriever`. The retrievers send their SQL through a `PostgresSession`, which the host writes over its own driver.
+- Every relation of the contract is a view in `marts`, so a reader with `SELECT` on the views of `marts` searches. The views read the raw tables in `_warehouse` with the rights of their owner, and the reader may not read `_warehouse` itself.
+- The keyword index is the table `_warehouse.raw_docs_keywords`: `id text COLLATE "C"` (its primary key), `source`, `seq`, `text`, and `keywords`, a `tsvector` that Postgres generates from the text with the text search configuration `keywords.configuration`, `'english'` when absent. A GIN index indexes `keywords`. The passages view gives `keywords`, and the retrievers leave it out of the metadata. A change of the configuration makes the table again at the next refresh. See [ADR 0002](./docs/adr/0002-the-keyword-index-is-a-member-that-keeps-a-keywords-table-and-its-full-text-index-in-step.md).
+- `indexing: { vectors }` declares the index of the vectors: `hnsw({ m?, efConstruction? })` of elt-postgresql, an HNSW index with `vector_cosine_ops`, when absent, or `'none'`, which compares every vector.
+- While another model embeds the vectors again in place, a search with the model of the few vectors not made again yet still gives its `topK`: the retriever sets `hnsw.iterative_scan`, so the scan of the HNSW index goes on until enough vectors of its model pass.
+- The views find each row by an index: HNSW for the vectors, GIN for the keywords, the index on `part_hash` of the parts, and the key of the source row in the type of its key column. See [ADR 0001](./docs/adr/0001-the-vectorizer-writes-the-passage-contract-of-zukhruf-retrieval-one-subpath-per-engine.md).
+- postgres.js reads a `bigint` as text, so the source of a key of the columns `site` and an integer `id` is `["s1","7"]`.
+
+## Search in SQL Server
+
+`@eltjs/vectorizer/sqlserver` writes the same contract into the database of an `SqlServerDestination` of [elt-sqlserver](../destinations/sqlserver/README.md), and the SQL Server retrievers of `@zukhruf/retrieval` read it.
+
+```sh
+npm install @eltjs/vectorizer @eltjs/elt @eltjs/elt-sqlserver @zukhruf/retrieval mssql
+```
+
+```ts
+import { FusionRetriever } from '@zukhruf/retrieval';
+import {
+  SqlServerEmbeddingRetriever,
+  SqlServerKeywordRetriever,
+  SqlServerPassageStore,
+} from '@zukhruf/retrieval/sqlserver';
+import { countTokens } from 'gpt-tokenizer/encoding/cl100k_base';
+import mssql from 'mssql';
+
+import { Connection, Copy, IterableSource, Pipeline } from '@eltjs/elt';
+import {
+  SqlServerCheckpointStore,
+  SqlServerDestination,
+  SqlServerSyncHistory,
+} from '@eltjs/elt-sqlserver';
+import { Vectorizer } from '@eltjs/vectorizer/sqlserver';
+
+// The LetterModel class and the tasks array of "Search the rows of a table".
+const model = new LetterModel();
+const login = {
+  server: 'localhost',
+  port: 1433,
+  database: 'tasks',
+  user: 'elt_writer',
+  password: '…',
+  trustServerCertificate: true,
+};
+const source = new IterableSource({
+  identity: 'terminal-bench',
+  streams: {
+    tasks: {
+      description: 'The tasks of Terminal-Bench 2.',
+      jsonSchema: {
+        type: 'object',
+        description: 'A task.',
+        properties: {
+          name: { type: 'string', description: 'The name of the task.' },
+          title: { type: 'string', description: 'Its title.' },
+          body: { type: 'string', description: 'What it asks.' },
+          category: { type: 'string', description: 'Its category.' },
+        },
+        required: ['name', 'title', 'body', 'category'],
+      },
+      primaryKey: ['name'],
+      snapshot: () => tasks,
+    },
+  },
+});
+const destination = new SqlServerDestination({ login });
+const table = destination.table('tasks');
+const vectorizer = new Vectorizer({
+  into: destination,
+  from: table,
+  name: 'docs',
+  description: 'The tasks of Terminal-Bench 2.',
+  key: 'name',
+  loading: { columns: ['title', 'body'] },
+  chunking: {
+    tokenizer: { name: 'cl100k_base', count: countTokens },
+    maxTokens: 16,
+    overlapTokens: 0,
+  },
+  embedding: { model, dimensions: 26, clock: globalThis },
+  metadata: ['category'],
+  keywords: { language: 1033 },
+  indexing: { vectors: 'none' },
+});
+
+await new Pipeline({
+  clock: globalThis,
+  history: new SqlServerSyncHistory({ login }),
+  connections: [
+    new Connection({
+      name: 'terminal-bench',
+      source,
+      destination,
+      checkpoints: new SqlServerCheckpointStore({ login }),
+      steps: [
+        new Copy(source.streams.tasks, table, {
+          syncMode: 'full_refresh',
+          destinationSyncMode: 'overwrite_dedup',
+        }),
+      ],
+    }),
+  ],
+  derived: [vectorizer],
+}).run();
+
+// A reader needs only SELECT on the schema marts.
+const pool = await new mssql.ConnectionPool({
+  ...login,
+  user: 'reader',
+}).connect();
+const session = {
+  query: async (sql: string, parameters: Readonly<Record<string, unknown>>) => {
+    const request = pool.request();
+    for (const [name, value] of Object.entries(parameters))
+      request.input(name, value);
+    return (await request.query(sql)).recordset ?? [];
+  },
+};
+const store = new SqlServerPassageStore({
+  session,
+  schema: vectorizer.contract.schema,
+  passages: vectorizer.contract.passages,
+});
+const search = new FusionRetriever({
+  retrievers: [
+    new SqlServerEmbeddingRetriever({
+      store,
+      vectors: vectorizer.contract.vectors,
+      model,
+    }),
+    new SqlServerKeywordRetriever({ store, index: vectorizer.contract.index }),
+  ],
+});
+for (const { passage, score } of await search.retrieve('deploy git branches'))
+  console.log(passage.id, passage.metadata.category, score.toFixed(4));
+await pool.close();
+```
+
+This program did not run when this section was written, so no output is pasted here. SQL Server 2025 runs only where Docker runs amd64 natively, and on the Mac of the build Docker emulates amd64, which Microsoft does not support (the tests skip there, #5469). `src/sqlserver.test.ts` makes the same calls with SQL Server 2025 and Full-Text Search, and CI runs it on amd64. This follows elt-sqlserver, whose recipe of a vector index ran on Azure SQL Database because the container could not run it.
+
+- `vectorizer.contract` is `{ schema: 'marts', passages, vectors, index: { table } }`, the options of `SqlServerPassageStore`, `SqlServerEmbeddingRetriever` and `SqlServerKeywordRetriever`.
+- Every relation of the contract is in `marts`, so a reader with `GRANT SELECT ON SCHEMA::marts` searches. The views read the raw tables in `_warehouse` through the ownership chain, and the reader may not read `_warehouse` itself.
+- The keyword index is the base table `marts.docs_keywords`: `id NVARCHAR(450) COLLATE Latin1_General_100_BIN2` (its primary key, the full-text key), `source`, `seq` and `text NVARCHAR(MAX)`. A full-text index on `text` has `STOPLIST = OFF`, `CHANGE_TRACKING AUTO` and the language of `keywords.language`, an LCID: 1033 (English) when absent. `CONTAINSTABLE` reads this table, not a view. See [ADR 0002](./docs/adr/0002-the-keyword-index-is-a-member-that-keeps-a-keywords-table-and-its-full-text-index-in-step.md).
+- A run ends only when the full-text index holds its passages: the keyword index is `current` only when SQL Server shows no population that runs and no change that waits. So a search after `run()` finds each passage.
+- Ids and sources compare in binary, so the sources `a` and `A` are two source rows and give the passages `a:0` and `A:0`, also in a database whose collation ignores case.
+- `indexing: { vectors: 'none' }` is the only declaration of the vectors index. A search compares every vector with `VECTOR_DISTANCE`. The DiskANN index of SQL Server 2025 waits for zukhruf #5475.
+- A server with no Full-Text Search fails the keyword index with a `SqlServerSetupError`, of failure type `config`, before it makes the table. On Linux, install the package `mssql-server-fts`. Azure SQL Database has Full-Text Search.
+- A passage id has at most 450 characters, the most that a full-text key of SQL Server holds. A source row whose passage ids would be longer is a rule failure of its own: its row of `docs_chunks` is `failed`, with an error that names the length and the limit, and `derived_status` counts it in `failed`. The other rows go on. Give the vectorizer a shorter source key.
+
 ## The relations
 
 A vectorizer named `docs` refreshes these members, in this order, in the file of its source. Each is a derived dataset of elt-sqlite with its own row of `derived_status`.
@@ -428,7 +780,7 @@ When the model or its `dimensions` change, the next refresh makes each vector ag
 
 ## Rules and failures
 
-- The constructor refuses, with a `TypeError` that names it, a metadata column that has the name of a column of the passages (`rowid`, `id`, `source`, `seq`, `start`, `end` or `text`, in any ASCII case), and a metadata column or a key column that is listed twice.
+- The constructor refuses, with a `TypeError` that names it, a metadata column that has the name of a column of the passages (`rowid`, `id`, `source`, `seq`, `start`, `end` or `text` on SQLite, and `keywords` in place of `rowid` on Postgres, in any ASCII case), and a metadata column or a key column that is listed twice.
 - Before it reads, the pipeline refuses a vectorizer whose table no copy loads into its file, and a key, metadata or loading column that the stream or the target does not declare. The run rejects with a `TypeError`.
 - The name of the vectorizer and the name of each relation count in the check of distinct names of the pipeline.
 - A vectorizer fails as one dataset of the pipeline ([elt ADR 0034](../elt/docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md)): the first member that fails stops the members after it, the copies and the other datasets go on, and the refresh after the next pass tries it again. A run rejects with the `DerivedDatasetError` of the vectorizer, whose `cause` is the `DerivedDatasetError` of the member. `docs_status` then has the state `failed`.
@@ -449,7 +801,7 @@ When the model or its `dimensions` change, the next refresh makes each vector ag
 ## Development
 
 ```sh
-npx nx run vectorizer:test        # builds, then runs src/sqlite.test.ts
+npx nx run vectorizer:test        # builds, then runs the tests of each subpath; SQL Server 2025 runs only where Docker runs amd64 natively
 npx nx run vectorizer:typecheck   # formats, lints, then type checks
 ```
 
@@ -460,4 +812,13 @@ src/
   passage-rules.ts       the rules of the passages: the chunks of Chunking by source, or one part for each row
   sqlite/vectorizer.ts   Vectorizer: the members and the views of SQLite
   sqlite/keyword-index.ts  KeywordIndex: the keywords table, its FTS5 table and its triggers
+  postgresql.ts          the subpath /postgresql
+  postgresql/vectorizer.ts   Vectorizer: the members and the views of Postgres
+  postgresql/keyword-index.ts  KeywordIndex: the keywords table with its generated tsvector and GIN index
+  sqlserver.ts           the subpath /sqlserver
+  sqlserver/vectorizer.ts   Vectorizer: the members and the views of SQL Server
+  sqlserver/keyword-index.ts  KeywordIndex: the keywords table in marts and its full-text index
+  copies.ts              the copies of the pipeline into the destination of a vectorizer
+  declared-columns.ts    the check that the stream declares each column that the vectorizer reads
+  testing/letter-model.ts  LetterModel, the embedding model of the tests
 ```

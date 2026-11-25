@@ -8,7 +8,10 @@ import {
   parsePosition,
   positionsAfter,
 } from '@eltjs/elt';
-import { SqlServerDatabase } from '@eltjs/sdk-microsoft-sql-server';
+import {
+  type SqlServerConnection,
+  SqlServerDatabase,
+} from '@eltjs/sdk-microsoft-sql-server';
 
 import { SqlServerAppendWriter } from './sql-server-append-writer.ts';
 import { type SqlServerReading, readAsOf } from './sql-server-as-of.ts';
@@ -170,4 +173,27 @@ export class SqlServerDestination extends Destination<SqlServerTable> {
         );
     }
   }
+}
+
+// Whether destination loads into the database of into: the same server, port
+// and database, so the relations of the one are the relations of the other.
+export function sameDatabase(
+  destination: Destination<SqlServerTable>,
+  into: SqlServerDestination,
+): boolean {
+  return (
+    destination instanceof SqlServerDestination &&
+    destination[database].location === into[database].location
+  );
+}
+
+// One session of the database of destination, outside any transaction, with
+// XACT_ABORT ON, for a derived dataset that another package declares, as
+// openDestination of elt-sqlite opens the file of its destination. The owner
+// disposes it.
+export function connectDestination(
+  destination: SqlServerDestination,
+  clock: PipelineClock,
+): Promise<SqlServerConnection> {
+  return connect(destination[database], clock);
 }

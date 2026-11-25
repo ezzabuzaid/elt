@@ -8,7 +8,11 @@ import {
 import { connect, transaction } from './sql-server-connection.ts';
 import { numberOf } from './sql-server-dependents.ts';
 import { SqlServerDerivedStatus } from './sql-server-derived-status.ts';
-import { SqlServerDestination, database } from './sql-server-destination.ts';
+import {
+  SqlServerDestination,
+  database,
+  sameDatabase,
+} from './sql-server-destination.ts';
 import { identifiers } from './sql-server-identifiers.ts';
 import { marts, warehouse } from './sql-server-schemas.ts';
 import type { SqlServerTable } from './sql-server-table.ts';
@@ -117,11 +121,9 @@ export function made(
   connections: readonly Connection<SqlServerTable>[],
   into: SqlServerDestination,
 ): Set<string> {
-  const { location } = into[database];
   return new Set(
     connections.flatMap(({ destination, steps }) =>
-      destination instanceof SqlServerDestination &&
-      destination[database].location === location
+      sameDatabase(destination, into)
         ? steps.flatMap(({ to }) =>
             [`${marts}.${to.name}`, `${warehouse}.${to.raw}`].map(
               identifiers.key,

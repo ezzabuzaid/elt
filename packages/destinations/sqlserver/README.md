@@ -386,6 +386,19 @@ A `TableRule` gives many parts for one input, as in [elt-postgresql](../postgres
 - The constructor refuses a column of the rule named `seq` or `part_hash` as well, in any case. `validate` refuses a copy that makes `<name>_parts` or `raw_<name>_parts`.
 - `derived_status` counts the output rows, one for each key, not the parts.
 
+## Write a kind of derived dataset in another package
+
+A package can declare its own kind of derived dataset for a SQL Server database, for example the keyword index of [`@eltjs/vectorizer`](../../vectorizer/README.md). elt-sqlserver gives it the parts that its own kinds use, as [elt-sqlite](../sqlite/README.md#write-a-kind-of-derived-dataset-in-another-package) does:
+
+- `connectDestination(destination, clock)` opens one session of the database of the destination, outside any transaction and with `XACT_ABORT ON`, as each writer of the destination does. The caller disposes it (`await using`). The login stays private.
+- `sameDatabase(destination, into)` tells whether a destination of a connection loads into the database of `into`: the same server, port and database. `View` and `ComputedDataset` use it to find the copies that make their relations.
+- `new SqlServerDerivedStatus(session, dataset, kind, clock)` writes the row of the dataset in `_warehouse.derived_status`. `dataset` is the relation with its schema, for example `marts.docs_keywords`. `kind` is `'view'` or `'computed'`. Call `refreshing(counts)`, `current(counts)`, `waiting()` or `failed(error)` outside a transaction of the session, as `View` and `ComputedDataset` do.
+- `rawTable(name)` gives the name of the raw table of the relation `name` under the [naming rule](../../elt/README.md#names), for example `raw_docs_chunks_parts` for the parts of the computed dataset `docs_chunks`.
+- `quote(name)` quotes a name for T-SQL: in brackets, with each `]` inside doubled.
+- `literal(text)` gives a Unicode string literal of T-SQL: in `N''`, with each `'` inside doubled, for text that a statement cannot take as a parameter, such as the text of a view or of `EXEC`.
+- `marts` and `warehouse` are the names of the two schemas (`'marts'` and `'_warehouse'`). `inMarts(name)` and `inWarehouse(name)` give the quoted, schema-qualified name of a relation in each, for example `[marts].[docs_keywords]`.
+- A relation that the kind makes for readers is in `marts`. When the kind has a `qualifiedName` such as `marts.docs_keywords`, a `View` after it waits while that relation is missing.
+
 ## When something fails
 
 As in [elt-postgresql](../postgresql/README.md#when-something-fails). Also:

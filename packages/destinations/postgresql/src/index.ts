@@ -1,13 +1,17 @@
 export { ComputedDataset } from './computed-dataset.ts';
+export { quote } from './identifier.ts';
 export type { PostgresReading } from './postgres-as-of.ts';
 export { PostgresCheckpointStore } from './postgres-checkpoint-store.ts';
 export { PostgresColumn } from './postgres-column.ts';
 export { PostgresColumns } from './postgres-columns.ts';
+export { PostgresDerivedStatus } from './postgres-derived-status.ts';
 export { PostgresDestination } from './postgres-destination.ts';
+export { rawTable } from './postgres-identifiers.ts';
 export { type Hnsw, type PostgresIndex, hnsw } from './postgres-indexes.ts';
 export { PostgresSetupError } from './postgres-setup-error.ts';
 export type { PassState, PassStatus, StreamPassStatus } from '@eltjs/elt';
 export { readPassStatus } from './postgres-passes.ts';
+export { inMarts, inWarehouse, marts, warehouse } from './postgres-schemas.ts';
 export { PostgresSyncHistory } from './postgres-sync-history.ts';
 export { PostgresTable } from './postgres-table.ts';
 export { View } from './view.ts';

@@ -302,6 +302,7 @@ export class ComputedDataset<Input> extends DerivedDataset<PostgresTable> {
       const commit = commits(sql);
       await this.#declare(sql, commit);
       await this.#indexes.reconcile(sql);
+      await parts?.indexes.reconcile(sql);
       const rows = new Map<string, StoredOutput>();
       const gone: string[] = [];
       for (const row of await sql.unsafe<
