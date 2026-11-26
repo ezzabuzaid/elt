@@ -2,14 +2,14 @@
 
 **Use case.** A website answers `429 Too Many Requests` in the middle of a crawl. The crawl must stop all requests to that website for the time that the website asks for. It must not lose the pages that it did not reach. A later crawl must continue from where the block started.
 
-**What you need.** A crawl and its crawl memento, and the origins' records and their memento. The crawler handles the 429. You save `crawl.snapshot()` and `origins.snapshot()`, and you start the next crawl at `crawl.nextDue()`.
+**What you need.** A crawl with what you keep of it, its memento and its URL records, and the origins' records and their memento. The crawler handles the 429. You save `crawl.snapshot()` and `origins.snapshot()`, and you start the next crawl at `crawl.nextDue()`.
 
 ## What happens, step by step
 
 1. **Got does not try the request again.** A refusal, a 429 or a 5xx, belongs to the origin's record, not to Got. The crawl gives each request its own retry options, which keep Got's retries of network errors and of a 408, and remove the refusals.
 2. **The record blocks the origin.** The record of the origin, for example `https://shop.example`, opens a circuit breaker. The block ends at the `Retry-After` time, at most one day later, or one hour later when the answer gives none. A 503 with `Retry-After` blocks the origin in the same way.
 3. **The crawl holds the URLs of the origin.** The URL and each later URL of the origin stay in the frontier, and the crawl sends no request for them. Every other crawl that shares the record holds them too. The crawl continues on all other origins.
-4. **The crawl ends unfinished.** When only held URLs remain, the crawl ends. `crawl.snapshot().crawl` is not `null`, and it keeps the held URLs. `origins.snapshot()` keeps the block.
+4. **The crawl ends unfinished.** When only held URLs remain, the crawl ends. `crawl.complete` is `false`, and the URL records keep the held URLs in the frontier. `origins.snapshot()` keeps the block.
 5. **The next read continues, slowly.** `crawl.nextDue()` gives the time when the first block ends. A read that starts after that time requests the held URLs. The refusal gave the origin a slowdown of one second, so the crawl waits that much more than the origin's delay between its requests. Each answer that is not a refusal shortens the slowdown by a tenth.
 
 ## The program
@@ -27,6 +27,8 @@ import {
   AdaptiveRevisit,
   ListingReader,
   Origins,
+  type SavedCrawl,
+  applySnapshot,
 } from '@eltjs/sdk-web-crawler';
 
 // A blog whose post 2 answers 429 one time.
@@ -61,13 +63,13 @@ if (address === null || typeof address === 'string') throw new Error('No port');
 const origin = `http://127.0.0.1:${address.port}`;
 
 const http = got.extend({ timeout: { request: 30_000 } });
-let memento: unknown = null;
+let saved: SavedCrawl | null = null;
 let records: unknown = null;
 for (const name of ['first read', 'second read']) {
   const origins = new Origins(http, records, globalThis);
   const crawl = origins
     .crawler(http, [new ListingReader()], new AdaptiveRevisit())
-    .crawl([`${origin}/feed.json`], memento, {
+    .crawl([`${origin}/feed.json`], saved, {
       signal: AbortSignal.timeout(60_000),
     });
   started.length = 0;
@@ -76,9 +78,10 @@ for (const name of ['first read', 'second read']) {
     if ('error' in entry) console.log(name, entry.error.message);
     else if ('response' in entry) pages.push(new URL(entry.url).pathname);
   }
-  memento = crawl.snapshot();
+  // The snapshot gives the URL records that changed: apply them to the others.
+  saved = applySnapshot(saved, crawl.snapshot());
   records = origins.snapshot();
-  const complete = crawl.snapshot().crawl === null;
+  const { complete } = crawl;
   const gaps = started
     .slice(1)
     .map((at, index) => Math.round(at - (started[index] ?? at)));
@@ -95,25 +98,25 @@ server.close();
 Output (the port and the times change from run to run):
 
 ```
-first read Crawl could not read http://127.0.0.1:63102/posts/2: http://127.0.0.1:63102 answered 429, so the crawl requests nothing there until 2026-11-01T06:53:21.214Z
+first read Crawl could not read http://127.0.0.1:64046/posts/2: http://127.0.0.1:64046 answered 429, so the crawl requests nothing there until 2026-11-26T13:32:30.263Z
 first read {
   pages: [ '/posts/1' ],
   complete: false,
   refusals: 1,
-  gaps: [ 997, 1000, 999 ]
+  gaps: [ 996, 999, 1000 ]
 }
 the block ends in 2 s
 second read {
   pages: [ '/posts/2', '/posts/3' ],
   complete: true,
   refusals: 1,
-  gaps: [ 1902 ]
+  gaps: [ 1900 ]
 }
 ```
 
 ## Why it works
 
-The first read asked `robots.txt`, the feed, post 1 and post 2, one second apart. The record of the origin met one 429 for post 2, so it blocked the origin until the `Retry-After` time. Got did not try again. Post 3 has the same origin, so the crawl held it without a request. The crawl ended unfinished, and its crawl snapshot kept posts 2 and 3. The second read started after the block ended, so it requested them. Its origins' records came from the first read's memento, so the second read did not read `robots.txt` again: the rules last 24 hours (RFC 9309 §2.4). The refusal left a slowdown of one second, so the second read waited the origin's delay of one second and the slowdown, a tenth less after each answer.
+The first read asked `robots.txt`, the feed, post 1 and post 2, one second apart. The record of the origin met one 429 for post 2, so it blocked the origin until the `Retry-After` time. Got did not try again. Post 3 has the same origin, so the crawl held it without a request. The crawl ended unfinished, and its URL records kept posts 2 and 3 in the frontier. The second read started after the block ended, so it requested them. Its origins' records came from the first read's memento, so the second read did not read `robots.txt` again: the rules last 24 hours (RFC 9309 §2.4). The refusal left a slowdown of one second, so the second read waited the origin's delay of one second and the slowdown, a tenth less after each answer.
 
 The block is data in the origins' memento, not a timer. A process that starts again before the block ends reads the block and still sends no request to the origin. A timer would be lost when the process stops.
 

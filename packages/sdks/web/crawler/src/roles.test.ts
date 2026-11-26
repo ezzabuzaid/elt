@@ -10,12 +10,14 @@ import {
   ArchiveReader,
   type Crawl,
   type CrawlFailure,
-  type CrawlMemento,
+  type CrawlSnapshot,
   type CrawledPage,
   LinkReader,
   ListingReader,
   Origins,
   PaginationReader,
+  type SavedCrawl,
+  applySnapshot,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -150,11 +152,11 @@ test('a run that continues a crawl hands back again a page that it reads for ano
   const signal = t.signal;
   const first = crawler.crawl(['https://site.test/'], null, { signal });
   const before: string[] = [];
-  let snapshot;
+  let snapshot: SavedCrawl | null = null;
   for await (const entry of first) {
     // The entry after /2026/'s hand-back: /2026/ is finished, so the snapshot keeps it as handed back.
     if (before.includes('/2026/')) {
-      snapshot = first.snapshot();
+      snapshot = applySnapshot(null, first.snapshot());
       break;
     }
     if ('url' in entry && !('error' in entry)) before.push(pathOf(entry.url));
@@ -192,13 +194,13 @@ test('a URL downloaded again for a role it adds is not admitted again, so it spe
     .crawl(['https://site.test/'], null, {
       signal: t.signal,
     });
-  let last: CrawlMemento | undefined;
+  let last: CrawlSnapshot | undefined;
   for await (const entry of crawl)
     if (!('deferred' in entry)) last = crawl.snapshot();
 
   // /x is downloaded again as an archive list, but LinkReader admitted only /x and /b.
   assert.deepEqual(requests, ['/', '/x', '/b', '/x']);
-  assert.deepEqual(last?.crawl?.states[0], {
+  assert.deepEqual(last?.memento.crawl?.states[0], {
     followed: 2,
   });
 });

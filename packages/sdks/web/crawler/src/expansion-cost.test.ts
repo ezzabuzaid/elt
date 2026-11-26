@@ -13,6 +13,8 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
+  type SavedCrawl,
+  applySnapshot,
   hour,
 } from './index.ts';
 
@@ -159,7 +161,8 @@ test("the large site's other child sitemaps are read in later runs, each once, u
   };
   const pages: string[] = [];
   const routes: string[] = [];
-  let memento: unknown = null;
+  let kept: SavedCrawl | null = null;
+  let complete: boolean;
   let runs = 0;
   // Each run is a read of its own: its origins' records start from the last
   // read's, and each read spends a new expansion budget.
@@ -168,7 +171,7 @@ test("the large site's other child sitemaps are read in later runs, each once, u
     origins = new Origins(noRetries, origins.snapshot(), globalThis);
     const crawl = programs(origins).crawl(
       [`${list.origin}/programs`],
-      memento,
+      kept,
       options,
     );
     for await (const entry of crawl) {
@@ -183,10 +186,11 @@ test("the large site's other child sitemaps are read in later runs, each once, u
             );
         }
     }
-    memento = JSON.parse(JSON.stringify(crawl.snapshot()));
+    kept = applySnapshot(kept, crawl.snapshot());
+    ({ complete } = crawl);
     runs++;
     // A crawl that the budget left unfinished is due again at once.
-    if (crawl.snapshot().crawl !== null) {
+    if (!complete) {
       const due = crawl.nextDue();
       assert.ok(due !== null && due <= Date.now(), `due at ${due}`);
     }
@@ -195,12 +199,7 @@ test("the large site's other child sitemaps are read in later runs, each once, u
     assert.equal(new Set(children).size, children.length, children.join());
     log.length = 0;
     assert.ok(runs <= 20, 'the crawl never completes');
-  } while (
-    typeof memento === 'object' &&
-    memento !== null &&
-    'crawl' in memento &&
-    memento.crawl !== null
-  );
+  } while (!complete);
 
   assert.ok(runs > 1, `${runs} runs`);
   assert.ok(pages.includes(`${microsoft.origin}/startups`), pages.join());
@@ -331,18 +330,18 @@ test('a run that continues a crawl held back by the budget reads its list again 
   };
   const first = crawler.crawl([`${list.origin}/programs`], null, options);
   await run(first, log);
-  const memento: unknown = JSON.parse(JSON.stringify(first.snapshot()));
-  assert.notEqual(first.snapshot().crawl, null);
+  const kept = applySnapshot(null, first.snapshot());
+  assert.equal(first.complete, false);
   // An hour later, the list has a new row.
   t.mock.timers.setTime(Date.now() + hour);
   rows += `<a href="${vercel.origin}/">Vercel</a>`;
   log.length = 0;
 
-  const second = crawler.crawl([`${list.origin}/programs`], memento, options);
+  const second = crawler.crawl([`${list.origin}/programs`], kept, options);
   const pages = await run(second, log);
 
   assert.ok(pages.includes(`${vercel.origin}/startup-program`), pages.join());
-  assert.notEqual(second.snapshot().crawl, null, 'the held sitemaps remain');
+  assert.equal(second.complete, false, 'the held sitemaps remain');
   // The list is due again an hour after the run that read it, not after the
   // run that started the crawl.
   t.mock.timers.setTime(Date.now() + 60_000);
@@ -350,7 +349,7 @@ test('a run that continues a crawl held back by the budget reads its list again 
   await run(
     crawler.crawl(
       [`${list.origin}/programs`],
-      JSON.parse(JSON.stringify(second.snapshot())),
+      applySnapshot(kept, second.snapshot()),
       options,
     ),
     log,
@@ -389,7 +388,7 @@ test('a run that continues a crawl at once does not read its list again before t
   await run(
     crawler.crawl(
       [`${list.origin}/programs`],
-      JSON.parse(JSON.stringify(first.snapshot())),
+      applySnapshot(null, first.snapshot()),
       options,
     ),
     log,

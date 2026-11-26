@@ -12,6 +12,7 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
+  applySnapshot,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -56,7 +57,8 @@ async function crawled(crawl: Crawl) {
     pages,
     failures,
     nextDue: crawl.nextDue(),
-    memento: crawl.snapshot(),
+    complete: crawl.complete,
+    kept: applySnapshot(null, crawl.snapshot()),
   };
 }
 
@@ -77,7 +79,7 @@ test('a URL that robots.txt disallows is not requested, and the other pages are 
   assert.ok(!requests.includes('/private/b'));
   assert.deepEqual(result.pages, ['/a', '/c']);
   assert.deepEqual(result.failures, []);
-  assert.equal(result.memento.crawl, null);
+  assert.equal(result.complete, true);
 });
 
 test("one download of a starting page's robots.txt gives both its rules and its sitemaps", async (t) => {
@@ -228,11 +230,8 @@ test('a robots.txt that answers 503 holds its origin until Retry-After, and the 
   assert.deepEqual(result.pages, []);
   assert.equal(result.failures.length, 1);
   assert.match(result.failures[0]?.message ?? '', /robots\.txt.*503/);
-  assert.notEqual(result.memento.crawl, null);
-  assert.deepEqual(
-    result.memento.crawl?.pending.map(({ url }) => new URL(url).pathname),
-    ['/sitemap.xml'],
-  );
+  // The sitemap waits in the frontier: the crawl is unfinished until the block ends.
+  assert.equal(result.complete, false);
   assert.equal(result.nextDue, 120_000);
 });
 
@@ -346,9 +345,12 @@ test('a link that the crawl does not select is dropped, not held, on a website w
     result.failures.map(({ url }) => url),
     ['/post/2'],
   );
+  // The host keeps a record of /post/2, which waits for its website, and none of /post/3.
   assert.deepEqual(
-    result.memento.crawl?.pending.map(({ url }) => new URL(url).pathname),
-    ['/post/2'],
+    [...result.kept.urls.keys()].filter((url) =>
+      url.startsWith('https://flaky.test/'),
+    ),
+    ['https://flaky.test/post/2'],
   );
 });
 
@@ -387,7 +389,7 @@ test('a link that the crawl does not select asks its website nothing, so a websi
   assert.deepEqual(result.pages, ['/post/1']);
   assert.deepEqual(result.failures, []);
   assert.deepEqual(flaky, []);
-  assert.equal(result.memento.crawl, null);
+  assert.equal(result.complete, true);
 });
 
 test('a robots.txt that answers 429 holds its origin as a 5xx does, not allowing everything as other 4xx answers do', async (t) => {
@@ -409,7 +411,7 @@ test('a robots.txt that answers 429 holds its origin as a 5xx does, not allowing
   );
 
   assert.deepEqual(requests, ['/robots.txt']);
-  assert.notEqual(result.memento.crawl, null);
+  assert.equal(result.complete, false);
   assert.equal(result.nextDue, 60_000);
 });
 

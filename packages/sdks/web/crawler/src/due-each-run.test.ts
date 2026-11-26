@@ -12,6 +12,7 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
+  applySnapshot,
   day,
   hour,
 } from './index.ts';
@@ -90,13 +91,13 @@ test('a page that is due every hour is requested again in the next run while the
   };
   const first = crawler.crawl([`${list.origin}/programs`], null, options);
   await drain(first);
-  assert.notEqual(first.snapshot().crawl, null);
+  assert.equal(first.complete, false);
   t.mock.timers.setTime(Date.now() + hour);
   log.length = 0;
 
   const second = crawler.crawl(
     [`${list.origin}/programs`],
-    JSON.parse(JSON.stringify(first.snapshot())),
+    applySnapshot(null, first.snapshot()),
     options,
   );
   await drain(second);
@@ -105,7 +106,7 @@ test('a page that is due every hour is requested again in the next run while the
     log.includes(`${new URL(news.origin).host} /credits`),
     log.join('\n'),
   );
-  assert.notEqual(second.snapshot().crawl, null, 'the held sitemaps remain');
+  assert.equal(second.complete, false, 'the held sitemaps remain');
 });
 
 test('a new crawl does not request a starting URL that is not due', async (t) => {
@@ -126,13 +127,13 @@ test('a new crawl does not request a starting URL that is not due', async (t) =>
   const options = { signal: t.signal };
   const first = crawler.crawl([`${site.origin}/sitemap.xml`], null, options);
   await drain(first);
-  assert.equal(first.snapshot().crawl, null);
+  assert.equal(first.complete, true);
   log.length = 0;
 
   await drain(
     crawler.crawl(
       [`${site.origin}/sitemap.xml`],
-      JSON.parse(JSON.stringify(first.snapshot())),
+      applySnapshot(null, first.snapshot()),
       options,
     ),
   );

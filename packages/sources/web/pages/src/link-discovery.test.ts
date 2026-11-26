@@ -233,6 +233,123 @@ test('new URLs survive interruption, and only the page in flight and the due URL
   );
 });
 
+test("a read stopped after two pages resumes from the crawl's URL records in the checkpoint: a page visited before the stop is not requested again, and a page that only the home page links, which the resumed read does not read again, is still loaded", async () => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  const requests: string[] = [];
+  const article = (name: string) =>
+    `<article><p>The ${name} article contains its own complete published research observations.</p></article>`;
+  await using upstream = await new HttpServer().start((request, response) => {
+    assert.ok(request.url);
+    requests.push(request.url);
+    if (request.url === '/robots.txt')
+      response
+        .writeHead(200, { 'content-type': 'text/plain' })
+        .end('User-agent: *\nDisallow: /private\n');
+    else if (request.url === '/')
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(
+          '<a href="/articles/a">A</a><a href="/private">Private</a><a href="/articles/b">B</a><a href="/articles/c">C</a>',
+        );
+    else if (request.url.startsWith('/articles/'))
+      response
+        .writeHead(200, { 'content-type': 'text/html' })
+        .end(article(request.url.slice('/articles/'.length)));
+    else response.writeHead(404).end();
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const source = new WebSource({
+    cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
+    streams: [
+      {
+        stream: new WebStream({
+          name: 'articles',
+          primaryKey: ['pageUrl'],
+          readers: [new LinkReader({ maxDepth: 3, maxPages: 100 })],
+          // The home page and each article are read once, so a resumed read
+          // requests only what its checkpoint says is not visited yet.
+          revisit: new OnceRevisit(),
+          include: [new URLPattern(`${upstream.origin}/articles/*`)],
+          extractor: new ArticleExtractor(),
+        }),
+        inputs: [upstream.origin],
+      },
+    ],
+  });
+  const destination = new SQLiteDestination({ path: database.path }),
+    history = new SQLiteSyncHistory();
+  const connection = new Connection({
+    name: 'web',
+    source,
+    destination,
+    checkpoints: new SQLiteCheckpointStore({ path: checkpoints.path }),
+    steps: (await source.discover()).streams.map(
+      (stream) =>
+        new Copy(stream, destination.table(stream.name), {
+          id: `records:${stream.name}`,
+          syncMode: 'incremental',
+          destinationSyncMode: 'append_dedup',
+        }),
+    ),
+  });
+  const stop = new AbortController(),
+    reason = new Error('stop after two pages');
+  const stopAfterTwo = (message: unknown) => {
+    if (
+      message instanceof CopyProgress &&
+      message.copy.id === 'records:articles' &&
+      message.committed.count === 2
+    )
+      stop.abort(reason);
+  };
+  passChannels.progress.subscribe(stopAfterTwo);
+  try {
+    await assert.rejects(
+      new Pipeline({
+        clock: globalThis,
+        connections: [connection],
+        history,
+      }).run({ signal: stop.signal }),
+      (error) => error === reason,
+    );
+  } finally {
+    passChannels.progress.unsubscribe(stopAfterTwo);
+  }
+  requests.length = 0;
+
+  const resumed = await new Pipeline({
+    clock: globalThis,
+    connections: [connection],
+    history,
+  }).run();
+
+  assert.equal(resumed[0]?.count, 1);
+  // /articles/b was in flight when the run stopped, so it downloads once more.
+  assert.deepEqual(
+    requests.filter((url) => url !== '/robots.txt'),
+    ['/articles/b', '/articles/c'],
+  );
+  assert.equal(
+    database.connection.prepare('SELECT count(*) AS count FROM articles').get()
+      ?.count,
+    3,
+  );
+  // The checkpoint keeps one record for each URL the crawl knows, in the
+  // crawl space of the input, and none for the disallowed URL that left its
+  // frontier.
+  assert.deepEqual(
+    checkpoints.connection
+      .prepare(
+        `SELECT key FROM checkpoint_entries WHERE id = 'records:articles' AND space LIKE '%"crawl' ORDER BY key`,
+      )
+      .all()
+      .map(({ key }) => new URL(String(key)).pathname),
+    ['/', '/articles/a', '/articles/b', '/articles/c'],
+  );
+});
+
 test('Markdown pages supply links, and feeds declared on crawled pages are read completely', async () => {
   await using cache = await new TemporaryFiles().directory('web-cache-');
   const requests: string[] = [];

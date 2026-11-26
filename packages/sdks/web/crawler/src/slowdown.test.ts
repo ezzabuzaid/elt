@@ -13,10 +13,10 @@ import {
   AlwaysRevisit,
   CompositeRevisit,
   type Crawl,
-  type CrawlMemento,
   ListingReader,
   Origins,
   type OriginsMemento,
+  applySnapshot,
 } from './index.ts';
 
 // Synthetic upstream sites make refusals reproducible offline.
@@ -89,7 +89,8 @@ function settled(promise: Promise<unknown>) {
   return Promise.race([promise.then(() => true), setImmediate(false)]);
 }
 
-// One crawl to its end, and its memento as JSON gives it back. The crawl waits
+// One crawl to its end: whether it is complete, and what its host keeps
+// after it as its store gives it back. The crawl waits
 // only on its clock, so a pending timer is the wait of the crawl, which ends
 // at once with the clock moved by its length.
 async function crawled(crawl: Crawl, time: Clock) {
@@ -98,8 +99,10 @@ async function crawled(crawl: Crawl, time: Clock) {
   })();
   while (!(await settled(consumed)))
     if (time.fake.countTimers() > 0) time.fake.next();
-  const memento: CrawlMemento = JSON.parse(JSON.stringify(crawl.snapshot()));
-  return memento;
+  return {
+    complete: crawl.complete,
+    kept: applySnapshot(null, crawl.snapshot()),
+  };
 }
 
 // The gaps between request starts, in milliseconds, as the server saw them.
@@ -221,7 +224,7 @@ test('after a 429 block ends, the next read spaces its requests to that origin',
   await crawled(
     read(0, first.origins.snapshot(), time).crawler.crawl(
       ['https://site.test/sitemap.xml'],
-      blocked,
+      blocked.kept,
       { signal: t.signal },
     ),
     time,
@@ -488,7 +491,7 @@ async function readAgain(pages: readonly string[], signal: AbortSignal) {
     };
   };
   const first = crawler(null);
-  const memento = await crawled(
+  const earlier = await crawled(
     first.crawler.crawl(['https://site.test/sitemap.xml'], null, { signal }),
     time,
   );
@@ -497,12 +500,12 @@ async function readAgain(pages: readonly string[], signal: AbortSignal) {
   await crawled(
     crawler(first.origins.snapshot()).crawler.crawl(
       ['https://site.test/sitemap.xml'],
-      memento,
+      earlier.kept,
       { signal },
     ),
     time,
   );
-  return { complete: memento.crawl === null, started };
+  return { complete: earlier.complete, started };
 }
 
 test('a slowdown carries over to the next read after a complete crawl', async (t) => {
@@ -607,7 +610,7 @@ test('a robots.txt that answers 503 also slows its origin after the block', asyn
   await crawled(
     read(0, first.origins.snapshot(), time).crawler.crawl(
       ['https://site.test/sitemap.xml'],
-      blocked,
+      blocked.kept,
       { signal: t.signal },
     ),
     time,

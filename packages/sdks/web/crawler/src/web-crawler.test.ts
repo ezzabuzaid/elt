@@ -19,6 +19,7 @@ import {
   Origins,
   PaginationReader,
   Reader,
+  applySnapshot,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -506,7 +507,7 @@ test('a snapshot resumes the crawl without repeating finished work and hands out
     if (handed.length === 2) break;
   }
   assert.deepEqual(handed, ['/p1', '/p2']);
-  const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
+  const snapshot = applySnapshot(null, first.snapshot());
   requests.length = 0;
   const resumed = (
     await results(
@@ -645,7 +646,7 @@ test('a snapshot taken at a progress entry resumes without downloading the docum
   for await (const entry of first)
     if ('progress' in entry && pathOf(entry.progress) === '/robots.txt') break;
   assert.deepEqual(requests, ['/robots.txt', '/', '/feed.xml']);
-  const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
+  const snapshot = applySnapshot(null, first.snapshot());
   requests.length = 0;
   // The resumed crawl is a read of its own, whose origins' records start from the last read's.
   const resumed = await results(

@@ -29,8 +29,20 @@ The time that an origin's refusals add to its delay. Each refusal, a 429 or a 5x
 _Avoid_: Backoff alone, throttle
 
 **Crawl**:
-One pass of the crawler from its starting URLs. A crawl that stops continues from its memento.
+One pass of the crawler from its starting URLs. A crawl that stops continues from its memento and its URL records.
 _Avoid_: Run, scan, job
+
+**Memento**:
+The small part of a crawl that a snapshot gives whole: the reader states and the starting origins of an unfinished crawl, and the starting pages that answered with a page.
+_Avoid_: State, checkpoint (the host's words)
+
+**URL record**:
+What the crawl keeps for one URL: what its last visit got and when it is due again, its place in the frontier, or both, as Nutch's CrawlDatum and Crawlee's request record ([ADR 0011](./docs/adr/0011-a-snapshot-gives-the-url-records-that-changed.md)).
+_Avoid_: Known URL alone, row, document
+
+**Snapshot**:
+The memento and the URL records that changed since the last snapshot, to put, and the URLs that left the frontier without a visit, to remove. A host applies every snapshot in order: it removes, then puts, and the memento replaces the last, as `applySnapshot` does.
+_Avoid_: Dump, full state
 
 **Frontier**:
 The URLs that the crawl must still download, and the URLs that it already knows.
@@ -49,7 +61,7 @@ What a visit that redirected ended with: the target, whether it is permanent (30
 _Avoid_: Redirect status, moved page
 
 **Failed visit**:
-A visit that got no answer that the crawl can use, such as a 400, a 5xx or a network error. The crawl asks the URL again two hours later. The memento counts the failed visits since the last visit that succeeded ([ADR 0008](./docs/adr/0008-a-failure-has-a-lifecycle.md)).
+A visit that got no answer that the crawl can use, such as a 400, a 5xx or a network error. The crawl asks the URL again two hours later. The URL record counts the failed visits since the last visit that succeeded ([ADR 0008](./docs/adr/0008-a-failure-has-a-lifecycle.md)).
 _Avoid_: Error alone (an error is what a run hands out), retry
 
 **Gone visit**:

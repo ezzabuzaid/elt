@@ -14,6 +14,7 @@ import {
   Source,
   type SourceMessage,
   type SourceReadOptions,
+  type StateMessage,
   Stream,
   diffGroupedSnapshot,
   resumeGroupedSnapshot,
@@ -79,10 +80,16 @@ const provenance = {
 } as const;
 
 const saved = z.object({
-  // The crawler's memento: its unfinished crawl and every URL it visited, failed pages too.
+  // The crawler's memento: its unfinished crawl and the starting pages. The
+  // record of each URL it knows, failed pages too, or that waits in its
+  // frontier, is an entry of the crawl space.
   crawl: z.unknown(),
   outbox,
 });
+
+// The space of the checkpoint's entries that keeps the crawl's URL records,
+// one for each URL; elt scopes it to the input's partition (ADR 0035).
+const crawlSpace = 'crawl';
 
 // A partitioned stream's saved state, as elt's PartitionState gives each
 // partition's state; null before the stream committed any partition.
@@ -500,8 +507,7 @@ export class WebSource extends Source<WebRead> {
       await client.save();
     };
     try {
-      const previous =
-        state === null ? { crawl: null, outbox: [] } : saved.parse(state);
+      const previous = state === null ? null : saved.parse(state);
       // The snapshot of the pages the scan diffed, as the last STATE left it.
       let diff = await resumeGroupedSnapshot(configuration, entries);
       // A read without the routes stream keeps the outbox as it is, and adds
@@ -510,9 +516,10 @@ export class WebSource extends Source<WebRead> {
       // web stream that starts over never reuses a committed number.
       const routed = scan.routed(stream.name);
       const undelivered = scan.undelivered(stream.name, inputUrl);
+      const outboxed = previous?.outbox ?? [];
       routes = routed
-        ? previous.outbox.filter(({ seq }) => seq >= undelivered)
-        : previous.outbox;
+        ? outboxed.filter(({ seq }) => seq >= undelivered)
+        : outboxed;
       let next = routes.reduce(
         (after, { seq }) => Math.max(after, seq + 1),
         undelivered,
@@ -528,11 +535,20 @@ export class WebSource extends Source<WebRead> {
         stream.revisit,
         run.negotiation,
       );
-      const crawl = crawler.crawl([inputUrl], previous.crawl, {
-        signal: requestSignal,
-        include: stream.include,
-        expand: stream.expand,
-      });
+      const crawl = crawler.crawl(
+        [inputUrl],
+        previous === null
+          ? null
+          : {
+              memento: previous.crawl,
+              urls: await entries.space(crawlSpace),
+            },
+        {
+          signal: requestSignal,
+          include: stream.include,
+          expand: stream.expand,
+        },
+      );
       // How the crawl ended, now.
       const end = (complete: boolean): CrawlEnd => ({
         complete,
@@ -543,9 +559,17 @@ export class WebSource extends Source<WebRead> {
       // Pages that are not due: the scan keeps their records unread.
       const kept: KeptGroup[] = [];
       let savedAt = clock.performance.now();
-      const checkpoint = () => {
+      // The state and the crawl's URL records that changed since the last
+      // STATE, beside the diff's entries when the STATE is the diff's.
+      const checkpoint = (
+        diffed: StateMessage['entries'] = {},
+      ): Pick<StateMessage, 'state' | 'entries'> => {
         savedAt = clock.performance.now();
-        return { crawl: crawl.snapshot(), outbox: routes };
+        const { memento, urls } = crawl.snapshot();
+        return {
+          state: { crawl: memento, outbox: routes },
+          entries: { ...diffed, [crawlSpace]: urls },
+        };
       };
       const policy = new ListedPages();
       // The diff of groups of the scan, as one part of it or as its last
@@ -567,8 +591,7 @@ export class WebSource extends Source<WebRead> {
             yield {
               type: 'STATE',
               stream: message.stream,
-              state: checkpoint(),
-              entries: message.entries,
+              ...checkpoint(message.entries),
             };
             await committed();
           } else yield message;
@@ -588,7 +611,7 @@ export class WebSource extends Source<WebRead> {
               yield {
                 type: 'STATE',
                 stream: configuration.stream.name,
-                state: checkpoint(),
+                ...checkpoint(),
               };
               await committed();
             }
@@ -599,7 +622,7 @@ export class WebSource extends Source<WebRead> {
             yield {
               type: 'STATE',
               stream: configuration.stream.name,
-              state: checkpoint(),
+              ...checkpoint(),
             };
             await committed();
             continue;
@@ -679,7 +702,7 @@ export class WebSource extends Source<WebRead> {
             yield {
               type: 'STATE',
               stream: configuration.stream.name,
-              state: checkpoint(),
+              ...checkpoint(),
             };
             await committed();
           }
@@ -687,11 +710,11 @@ export class WebSource extends Source<WebRead> {
         requestSignal.throwIfAborted();
         // A crawl that a blocked host left unfinished has not reached every
         // group, so the scan goes on in the next run rather than ending here.
-        if (crawl.snapshot().crawl !== null) {
+        if (!crawl.complete) {
           yield {
             type: 'STATE',
             stream: configuration.stream.name,
-            state: checkpoint(),
+            ...checkpoint(),
           };
           await committed();
         } else
@@ -707,7 +730,7 @@ export class WebSource extends Source<WebRead> {
             ],
             { last: true },
           );
-        ended = end(crawl.snapshot().crawl === null);
+        ended = end(crawl.complete);
         due = crawl.nextDue();
       } catch (error) {
         // A read that failed for a reason that is not a page's, such as a

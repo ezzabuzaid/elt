@@ -8,10 +8,11 @@ import { HttpResponse, http } from 'msw';
 import {
   AdaptiveRevisit,
   type Crawl,
-  type CrawlMemento,
   LinkReader,
   ListingReader,
   Origins,
+  type SavedCrawl,
+  applySnapshot,
   hour,
 } from './index.ts';
 
@@ -72,8 +73,9 @@ function crawler(origins: Origins) {
   );
 }
 
-// One crawl to its end: what it handed out by kind, when it is due, and its memento.
-async function crawled(crawl: Crawl) {
+// One crawl to its end: what it handed out by kind, when it is due, whether
+// it is complete, and what its host keeps after it, from what it kept before.
+async function crawled(crawl: Crawl, before: SavedCrawl | null = null) {
   const pages: string[] = [];
   const deferred: string[] = [];
   const failures: { url: string; message: string }[] = [];
@@ -82,9 +84,14 @@ async function crawled(crawl: Crawl) {
     else if ('deferred' in entry) deferred.push(where(entry.deferred.url));
     else if ('error' in entry)
       failures.push({ url: where(entry.url), message: entry.error.message });
-  // As JSON gives it back, so the memento is plain data.
-  const memento: CrawlMemento = JSON.parse(JSON.stringify(crawl.snapshot()));
-  return { pages, deferred, failures, nextDue: crawl.nextDue(), memento };
+  return {
+    pages,
+    deferred,
+    failures,
+    nextDue: crawl.nextDue(),
+    complete: crawl.complete,
+    kept: applySnapshot(before, crawl.snapshot()),
+  };
 }
 
 test('a 429 with Retry-After stops requests to its origin, reports the block once and makes the crawl due when the block ends', async (t) => {
@@ -103,9 +110,23 @@ test('a 429 with Retry-After stops requests to its origin, reports the block onc
       signal: t.signal,
     }),
   );
+  const firstRequests = pagesOf(requests.splice(0));
+  // A read after the block, when /b answers, starts with no record of the
+  // origins: it requests what the block left in the frontier.
+  server.server.use(
+    http.get('https://site.test/b', () => HttpResponse.html('<p>/b</p>')),
+  );
+  const resumed = await crawled(
+    crawler(new Origins(noRetries, null, globalThis)).crawl(
+      starts,
+      first.kept,
+      { signal: t.signal },
+    ),
+    first.kept,
+  );
 
   // The origins take turns.
-  assert.deepEqual(pagesOf(requests), [
+  assert.deepEqual(firstRequests, [
     'site.test/a',
     'other.test/x',
     'site.test/b',
@@ -119,11 +140,8 @@ test('a 429 with Retry-After stops requests to its origin, reports the block onc
   );
   assert.deepEqual(first.deferred, []);
   assert.equal(first.nextDue, 120_000);
-  assert.notEqual(first.memento.crawl, null);
-  assert.deepEqual(
-    first.memento.crawl?.pending.map(({ url }) => where(url)).sort(),
-    ['site.test/b', 'site.test/c'],
-  );
+  assert.equal(first.complete, false);
+  assert.deepEqual(resumed.pages, ['site.test/b', 'site.test/c']);
 });
 
 test('a crawl resumed before its block ends requests nothing there, and one resumed after requests the rest and completes', async (t) => {
@@ -155,7 +173,8 @@ test('a crawl resumed before its block ends requests nothing there, and one resu
     globalThis,
   );
   const early = await crawled(
-    crawler(earlyOrigins).crawl(starts, first.memento, { signal: t.signal }),
+    crawler(earlyOrigins).crawl(starts, first.kept, { signal: t.signal }),
+    first.kept,
   );
   const earlyRequests = requests.splice(0);
   t.mock.timers.setTime(120_000);
@@ -163,20 +182,21 @@ test('a crawl resumed before its block ends requests nothing there, and one resu
   const late = await crawled(
     crawler(new Origins(noRetries, earlyOrigins.snapshot(), globalThis)).crawl(
       starts,
-      early.memento,
+      early.kept,
       { signal: t.signal },
     ),
+    early.kept,
   );
 
   assert.deepEqual(earlyRequests, []);
   assert.deepEqual(early.failures, []);
   assert.equal(early.nextDue, 120_000);
-  assert.notEqual(early.memento.crawl, null);
+  assert.equal(early.complete, false);
   // The origin's rules last 24 hours (RFC 9309 §2.4), so a later read does not read them again.
   assert.deepEqual(requests, ['site.test/b', 'site.test/c']);
   assert.deepEqual(late.pages, ['site.test/b', 'site.test/c']);
   assert.deepEqual(late.failures, []);
-  assert.equal(late.memento.crawl, null);
+  assert.equal(late.complete, true);
 });
 
 test('three 403s in a row without Retry-After block their origin for an hour', async (t) => {
@@ -238,7 +258,7 @@ test('a single 403 is a failure of its page, not a block, so the rest of its ori
     first.failures[0]?.message ?? '',
     /requests nothing there/,
   );
-  assert.equal(first.memento.crawl, null);
+  assert.equal(first.complete, true);
 });
 
 test('a 429 with an HTTP-date Retry-After blocks its origin until that date', async (t) => {
@@ -298,10 +318,29 @@ test('a block reached through a redirect stops requests to the origin that answe
       { signal: t.signal },
     ),
   );
+  const firstRequests = requests.splice(0);
+  // A read after the block, when https://site.test answers, starts with no
+  // record of the origins: it requests what the block left in the frontier.
+  server.server.use(
+    http.get('https://site.test/*', ({ request }) => {
+      requests.push(request.url);
+      return new URL(request.url).pathname === '/robots.txt'
+        ? new HttpResponse(null, { status: 404 })
+        : HttpResponse.html('<p>page</p>');
+    }),
+  );
+  await crawled(
+    crawler(new Origins(noRetries, null, globalThis)).crawl(
+      ['http://site.test/sitemap.xml'],
+      first.kept,
+      { signal: t.signal },
+    ),
+    first.kept,
+  );
 
   // Each redirect is a request of its own origin: https://site.test is
   // blocked, and http://site.test still answers.
-  assert.deepEqual(requests, [
+  assert.deepEqual(firstRequests, [
     'http://site.test/robots.txt',
     'http://site.test/sitemap.xml',
     'http://site.test/a',
@@ -315,7 +354,8 @@ test('a block reached through a redirect stops requests to the origin that answe
     /https:\/\/site\.test answered 429/,
   );
   // The redirect targets wait in the frontier until the block ends.
-  assert.deepEqual(first.memento.crawl?.pending.map(({ url }) => url).sort(), [
+  assert.deepEqual(requests, [
+    'https://site.test/robots.txt',
     'https://site.test/a',
     'https://site.test/b',
   ]);
@@ -356,5 +396,5 @@ test('a tolerated 404 opens no breaker, so the rest of its origin still download
     'site.test/after',
   ]);
   assert.deepEqual(first.failures, []);
-  assert.equal(first.memento.crawl, null);
+  assert.equal(first.complete, true);
 });

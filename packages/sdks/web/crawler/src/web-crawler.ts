@@ -208,24 +208,80 @@ const knownUrlSchema = z.object({
 });
 type KnownUrl = z.infer<typeof knownUrlSchema>;
 
+// A URL that waits in the frontier, with its place in the order found, as
+// Crawlee's request records keep an orderNo: a resumed crawl requests an
+// origin's URLs in this order.
+const pendingUrlSchema = z.object({
+  entry: entrySchema,
+  order: z.number().int().nonnegative(),
+});
+type PendingUrl = z.infer<typeof pendingUrlSchema>;
+
+// One record for each URL, as Nutch keeps a CrawlDatum and StormCrawler a row
+// for each URL: what its last visit got, its place in the frontier, or both.
+const crawlUrlSchema = z.union([
+  z.object({ known: knownUrlSchema, pending: pendingUrlSchema.nullable() }),
+  z.object({ known: z.null(), pending: pendingUrlSchema }),
+]);
+export type CrawlUrl = z.infer<typeof crawlUrlSchema>;
+
 const mementoSchema = z.object({
   // The unfinished crawl, or null once it is complete.
   crawl: z
     .object({
-      pending: z.array(entrySchema),
       states: z.array(z.unknown()),
       // Origins of the starting URLs: a list's page on another origin is expanded one step.
       origins: z.array(z.string()),
     })
     .nullable(),
-  // Every URL a crawl visited, across crawls, with when it is due again.
-  urls: z.record(z.string(), knownUrlSchema),
   // Each starting URL that answered with an HTML or Markdown page, across
   // crawls, with the origin that answered: LinkReader follows links there
   // also in a crawl that does not read the starting page.
   pages: z.record(z.string(), z.string()),
 });
 export type CrawlMemento = z.infer<typeof mementoSchema>;
+
+/**
+ * What changed since the last snapshot: the memento, which is small, and the
+ * records of the URLs that changed, by URL, to put, and of those that left
+ * the crawl, to remove. A host keeps every URL record it was given and
+ * applies each snapshot's changes in order.
+ */
+export type CrawlSnapshot = {
+  readonly memento: CrawlMemento;
+  readonly urls: {
+    readonly put: ReadonlyMap<string, CrawlUrl>;
+    readonly remove: ReadonlySet<string>;
+  };
+};
+
+/**
+ * What a crawl resumes from: the last snapshot's memento and every URL record
+ * that the snapshots so far left, by URL. A host's store gives them back as
+ * unknown values, which the crawl checks; `applySnapshot` gives them typed.
+ */
+export type SavedCrawl<Memento = unknown, Url = unknown> = {
+  readonly memento: Memento;
+  readonly urls: ReadonlyMap<string, Url>;
+};
+
+/**
+ * Applies a snapshot to what a host keeps, as a store applies each save: it
+ * removes the URLs of `urls.remove`, then puts the records of `urls.put`, and
+ * the snapshot's memento replaces the last. A null saved crawl knows no URL.
+ * It gives a new value, which `crawl()` resumes from, and changes neither
+ * argument, as immer's `applyPatches` and Automerge's `applyChanges` apply
+ * the changes that their producers give.
+ */
+export function applySnapshot<Url = CrawlUrl>(
+  saved: SavedCrawl<unknown, Url> | null,
+  { memento, urls }: CrawlSnapshot,
+): SavedCrawl<CrawlMemento, Url | CrawlUrl> {
+  const records = new Map<string, Url | CrawlUrl>(saved?.urls);
+  for (const url of urls.remove) records.delete(url);
+  for (const [url, record] of urls.put) records.set(url, record);
+  return { memento, urls: records };
+}
 
 export type CrawlOptions = {
   readonly signal: AbortSignal;
@@ -244,8 +300,13 @@ export type CrawlOptions = {
 export interface Crawl extends AsyncIterable<
   CrawledPage | CrawlFailure | CrawlProgress | CrawlDeferral | CrawlGone
 > {
-  /** The crawl so far as plain data. The entry handed out last stays unfinished until the next is requested. */
-  snapshot(): CrawlMemento;
+  /**
+   * What changed in the crawl since the last snapshot, as plain data. The
+   * entry handed out last stays unfinished until the next is requested.
+   */
+  snapshot(): CrawlSnapshot;
+  /** The crawl requested every URL it had, so a crawl resumed from it starts a new one. */
+  readonly complete: boolean;
   /** The caller could not use a page it was handed back, so the page is due again as a failed one. */
   fail(url: string): void;
   /**
@@ -293,33 +354,53 @@ export class WebCrawler {
   }
 
   /**
-   * Continues the memento's unfinished crawl, or starts a new one from the
-   * starting URLs and every known URL that is due. A null memento knows no URL.
+   * Continues the saved crawl's unfinished crawl, or starts a new one from
+   * the starting URLs and every known URL that is due. A null saved crawl
+   * knows no URL.
    */
   crawl(
     starts: readonly string[],
-    memento: unknown,
+    saved: SavedCrawl | null,
     options: CrawlOptions,
   ): Crawl {
-    const { crawl, urls, pages } =
-      memento === null
-        ? { crawl: null, urls: {}, pages: {} }
-        : mementoSchema.parse(memento);
-    const known = new Map(
-      Object.entries(urls).map(([url, { entry, ...visit }]) => [
-        url,
-        {
-          ...visit,
-          entry: this.#restore(entry),
-          history: this.#revisit.histories.nullable().parse(visit.history),
-        },
-      ]),
+    const { crawl, pages } =
+      saved === null
+        ? { crawl: null, pages: {} }
+        : mementoSchema.parse(saved.memento);
+    const records = [...(saved?.urls ?? [])].map(
+      ([url, record]) => [url, crawlUrlSchema.parse(record)] as const,
     );
+    const known = new Map(
+      records.flatMap(([url, record]) =>
+        record.known === null
+          ? []
+          : [
+              [
+                url,
+                {
+                  ...record.known,
+                  entry: this.#restore(record.known.entry),
+                  history: this.#revisit.histories
+                    .nullable()
+                    .parse(record.known.history),
+                },
+              ] as const,
+            ],
+      ),
+    );
+    // A store gives its records back in an order of its own, such as its
+    // keys': the frontier takes them back in the order found.
+    const pending = records
+      .flatMap(([, record]) =>
+        record.pending === null ? [] : [record.pending],
+      )
+      .toSorted((a, b) => a.order - b.order)
+      .map(({ entry, order }) => ({ entry: this.#restore(entry), order }));
     const startUrls = starts.map((start) => webUrl(start, start));
     const run = (
       at: number,
       states: unknown[],
-      entries: Entry[],
+      resumed: readonly PendingUrl[],
       starting: readonly string[],
     ) =>
       new CrawlRun(
@@ -332,7 +413,8 @@ export class WebCrawler {
         {
           at,
           states,
-          entries,
+          pending: resumed,
+          entries: due,
           starting,
           starts: startUrls.map(start),
           resumed: crawl !== null,
@@ -380,7 +462,7 @@ export class WebCrawler {
     // Nutch's generate step selects every due URL, seeds included, in each
     // cycle, so a list is not held up by an expansion budget, an interruption
     // or a block, and the starts' new findings enter the frontier as usual.
-    const starting = startUrls.flatMap((url) => {
+    const due = startUrls.flatMap((url) => {
       const visit = known.get(url);
       return visit === undefined ||
         this.#revisit.due(
@@ -397,13 +479,13 @@ export class WebCrawler {
         this.#readers.map((reader, index) =>
           reader.states.parse(crawl.states[index]),
         ),
-        [...crawl.pending.map((entry) => this.#restore(entry)), ...starting],
+        pending,
         crawl.origins,
       );
     return run(
       now,
       this.#readers.map((reader) => reader.open()),
-      starting,
+      pending,
       [...new Set(startUrls.map((url) => new URL(url).origin))],
     );
   }
@@ -479,6 +561,11 @@ class CrawlRun implements Crawl {
   #phase: Crawling | Finished | Abandoned = new Crawling();
   // Known URLs, offered once this crawl's findings run out, so a finding's fresh provenance comes first.
   readonly #revisits: Entry[];
+  // Each pending URL's place in the order found; the next URL found takes #order.
+  readonly #orders = new Map<string, number>();
+  #order: number;
+  // URLs whose record changed since the last snapshot.
+  readonly #dirty = new Set<string>();
 
   constructor(
     http: Got,
@@ -490,6 +577,7 @@ class CrawlRun implements Crawl {
     {
       at,
       states,
+      pending,
       entries,
       starting,
       starts,
@@ -500,6 +588,7 @@ class CrawlRun implements Crawl {
     }: {
       readonly at: number;
       readonly states: unknown[];
+      readonly pending: readonly PendingUrl[];
       readonly entries: readonly Entry[];
       readonly starting: readonly string[];
       readonly starts: readonly Entry[];
@@ -523,29 +612,48 @@ class CrawlRun implements Crawl {
     this.#starts = starts;
     this.#resumed = resumed;
     this.#pages = pages;
-    // Pending entries were admitted when found, in this run or the last.
+    // Pending entries were admitted when found, in this run or the last, and
+    // keep their places; the counter goes on after the last.
+    this.#order = pending.reduce(
+      (next, { order }) => Math.max(next, order + 1),
+      0,
+    );
+    for (const { entry, order } of pending) this.#add(entry, order);
     for (const entry of entries) this.#add(entry);
   }
 
-  snapshot(): CrawlMemento {
-    return structuredClone({
-      crawl:
-        this.#phase instanceof Finished
+  get complete() {
+    return this.#phase instanceof Finished;
+  }
+
+  snapshot(): CrawlSnapshot {
+    const put = new Map<string, CrawlUrl>();
+    const remove = new Set<string>();
+    for (const url of this.#dirty) {
+      const known = this.#urls.get(url) ?? null;
+      // The entry handed out last is pending until the next is requested,
+      // unless a finding of it waits in the frontier again.
+      const entry =
+        this.#pending(url) ??
+        (this.#turn.current?.url === url ? this.#turn.current : undefined);
+      const order = this.#orders.get(url);
+      const pending =
+        entry === undefined || order === undefined ? null : { entry, order };
+      if (pending !== null) put.set(url, structuredClone({ known, pending }));
+      else if (known !== null)
+        put.set(url, structuredClone({ known, pending: null }));
+      else remove.add(url);
+    }
+    this.#dirty.clear();
+    return {
+      memento: structuredClone({
+        crawl: this.complete
           ? null
-          : {
-              pending: [
-                ...(this.#turn.current ? [this.#turn.current] : []),
-                ...priorities.flatMap((priority) => [
-                  ...this.#lanes[priority].values(),
-                ]),
-                ...this.#held.values(),
-              ],
-              states: this.#states,
-              origins: [...this.#starting],
-            },
-      urls: Object.fromEntries(this.#urls),
-      pages: Object.fromEntries(this.#pages),
-    });
+          : { states: this.#states, origins: [...this.#starting] },
+        pages: Object.fromEntries(this.#pages),
+      }),
+      urls: { put, remove },
+    };
   }
 
   fail(url: string): void {
@@ -557,7 +665,10 @@ class CrawlRun implements Crawl {
       throw new TypeError(`The crawl did not hand back ${url}`);
     const after = this.#failed(entry, 'failed', null, before);
     if (visit) this.#turn = { ...this.#turn, visit: { before, after } };
-    else this.#urls.set(url, after);
+    else {
+      this.#urls.set(url, after);
+      this.#dirty.add(url);
+    }
   }
 
   abandon(): void {
@@ -1079,8 +1190,18 @@ class CrawlRun implements Crawl {
   #commit() {
     const { hand, visit } = this.#turn;
     if (hand !== null) this.#handed.add(hand);
-    if (visit !== null) this.#urls.set(visit.after.entry.url, visit.after);
+    // The visited entry also leaves the frontier once the next is requested.
+    if (visit !== null) {
+      this.#urls.set(visit.after.entry.url, visit.after);
+      this.#dirty.add(visit.after.entry.url);
+    }
     this.#turn = { ...this.#turn, hand: null, visit: null };
+  }
+
+  // A pending entry the crawl leaves out of this run.
+  #drop(entry: Entry) {
+    this.#known.delete(entry.url);
+    this.#dirty.add(entry.url);
   }
 
   // The next entry worth a download. One nobody needs, or that robots.txt
@@ -1114,7 +1235,7 @@ class CrawlRun implements Crawl {
           // request and fails nothing, as Scrapy drops an off-site request
           // before its robots.txt check.
           if (!needed && !this.#wouldAdmit(entry)) {
-            this.#known.delete(entry.url);
+            this.#drop(entry);
             continue;
           }
           if (this.#origins.until(origin) !== null) {
@@ -1139,7 +1260,10 @@ class CrawlRun implements Crawl {
               return this.#unreachable(entry, origin, rules);
             // A disallowed URL is no failure: the crawl leaves it out, and the
             // revisit policy does not schedule it.
-            if (!rules.allows(entry.url)) continue;
+            if (!rules.allows(entry.url)) {
+              this.#dirty.add(entry.url);
+              continue;
+            }
           } else {
             // The origin's record downloads robots.txt, once in a read, for its
             // rules; the crawl's robots.txt document reads that answer.
@@ -1164,7 +1288,7 @@ class CrawlRun implements Crawl {
               ? { entry, included, wanted }
               : { entry, included, wanted, robots };
           }
-          this.#known.delete(entry.url);
+          this.#drop(entry);
         }
       if (this.#revisits.length === 0) break;
       // Nutch's generate step: a known URL that is due returns even when nothing lists it in this crawl.
@@ -1436,23 +1560,30 @@ class CrawlRun implements Crawl {
     this.#add(next);
   }
 
-  #add(next: Entry) {
+  // A resumed entry keeps its order; a new one takes the next.
+  #add(next: Entry, order?: number) {
     const held = this.#held.get(next.url);
     if (held) {
       merge(held, next);
+      this.#dirty.add(next.url);
       return;
     }
     const pending = this.#pending(next.url);
     if (!pending) {
       this.#known.add(next.url);
       this.#lanes[next.priority].set(next);
+      this.#orders.set(next.url, order ?? this.#order++);
+      if (order === undefined) this.#dirty.add(next.url);
       return;
     }
     const { priority } = pending;
     merge(pending, next);
+    this.#dirty.add(next.url);
     if (pending.priority !== priority) {
+      // It goes behind its origin's URLs in the other lane.
       this.#lanes[priority].delete(pending.url);
       this.#lanes[pending.priority].set(pending);
+      this.#orders.set(pending.url, this.#order++);
     }
   }
 

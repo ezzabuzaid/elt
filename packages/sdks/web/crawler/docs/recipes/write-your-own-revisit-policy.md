@@ -6,7 +6,7 @@
 
 ## The rules
 
-1. **Give a `histories` schema.** The history of a URL is plain data in the crawl memento. The crawler parses it with this zod schema before it gives it to your policy. A policy with no history uses `z.null()`.
+1. **Give a `histories` schema.** The history of a URL is plain data in its URL record. The crawler parses it with this zod schema before it gives it to your policy. A policy with no history uses `z.null()`.
 2. **Return `{ due, history }` for each visit.** `due` is a time in milliseconds, or `null` for "never". `history` is what your policy must know at the next visit.
 3. **Extend `IntervalRevisit` to keep its failure rule.** A failed URL is due two hours later. A gone URL (404 or 410, or the third failed visit in a row) is due one day later, and half again as long after each later gone visit, to at most 90 days. You implement only `visited`, which runs after a download that succeeded, a redirect included. Its `outcome` is `modified`, `unmodified` or `unknown`; for a redirect it is the change of the target.
 4. **Extend `RevisitPolicy` to decide failed, gone and redirected URLs too.** You then implement `schedule`, which gets every `outcome`: a `Change`, `'failed'`, `{ gone }` with the number of gone visits since the last visit that succeeded, or a redirect `{ redirect, permanent, change }`.
@@ -26,10 +26,14 @@ import { z } from 'zod';
 import {
   AlwaysRevisit,
   CompositeRevisit,
+  type CrawlMemento,
+  type CrawlUrl,
   IntervalRevisit,
   ListingReader,
   Origins,
+  type SavedCrawl,
   type Schedule,
+  applySnapshot,
 } from '@eltjs/sdk-web-crawler';
 
 /** A page that loaded once is never due again. A failed or gone page is tried again. */
@@ -81,18 +85,22 @@ const crawler = (read: Origins) =>
       new NeverRevisit(),
     ),
   );
-let memento: unknown = null;
+let saved: SavedCrawl<CrawlMemento, CrawlUrl> | null = null;
 for (const name of ['first crawl', 'second crawl']) {
   requested = [];
   origins = new Origins(http, origins.snapshot(), globalThis);
-  const crawl = crawler(origins).crawl([`${origin}/feed.json`], memento, {
+  const crawl = crawler(origins).crawl([`${origin}/feed.json`], saved, {
     signal: AbortSignal.timeout(60_000),
   });
   for await (const entry of crawl) if ('error' in entry) throw entry.error;
-  memento = crawl.snapshot();
-  const due = Object.entries(crawl.snapshot().urls)
+  // The snapshot gives the URL records that changed: apply them to the others.
+  saved = applySnapshot(saved, crawl.snapshot());
+  const due = [...saved.urls]
     .filter(([url]) => url.includes('/posts/'))
-    .map(([url, known]) => `${new URL(url).pathname}: ${known.due ?? 'never'}`);
+    .map(
+      ([url, { known }]) =>
+        `${new URL(url).pathname}: ${known?.due ?? 'never'}`,
+    );
   console.log(name, { requested, due });
   published = [1, 2, 3]; // The blog publishes post 3.
 }
@@ -114,7 +122,7 @@ second crawl {
 
 ## Why it works
 
-After the first crawl, each post has `due: null` in the crawl memento. On the second crawl, the feed names posts 1, 2 and 3. The crawler knows posts 1 and 2, and asks the policy whether they are due. They are not, so they stay out of the frontier. Post 3 is new, so the crawl downloads it. The feed has `AlwaysRevisit`, so it is requested in each crawl. The second crawl does not request `robots.txt`: its origins' records come from the first crawl's, and the rules last 24 hours (RFC 9309 §2.4).
+After the first crawl, each post has `due: null` in its URL record. On the second crawl, the feed names posts 1, 2 and 3. The crawler knows posts 1 and 2, and asks the policy whether they are due. They are not, so they stay out of the frontier. Post 3 is new, so the crawl downloads it. The feed has `AlwaysRevisit`, so it is requested in each crawl. The second crawl does not request `robots.txt`: its origins' records come from the first crawl's, and the rules last 24 hours (RFC 9309 §2.4).
 
 A post that the crawl did not request is a deferred page. `WebSource` of `@eltjs/source-web-pages` keeps its rows.
 
@@ -153,6 +161,6 @@ Do not use it for pages that change, such as the category pages of a marketplace
   ```
 
 - **A full refresh requests every page.** A full refresh of `WebSource` reads with no state, so its crawl knows no URL. Your policy still schedules each visit, so it says when a watch reads the stream again.
-- **The crawl memento keeps every URL.** To remember that it loaded a page, the crawler keeps the URL forever. The crawl memento grows with the website.
-- **Keep the history small.** It goes into the crawl memento, and the crawl memento goes into each save.
-- **You can change the `histories` schema at any time.** A crawl memento with the old history then does not parse. Delete it and crawl again.
+- **The crawl keeps a record of every URL.** To remember that it loaded a page, the crawler keeps the URL's record forever. A snapshot gives only the records that changed, so a save stays small while the records grow with the website.
+- **Keep the history small.** It goes into the URL's record, and each save of the URL writes the record.
+- **You can change the `histories` schema at any time.** A URL record with the old history then does not parse. Delete the memento and the records, and crawl again.

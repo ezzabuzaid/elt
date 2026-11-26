@@ -12,40 +12,14 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
+  type SavedCrawl,
+  applySnapshot,
   hour,
 } from './index.ts';
+import { InstantClock } from './instant-clock.ts';
 
 // Got retries no failure, so each visit is one answer.
 const noRetries = got.extend({ retry: { limit: 0 } });
-
-// A clock whose waits take no real time, for a test of many crawls: the
-// origins' delay moves it by each wait, and its wall time is the test's
-// mocked Date.
-function instantClock() {
-  let now = 0;
-  const timers = new Map<object, NodeJS.Immediate>();
-  return {
-    Date: { now: () => Date.now() },
-    performance: { now: () => now },
-    setTimeout: (callback: () => void, ms: number) => {
-      now += ms;
-      const timer = {};
-      timers.set(
-        timer,
-        setImmediate(() => {
-          timers.delete(timer);
-          callback();
-        }),
-      );
-      return timer;
-    },
-    clearTimeout: (timer: unknown) => {
-      if (!(timer instanceof Object)) return;
-      clearImmediate(timers.get(timer));
-      timers.delete(timer);
-    },
-  };
-}
 
 // A synthetic shop with no robots.txt, so the requests it gets are the crawl's.
 function shop(...handlers: HttpHandler[]) {
@@ -56,8 +30,8 @@ function shop(...handlers: HttpHandler[]) {
 }
 
 // One crawl to its end: the paths it handed out as gone and as failures, and
-// its memento as JSON gives it back.
-async function crawled(crawl: Crawl) {
+// what its host keeps after it, from what it kept before.
+async function crawled(crawl: Crawl, before: SavedCrawl | null = null) {
   const gone: string[] = [];
   const failed: string[] = [];
   for await (const entry of crawl)
@@ -67,7 +41,7 @@ async function crawled(crawl: Crawl) {
     gone: gone.toSorted(),
     failed,
     failures: crawl.failures().map((url) => new URL(url).pathname),
-    memento: JSON.parse(JSON.stringify(crawl.snapshot())),
+    kept: applySnapshot(before, crawl.snapshot()),
   };
 }
 
@@ -124,21 +98,22 @@ test("a page's third failed visit in a row is gone: the two visits before are fa
       () => new HttpResponse(null, { status: 503 }),
     ),
   );
-  const crawler = new Origins(noRetries, null, instantClock()).crawler(
+  const crawler = new Origins(noRetries, null, new InstantClock(Date)).crawler(
     noRetries,
     [new ListingReader()],
     new AlwaysRevisit(),
   );
   const visits = [];
-  let memento = null;
+  let kept: SavedCrawl | null = null;
   for (const time of [0, 3 * hour, 6 * hour]) {
     t.mock.timers.setTime(time);
     const visit = await crawled(
-      crawler.crawl(['https://shop.test/sitemap.xml'], memento, {
+      crawler.crawl(['https://shop.test/sitemap.xml'], kept, {
         signal: t.signal,
       }),
+      kept,
     );
-    memento = visit.memento;
+    kept = visit.kept;
     visits.push({
       gone: visit.gone,
       failed: visit.failed,
@@ -182,7 +157,7 @@ test('a gone page that answers again in a later crawl is handed back as a page',
   const handed: string[] = [];
   for await (const entry of crawler.crawl(
     ['https://shop.test/sitemap.xml'],
-    gone.memento,
+    gone.kept,
     { signal: t.signal },
   ))
     if ('response' in entry) handed.push(new URL(entry.url).pathname);

@@ -77,19 +77,19 @@ A value that changes when the records of a page can change. The extractor gives 
 _Avoid_: Hash, ETag (an ETag is an HTTP validator), version
 
 **Failure**:
-A page that the crawl could not download, or that the extractor could not read. The crawler keeps it in the crawl memento, and the revisit policy makes it due again. A block is not a failure of the pages of its origin: the revisit policy does not schedule them, and the crawl requests them when the block ends.
+A page that the crawl could not download, or that the extractor could not read. The crawler keeps it in its URL record, and the revisit policy makes it due again. A block is not a failure of the pages of its origin: the revisit policy does not schedule them, and the crawl requests them when the block ends.
 _Avoid_: Error page, dead link
 
 **State**:
-What the source saves for one input of a web stream: the diff, the crawl memento and the outbox, the groups of routes that the routes stream did not commit. The routes stream saves its diff and the number of the first group that it did not commit. The engine keeps it in the checkpoint store.
+What the source saves for one input of a web stream: in the state, the crawl memento and the outbox, the groups of routes that the routes stream did not commit; in the checkpoint's keyed entries of the input, the diff, in the spaces `diff`, `diff:unknown` and `diff:listed`, and the crawl's URL records, in the space `crawl` (elt ADR 0035, ADR 0036). Each save writes the entries that changed. The routes stream saves its diff and the number of the first group that it did not commit. The engine keeps it in the checkpoint store.
 _Avoid_: Cursor (the stream has no cursor field)
 
 **Crawl snapshot**:
-The plain data of an unfinished crawl: its frontier and the state of its readers. It is null when the crawl is complete.
+The plain data of an unfinished crawl in its memento: the state of its readers and its starting origins. It is null when the crawl is complete. The frontier is in the URL records.
 _Avoid_: Snapshot alone (elt uses snapshot for the records of a complete read)
 
 **Crawl memento**:
-What the crawler gives back as plain data: the crawl snapshot, and every URL that a crawl visited, with the digest of its last body and when it is due again. The source keeps it in its state.
+The small part of what the crawler gives back as plain data: the crawl snapshot and the starting pages. The source keeps it in its state. The record of each URL that the crawl knows or must still download, with the digest of its last body and when it is due again, is an entry of the `crawl` space, and each save writes only the records that changed.
 _Avoid_: Visited set, history alone (a revisit policy has its own history of each URL)
 
 **Revisit policy**:

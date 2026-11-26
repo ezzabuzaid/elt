@@ -13,6 +13,7 @@ import {
   ListingReader,
   Origins,
   PaginationReader,
+  applySnapshot,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -472,7 +473,7 @@ test('a crawl stopped at any entry and resumed from its snapshot expands the sam
         break;
       }
     }
-    const snapshot: unknown = JSON.parse(JSON.stringify(first.snapshot()));
+    const snapshot = applySnapshot(null, first.snapshot());
     for (const url of await handed(
       crawler().crawl([], snapshot, {
         ...options,

@@ -53,6 +53,7 @@ export {
 } from './revisit-policy.ts';
 export {
   CrawlError,
+  applySnapshot,
   type WebCrawler,
   type Crawl,
   type CrawlDeferral,
@@ -61,6 +62,9 @@ export {
   type CrawlMemento,
   type CrawlOptions,
   type CrawlProgress,
+  type CrawlSnapshot,
+  type CrawlUrl,
   type CrawledPage,
   type ListingRoutes,
+  type SavedCrawl,
 } from './web-crawler.ts';

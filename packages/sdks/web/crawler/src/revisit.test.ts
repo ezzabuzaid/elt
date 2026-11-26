@@ -21,9 +21,12 @@ import {
   Origins,
   type Outcome,
   type RevisitPolicy,
+  type SavedCrawl,
+  applySnapshot,
   day,
   hour,
 } from './index.ts';
+import { InstantClock } from './instant-clock.ts';
 
 // Synthetic upstream sites make page bodies and failures reproducible offline.
 // They have no robots.txt, so the requests they record are the crawl's pages.
@@ -38,8 +41,9 @@ function pathOf(url: string) {
   return new URL(url).pathname;
 }
 
-// One crawl to its end: what it handed out by kind, and its memento as JSON gives it back.
-async function crawled(crawl: Crawl) {
+// One crawl to its end: what it handed out by kind, whether it is complete,
+// and what its host keeps after it, from what it kept before.
+async function crawled(crawl: Crawl, before: SavedCrawl | null = null) {
   const pages: { path: string; change: string }[] = [];
   const deferred: string[] = [];
   const failed: string[] = [];
@@ -52,7 +56,8 @@ async function crawled(crawl: Crawl) {
     pages,
     deferred,
     failed,
-    memento: JSON.parse(JSON.stringify(crawl.snapshot())),
+    complete: crawl.complete,
+    kept: applySnapshot(before, crawl.snapshot()),
   };
 }
 
@@ -72,35 +77,6 @@ function siteCrawler(revisit: RevisitPolicy<unknown>) {
     [new LinkReader({ maxDepth: 1, maxPages: 100 })],
     everyCrawl('https://site.test/', revisit),
   );
-}
-
-// A clock whose waits take no real time, for a test of many crawls: the
-// origins' delay moves it by each wait, and its wall time is the test's
-// mocked Date.
-function instantClock() {
-  let now = 0;
-  const timers = new Map<object, NodeJS.Immediate>();
-  return {
-    Date: { now: () => Date.now() },
-    performance: { now: () => now },
-    setTimeout: (callback: () => void, ms: number) => {
-      now += ms;
-      const timer = {};
-      timers.set(
-        timer,
-        setImmediate(() => {
-          timers.delete(timer);
-          callback();
-        }),
-      );
-      return timer;
-    },
-    clearTimeout: (timer: unknown) => {
-      if (!(timer instanceof Object)) return;
-      clearImmediate(timers.get(timer));
-      timers.delete(timer);
-    },
-  };
 }
 
 const request: CrawlRequest = {
@@ -136,18 +112,20 @@ test('a page that is not due is not requested and comes out as deferred after th
   t.mock.timers.setTime(hour);
   requests.length = 0;
   const early = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], first.kept, { signal: t.signal }),
+    first.kept,
   );
   t.mock.timers.setTime(day);
   requests.length = 0;
   const due = await crawled(
-    crawler.crawl(['https://site.test/'], early.memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], early.kept, { signal: t.signal }),
+    early.kept,
   );
 
   assert.deepEqual(first.pages, [{ path: '/a', change: 'unknown' }]);
   assert.deepEqual(early.pages, []);
   assert.deepEqual(early.deferred, ['/a']);
-  assert.equal(early.memento.crawl, null);
+  assert.equal(early.complete, true);
   assert.deepEqual(due.pages, [{ path: '/a', change: 'unmodified' }]);
   assert.deepEqual(due.deferred, []);
   assert.deepEqual(requests, ['/', '/a']);
@@ -192,7 +170,8 @@ test('a page whose body changed is handed back as modified', async (t) => {
   body = '<p>Second</p>';
   t.mock.timers.setTime(hour);
   const changed = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], first.kept, { signal: t.signal }),
+    first.kept,
   );
 
   assert.deepEqual(changed.pages, [{ path: '/a', change: 'modified' }]);
@@ -216,7 +195,8 @@ test('a visit is timed at the start of its crawl, so a page due one interval lat
   );
   t.mock.timers.setTime(hour);
   const next = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], first.kept, { signal: t.signal }),
+    first.kept,
   );
 
   assert.deepEqual(next.pages, [{ path: '/a', change: 'unmodified' }]);
@@ -244,16 +224,18 @@ test('a failed page is due again two hours later even when nothing lists it, and
   );
   t.mock.timers.setTime(hour);
   const waiting = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], first.kept, { signal: t.signal }),
+    first.kept,
   );
   listed = false;
   broken = false;
   t.mock.timers.setTime(2 * hour);
   requests.length = 0;
   const retried = await crawled(
-    crawler.crawl(['https://site.test/'], waiting.memento, {
+    crawler.crawl(['https://site.test/'], waiting.kept, {
       signal: t.signal,
     }),
+    waiting.kept,
   );
 
   assert.deepEqual(first.failed, ['/a']);
@@ -285,15 +267,17 @@ test('a gone page waits a day, is not deferred meanwhile, and is handed back onc
   t.mock.timers.setTime(hour);
   requests.length = 0;
   const waiting = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], first.kept, { signal: t.signal }),
+    first.kept,
   );
   const waitingRequests = requests.splice(0);
   gone = false;
   t.mock.timers.setTime(day);
   const back = await crawled(
-    crawler.crawl(['https://site.test/'], waiting.memento, {
+    crawler.crawl(['https://site.test/'], waiting.kept, {
       signal: t.signal,
     }),
+    waiting.kept,
   );
 
   assert.deepEqual(waitingRequests, ['/']);
@@ -313,19 +297,19 @@ test('a page that fails three visits in a row is gone: it waits a day, then half
         : HttpResponse.html('<p>A</p>');
     }),
   );
-  const crawler = new Origins(got, null, instantClock()).crawler(
+  const crawler = new Origins(got, null, new InstantClock(Date)).crawler(
     got,
     [new LinkReader({ maxDepth: 1, maxPages: 100 })],
     everyCrawl('https://site.test/', new FixedRevisit({ every: 30 * day })),
   );
-  let memento: unknown = null;
+  let kept: SavedCrawl | null = null;
   const waits: number[] = [];
   const visit = async () => {
     const at = Date.now();
-    const crawl = crawler.crawl(['https://site.test/'], memento, {
+    const crawl = crawler.crawl(['https://site.test/'], kept, {
       signal: t.signal,
     });
-    memento = (await crawled(crawl)).memento;
+    ({ kept } = await crawled(crawl, kept));
     const next = crawl.nextDue();
     assert.ok(next !== null);
     waits.push((next - at) / hour);
@@ -350,20 +334,20 @@ test('a gone page waits half again as long at each gone visit, up to ninety days
         : new HttpResponse(null, { status: 410 }),
     ),
   );
-  const crawler = new Origins(got, null, instantClock()).crawler(
+  const crawler = new Origins(got, null, new InstantClock(Date)).crawler(
     got,
     [new LinkReader({ maxDepth: 1, maxPages: 100 })],
     everyCrawl('https://site.test/', new FixedRevisit({ every: day })),
   );
-  let memento: unknown = null;
+  let kept: SavedCrawl | null = null;
   const waits: number[] = [];
 
   for (let visit = 0; visit < 14; visit++) {
     const at = Date.now();
-    const crawl = crawler.crawl(['https://site.test/'], memento, {
+    const crawl = crawler.crawl(['https://site.test/'], kept, {
       signal: t.signal,
     });
-    memento = (await crawled(crawl)).memento;
+    ({ kept } = await crawled(crawl, kept));
     const next = crawl.nextDue();
     assert.ok(next !== null);
     waits.push((next - at) / day);
@@ -399,12 +383,14 @@ test('a page that failed keeps the body digest of its last download, so the down
   broken = true;
   t.mock.timers.setTime(hour);
   const failed = await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], first.kept, { signal: t.signal }),
+    first.kept,
   );
   broken = false;
   t.mock.timers.setTime(3 * hour);
   const back = await crawled(
-    crawler.crawl(['https://site.test/'], failed.memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], failed.kept, { signal: t.signal }),
+    failed.kept,
   );
 
   assert.deepEqual(failed.failed, ['/a']);
@@ -430,17 +416,18 @@ test('a page that answers 304 is unmodified: no failure, it is deferred, it is d
   );
   status = 304;
   t.mock.timers.setTime(hour);
-  const crawl = crawler.crawl(['https://site.test/'], first.memento, {
+  const crawl = crawler.crawl(['https://site.test/'], first.kept, {
     signal: t.signal,
   });
-  const unmodified = await crawled(crawl);
+  const unmodified = await crawled(crawl, first.kept);
   const due = crawl.nextDue();
   status = 200;
   t.mock.timers.setTime(2 * hour);
   const next = await crawled(
-    crawler.crawl(['https://site.test/'], unmodified.memento, {
+    crawler.crawl(['https://site.test/'], unmodified.kept, {
       signal: t.signal,
     }),
+    unmodified.kept,
   );
 
   assert.deepEqual(unmodified.failed, []);
@@ -469,21 +456,21 @@ test('a listing that gives a page another lastModified makes it due at once, and
     [new ListingReader()],
     everyCrawl('https://site.test/sitemap.xml', new AdaptiveRevisit()),
   );
-  const hinted = async (memento: unknown) => {
+  const hinted = async (before: SavedCrawl | null) => {
     const hints: (string | null)[] = [];
-    const crawl = crawler.crawl(['https://site.test/sitemap.xml'], memento, {
+    const crawl = crawler.crawl(['https://site.test/sitemap.xml'], before, {
       signal: t.signal,
     });
     for await (const entry of crawl)
       if ('response' in entry) hints.push(entry.lastModified);
-    return { hints, memento: JSON.parse(JSON.stringify(crawl.snapshot())) };
+    return { hints, kept: applySnapshot(before, crawl.snapshot()) };
   };
 
   const first = await hinted(null);
   t.mock.timers.setTime(now + hour);
-  const same = await hinted(first.memento);
+  const same = await hinted(first.kept);
   lastModified = '2026-10-02';
-  const changed = await hinted(same.memento);
+  const changed = await hinted(same.kept);
 
   assert.deepEqual(first.hints, ['2026-10-01']);
   assert.deepEqual(same.hints, []);
@@ -522,9 +509,10 @@ test('a known page that is due and that no listing names goes after the pages th
   t.mock.timers.setTime(1);
   requests.length = 0;
   await crawled(
-    crawler.crawl(['https://site.test/feed.json'], first.memento, {
+    crawler.crawl(['https://site.test/feed.json'], first.kept, {
       signal: t.signal,
     }),
+    first.kept,
   );
 
   assert.deepEqual(requests, ['/feed.json', '/b', '/a']);
@@ -545,17 +533,19 @@ test('fail makes a handed-back page due as a failed one: it is not deferred, and
   });
   for await (const entry of crawl)
     if ('response' in entry) crawl.fail(entry.url);
-  const memento = JSON.parse(JSON.stringify(crawl.snapshot()));
+  const kept = applySnapshot(null, crawl.snapshot());
 
   t.mock.timers.setTime(hour);
   const waiting = await crawled(
-    crawler.crawl(['https://site.test/'], memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], kept, { signal: t.signal }),
+    kept,
   );
   t.mock.timers.setTime(2 * hour);
   const retried = await crawled(
-    crawler.crawl(['https://site.test/'], waiting.memento, {
+    crawler.crawl(['https://site.test/'], waiting.kept, {
       signal: t.signal,
     }),
+    waiting.kept,
   );
 
   assert.deepEqual(waiting.pages, []);
@@ -595,7 +585,8 @@ test('a linked page that is not due spends no LinkReader budget, so the budget r
   const firstRequests = requests.splice(0);
   t.mock.timers.setTime(hour);
   await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, linksOnly()),
+    crawler.crawl(['https://site.test/'], first.kept, linksOnly()),
+    first.kept,
   );
 
   assert.deepEqual(firstRequests, ['/', '/a']);
@@ -626,7 +617,8 @@ test('AlwaysRevisit makes every visited URL due in the next crawl, failed and go
   t.mock.timers.setTime(1);
   requests.length = 0;
   await crawled(
-    crawler.crawl(['https://site.test/'], first.memento, { signal: t.signal }),
+    crawler.crawl(['https://site.test/'], first.kept, { signal: t.signal }),
+    first.kept,
   );
 
   assert.deepEqual(requests.sort(), ['/', '/a', '/broken', '/gone']);

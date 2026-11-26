@@ -14,6 +14,7 @@ import {
   Origins,
   PaginationReader,
   type WebCrawler,
+  applySnapshot,
 } from './index.ts';
 
 // Got retries no network error, so a test's failure is its first answer.
@@ -468,7 +469,7 @@ test('a crawl stopped inside the pagination and resumed from its snapshot reads 
     signal: t.signal,
   });
   for await (const entry of first) if (!('progress' in entry)) break;
-  const snapshot = JSON.parse(JSON.stringify(first.snapshot()));
+  const snapshot = applySnapshot(null, first.snapshot());
   requests.length = 0;
 
   const resumed: (CrawledPage | CrawlFailure)[] = [];

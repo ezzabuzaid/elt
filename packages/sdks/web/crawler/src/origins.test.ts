@@ -10,10 +10,14 @@ import { HttpResponse, http } from 'msw';
 import {
   AdaptiveRevisit,
   type Crawl,
+  type CrawlMemento,
+  type CrawlUrl,
   LinkReader,
   ListingReader,
   Origins,
   PaginationReader,
+  type SavedCrawl,
+  applySnapshot,
   day,
   hour,
 } from './index.ts';
@@ -258,19 +262,35 @@ test('a 503 with Retry-After holds its origin until then, as a 429 does', async 
     .crawl(['https://site.test/sitemap.xml'], null, { signal: t.signal });
 
   const { failures } = await crawled(crawl, time);
+  const firstRequests = requests.splice(0);
+  // A read after the block, when the pages answer, starts with no record of
+  // the origins: it requests what the block left in the frontier.
+  server.server.use(
+    http.get('https://site.test/*', ({ request }) => {
+      const { pathname } = new URL(request.url);
+      requests.push(pathname);
+      return pathname === '/robots.txt'
+        ? new HttpResponse(null, { status: 404 })
+        : HttpResponse.html('<p>page</p>');
+    }),
+  );
+  await crawled(
+    new Origins(noRetries, null, time)
+      .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
+      .crawl(
+        ['https://site.test/sitemap.xml'],
+        applySnapshot(null, crawl.snapshot()),
+        { signal: t.signal },
+      ),
+    time,
+  );
 
-  assert.deepEqual(requests, ['/robots.txt', '/sitemap.xml', '/a']);
+  assert.deepEqual(firstRequests, ['/robots.txt', '/sitemap.xml', '/a']);
   assert.equal(failures.length, 1);
   // /a answered 2 s in, after the delays of the sitemap and of /a.
   assert.match(failures[0] ?? '', /answered 503.*1970-01-01T00:10:02\.000Z/);
   assert.equal(crawl.nextDue(), 602_000);
-  assert.deepEqual(
-    crawl
-      .snapshot()
-      .crawl?.pending.map(({ url }) => url)
-      .toSorted(),
-    ['https://site.test/a', 'https://site.test/b'],
-  );
+  assert.deepEqual(requests, ['/robots.txt', '/a', '/b']);
 });
 
 test('two crawls of one read share the expansion budget of each origin', async (t) => {
@@ -335,14 +355,14 @@ test('two crawls of one read share the expansion budget of each origin', async (
 
   // The first crawl spent the budget of 8: robots.txt and 7 sitemaps.
   assert.equal(firstSitemaps, 7);
-  assert.notEqual(first.snapshot().crawl, null);
+  assert.equal(first.complete, false);
   // The second crawl downloads no document of company.test in this read: it holds them for the next.
   assert.deepEqual(sitemaps(), []);
   assert.ok(
     !requests.includes('https://company.test/robots.txt'),
     requests.join('\n'),
   );
-  assert.notEqual(second.snapshot().crawl, null);
+  assert.equal(second.complete, false);
 });
 
 test('a redirect whose target stays is scheduled as unchanged, and one whose target moves as changed', async (t) => {
@@ -365,15 +385,14 @@ test('a redirect whose target stays is scheduled as unchanged, and one whose tar
   // Each run is a read of its own; AdaptiveRevisit makes an unchanged URL
   // due 1.5 times later than its last interval, and a changed one halfway to
   // an hour.
-  let memento: unknown = null;
+  let kept: SavedCrawl<CrawlMemento, CrawlUrl> | null = null;
   const run = async () => {
     const crawl = new Origins(noRetries, null, time)
       .crawler(noRetries, [new ListingReader()], new AdaptiveRevisit())
-      .crawl(['https://site.test/sitemap.xml'], memento, { signal: t.signal });
+      .crawl(['https://site.test/sitemap.xml'], kept, { signal: t.signal });
     await crawled(crawl, time);
-    const snapshot = crawl.snapshot();
-    memento = snapshot;
-    return snapshot.urls['https://site.test/a']?.due;
+    kept = applySnapshot(kept, crawl.snapshot());
+    return kept.urls.get('https://site.test/a')?.known?.due;
   };
 
   // The first visit has nothing to compare: one day.

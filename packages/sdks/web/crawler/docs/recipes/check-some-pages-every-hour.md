@@ -82,10 +82,20 @@ const at = Date.now();
 const { urls } = crawl.snapshot();
 console.log(
   Object.fromEntries(
-    Object.entries(urls).map(([url, { due }]) => [
-      new URL(url).pathname,
-      due === null ? 'never' : `due in ${Math.round((due - at) / hour)} h`,
-    ]),
+    urls.put
+      .entries()
+      .flatMap(([url, { known }]) =>
+        known === null
+          ? []
+          : [
+              [
+                new URL(url).pathname,
+                known.due === null
+                  ? 'never'
+                  : `due in ${Math.round((known.due - at) / hour)} h`,
+              ],
+            ],
+      ),
   ),
 );
 const next = crawl.nextDue();
@@ -108,7 +118,7 @@ next crawl in 1 h
 
 ## Why it works
 
-After each visit, the crawler asks the revisit policy when the URL is due again, and it keeps the answer in the crawl memento. `CompositeRevisit` sends the question to the policy of the matching route. `FixedRevisit({ every: hour })` always answers "one hour after this visit". `AdaptiveRevisit` answers "one day" after a first visit, and changes the interval after each later visit: longer while the page does not change, shorter when it changes.
+After each visit, the crawler asks the revisit policy when the URL is due again, and it keeps the answer in the URL's record, which `crawl.snapshot()` gives among the records that changed. `CompositeRevisit` sends the question to the policy of the matching route. `FixedRevisit({ every: hour })` always answers "one hour after this visit". `AdaptiveRevisit` answers "one day" after a first visit, and changes the interval after each later visit: longer while the page does not change, shorter when it changes.
 
 A crawl requests only the known URLs that are due when the crawl starts. Thus a crawl one hour later requests the sitemap and the two news pages. It does not request the guide.
 

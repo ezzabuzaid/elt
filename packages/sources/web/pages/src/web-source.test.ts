@@ -2882,6 +2882,70 @@ test('a host that answers 429 stops the crawl there, keeps the loaded rows, and 
   assert.deepEqual(rows(), ['/a', '/b', '/c', '/d']);
 });
 
+test('a crawl that a block leaves unfinished does not end its scan: the pages it did not reach keep their records and their place in the snapshot, so the run after the block finds them unchanged, and its crawls row says it is not complete', async (t) => {
+  await using cache = await new TemporaryFiles().directory('web-cache-');
+  const later = shiftedClock(t);
+  let blocking = false;
+  await using upstream = await new HttpServer().start((request, response) => {
+    // The site has no robots.txt.
+    if (request.url === '/robots.txt') {
+      response.writeHead(404).end();
+      return;
+    }
+    const url = new URL(request.url ?? '/', `http://${request.headers.host}`);
+    if (url.pathname === '/feed.xml') {
+      response.setHeader('content-type', 'application/rss+xml');
+      response.end(
+        `<rss><channel>${['a', 'b', 'c', 'd'].map((name) => `<item><link>${url.origin}/${name}</link></item>`).join('')}</channel></rss>`,
+      );
+    } else if (url.pathname === '/c' && blocking)
+      response.writeHead(429, { 'retry-after': '120' }).end();
+    else {
+      response.setHeader('content-type', 'text/html');
+      response.end(
+        `<article><p>Research article ${url.pathname} contains the complete published observations.</p></article>`,
+      );
+    }
+  });
+  await using database = await new Sqlite().database();
+  await using checkpoints = await new Sqlite().database();
+  const options = {
+    cachePath: join(cache.path, 'web-http.sqlite'),
+    userAgent: 'elt-test/1.0',
+    streams: [{ stream: articles(), inputs: [`${upstream.origin}/feed.xml`] }],
+  };
+  const run = async () =>
+    (
+      await pipeline(new WebSource(options), database.path, checkpoints.path)
+    ).run();
+  const complete = () =>
+    database.connection
+      .prepare('SELECT complete FROM articles_crawls')
+      .all()
+      .map((row) => row.complete);
+  const first = await run();
+  later(60_000);
+  blocking = true;
+  const blocked = await run().then(
+    () => assert.fail('the blocked run must not succeed'),
+    (error: unknown) => error,
+  );
+  const blockedComplete = complete();
+  later(120_000);
+  blocking = false;
+
+  const after = await run();
+
+  assert.equal(first[0]?.count, 4);
+  assert(blocked instanceof PipelineError);
+  assert.equal(blocked.results[0]?.count, 0);
+  assert.deepEqual(blockedComplete, [0]);
+  // /c and /d download again unchanged, as /a and /b did in the blocked run.
+  assert.equal(after[0]?.count, 0);
+  assert.equal(after[0]?.deleted, 0);
+  assert.deepEqual(complete(), [1]);
+});
+
 function articles(include?: string) {
   return new WebStream({
     name: 'articles',

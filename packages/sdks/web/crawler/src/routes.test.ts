@@ -16,6 +16,7 @@ import {
   Origins,
   PaginationReader,
   type RevisitPolicy,
+  applySnapshot,
   day,
 } from './index.ts';
 
@@ -397,10 +398,10 @@ test('a list read again in a later crawl names a page that is known and not due,
   };
   const first = crawler.crawl([`${list.origin}/programs`], null, options);
   await routes(first);
-  const memento: unknown = JSON.parse(JSON.stringify(first.snapshot()));
+  const kept = applySnapshot(null, first.snapshot());
 
   const lines = await routes(
-    crawler.crawl([`${list.origin}/programs`], memento, options),
+    crawler.crawl([`${list.origin}/programs`], kept, options),
   );
 
   assert.ok(
@@ -432,10 +433,10 @@ test('a crawl that stops after it hands back the routes of a list gives them aga
   const first = crawler.crawl([`${list.origin}/programs`], null, options);
   for await (const entry of first)
     if ('routes' in entry && entry.routes.length > 0) break;
-  const memento: unknown = JSON.parse(JSON.stringify(first.snapshot()));
+  const kept = applySnapshot(null, first.snapshot());
 
   const lines = await routes(
-    crawler.crawl([`${list.origin}/programs`], memento, options),
+    crawler.crawl([`${list.origin}/programs`], kept, options),
   );
 
   assert.ok(
@@ -517,13 +518,11 @@ test('a page that LinkReader does not admit in a later crawl gives null for Link
   };
   const first = crawler.crawl([`${site.origin}/`], null, options);
   assert.ok((await groups(first)).includes('/listed /deep'));
-  const memento: unknown = JSON.parse(JSON.stringify(first.snapshot()));
+  const kept = applySnapshot(null, first.snapshot());
   // The home page now links another page first, which takes the budget.
   pages = '<a href="/first">First</a><a href="/listed">Listed</a>';
 
-  const lines = await groups(
-    crawler.crawl([`${site.origin}/`], memento, options),
-  );
+  const lines = await groups(crawler.crawl([`${site.origin}/`], kept, options));
 
   assert.ok(lines.includes('/listed -'), lines.join('\n'));
 });

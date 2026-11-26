@@ -2,7 +2,7 @@
 
 **Use case.** You load the posts of a blog today. Tomorrow you sync again. The second pipeline run must not extract every post again. It must load the posts that changed, and keep the rows of the others.
 
-**What you need.** A `WebSource` in a pipeline with a checkpoint store. The state of the source keeps the crawl memento, so the next pipeline run knows each URL that the last crawl visited. The default revisit policy is `AdaptiveRevisit`.
+**What you need.** A `WebSource` in a pipeline with a checkpoint store. The checkpoint keeps the crawl memento in the state of the source and a record of each URL in its `crawl` entries, so the next pipeline run knows each URL that the last crawl visited. The default revisit policy is `AdaptiveRevisit`.
 
 ## What the second pipeline run does
 
@@ -169,13 +169,13 @@ day 2 {
 
 ## Why it works
 
-On day 2, the crawl knew both posts from the crawl memento in the state. One day had gone by, so the sitemap and both posts were due, and `robots.txt` was 24 hours old. Post 1 had changed, so the extractor read its new version. Post 2 had the same fingerprint, so the extractor did not extract its records again, and its row stayed. This blog gives no ETag and no `Last-Modified` date, so the crawl downloaded post 2 again. A page that is not due yet, for example one hour after its visit, is a deferred page: the crawl does not request it.
+On day 2, the crawl knew both posts from their URL records in the checkpoint. One day had gone by, so the sitemap and both posts were due, and `robots.txt` was 24 hours old. Post 1 had changed, so the extractor read its new version. Post 2 had the same fingerprint, so the extractor did not extract its records again, and its row stayed. This blog gives no ETag and no `Last-Modified` date, so the crawl downloaded post 2 again. A page that is not due yet, for example one hour after its visit, is a deferred page: the crawl does not request it.
 
 ## Things to know
 
 - **A page that is gone, or read again, replaces its rows.** A page that answers 404 or 410 has its rows deleted, and a page that is read again loses the rows of the records it no longer gives. See [ADR 0019](../adr/0019-a-page-is-a-partition-whose-records-a-read-replaces.md).
 - **A page that a listing no longer names keeps its rows.** It can still exist, so the crawl still requests it when it is due, and it loses its rows only once it is gone. See [ADR 0005](../adr/0005-an-absent-page-is-not-a-deletion.md). Each row has `loaded_at`, the time when elt last wrote it. A page that did not change is not written again, so `loaded_at` does not show when a crawl last saw the page.
-- **An interrupted pipeline run continues.** The state keeps the crawl snapshot. The next pipeline run continues the same crawl, and it hands back the page that was in progress again. See [Resume an interrupted crawl](../../../../../sdks/web/crawler/docs/recipes/resume-an-interrupted-crawl.md).
+- **An interrupted pipeline run continues.** The checkpoint keeps the crawl memento and the URL records of the frontier. The next pipeline run continues the same crawl, and it hands back the page that was in progress again. See [Resume an interrupted crawl](../../../../../sdks/web/crawler/docs/recipes/resume-an-interrupted-crawl.md).
 - **A failed page keeps its rows.** The revisit policy makes it due again two hours later.
 - **The state is in the checkpoint store.** If you delete the checkpoint store, the next pipeline run requests every page again, and each revisit interval starts again from one day.
 - **A full refresh requests every page.** With `syncMode: 'full_refresh'`, a read has no state, so its crawl knows no URL. The `revisit` policy of the web stream still says when the stream is due again.
