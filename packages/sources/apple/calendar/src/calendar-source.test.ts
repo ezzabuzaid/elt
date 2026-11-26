@@ -73,6 +73,24 @@ const helper = fileURLToPath(
   import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
 );
 
+// Whether this process may read the entity, tried with the helper itself. The
+// helper only reads and never asks, while a store's read asks macOS while the
+// access is not decided and waits for the answer, which no one at CI's runner
+// gives.
+async function readable(entity: 'events' | 'reminders'): Promise<boolean> {
+  try {
+    await execFile(helper, [
+      'read',
+      JSON.stringify({ entity, collectionsOnly: true }),
+    ]);
+    return true;
+  } catch (error) {
+    if (/_UNAVAILABLE: /.test(String(Reflect.get(Object(error), 'stderr'))))
+      return false;
+    throw error;
+  }
+}
+
 const snake = (name: string) =>
   name.replaceAll(/[A-Z]/g, (letter) => `_${letter.toLowerCase()}`);
 
@@ -3228,17 +3246,10 @@ test(
   { timeout: 120_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
-    const store = new CalendarStore(helper, { env: process.env });
     // Asked before the watch: without access the watch only records its
     // failed change signal in the sync history, so it has no failure to show.
-    const access = await store
-      .collections({}, undefined)
-      .catch((error: unknown) => {
-        if (Error.isError(error) && error.name === 'CalendarUnavailableError')
-          return null;
-        throw error;
-      });
-    if (access === null) return t.skip('no Calendar access');
+    if (!(await readable('events'))) return t.skip('no Calendar access');
+    const store = new CalendarStore(helper, { env: process.env });
     const source = new AppleCalendarSource({ store, ...january });
     await using dir = await new TemporaryFiles().directory('calendar-watch-');
     const destination = new SQLiteDestination({
@@ -3309,15 +3320,8 @@ test(
   { timeout: 120_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    if (!(await readable('events'))) return t.skip('no Calendar access');
     const store = new CalendarStore(helper, { env: process.env });
-    const access = await store
-      .collections({}, undefined)
-      .catch((error: unknown) => {
-        if (Error.isError(error) && error.name === 'CalendarUnavailableError')
-          return null;
-        throw error;
-      });
-    if (access === null) return t.skip('no Calendar access');
     await using dir = await new TemporaryFiles().directory('calendar-slow-');
     // The real helper, started 2 s late: a test cannot make the Mac slow on
     // demand, and 8 helpers that started at one time under load took up to
@@ -3368,6 +3372,7 @@ test(
   { timeout: 300_000 },
   async (t) => {
     if (process.platform !== 'darwin') return t.skip('EventKit requires macOS');
+    if (!(await readable('events'))) return t.skip('no Calendar access');
     await using scratch = await new TemporaryFiles().directory(
       'elt-eventkit-live-',
     );
@@ -3396,18 +3401,7 @@ test(
           ),
         }),
       ],
-    })
-      .run()
-      .catch((error: unknown) => {
-        if (
-          error instanceof PipelineError &&
-          Error.isError(error.cause) &&
-          error.cause.name === 'CalendarUnavailableError'
-        )
-          return null;
-        throw error;
-      });
-    if (outcomes === null) return t.skip('no Calendar access');
+    }).run();
 
     assert.equal(outcomes.length, streams.length);
     using database = open(sqlite.path, { readOnly: true });

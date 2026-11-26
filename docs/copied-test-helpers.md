@@ -134,3 +134,16 @@ A third place in the package moves both into `src/testing/`. Until then, mirror 
 | elt        | `packages/sdks/apple/eventkit/src/eventkit-access.prompt.spec.ts` | Bundle `com.eltjs.eventkit.prompt`, named EventKit Prompt; it signs the bundle ad hoc, since macOS records a grant against the code signature, and returns nothing |
 
 A package exports no test support. A third place decides where the helper goes. Until then, mirror each fix in both files and name both in the commit.
+
+## EventKit access check
+
+`readable(entity)` runs the eventkit helper's own read of the collections. It answers whether the test process may read Calendar or Reminders. The helper only reads and never asks, while a store's read asks macOS when access is not decided and then waits for an answer, which no one at CI's runner gives. A live test calls it first and skips without access.
+
+### Copied, two places in two packages (strike 2)
+
+| Package                            | File                           | What differs |
+| ---------------------------------- | ------------------------------ | ------------ |
+| `packages/sources/apple/calendar`  | `src/calendar-source.test.ts`  | Nothing      |
+| `packages/sources/apple/reminders` | `src/reminders-source.test.ts` | Nothing      |
+
+A third place decides where it goes. Until then, mirror each fix in both files and name both in the commit.
