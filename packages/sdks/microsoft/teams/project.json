@@ -2,5 +2,5 @@
   "name": "sdk-microsoft-teams",
   "sourceRoot": "packages/sdks/microsoft/teams/src",
   "projectType": "library",
-  "tags": ["layer:island", "layer:sdk"]
+  "tags": ["layer:island", "layer:sdk", "platform:darwin"]
 }
