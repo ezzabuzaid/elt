@@ -11,8 +11,9 @@ export class EventKitChanges extends Gauge<number> implements AsyncDisposable {
   // The longest a read takes. A read that starts a helper waits for its
   // subscription: 8 helpers that started at one time under a load of 55
   // subscribed in at most 1.3 s (measured on 2026-11-07). When macOS has not
-  // yet asked for access, the helper first waits up to 30 s for the user's
-  // answer (Access.swift). Every other read is of memory.
+  // yet asked for access, the store first asks through @zukhruf/tcc, and 30 s
+  // of the 35 are for the user's answer (eventkit-store.ts). Every other read
+  // is of memory.
   readonly timeout = 35_000;
   readonly #watch: (signal: AbortSignal) => AsyncIterable<void>;
   // Each confirmed subscription counts as a change too: the store could have
