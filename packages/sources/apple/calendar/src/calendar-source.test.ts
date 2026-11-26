@@ -7,12 +7,12 @@ import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
 import { Readable } from 'node:stream';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 
@@ -3416,34 +3416,67 @@ test(
   },
 );
 
-test('Calendar declares its event window as the coverage of event streams, and none for its listings', async () => {
-  const startAt = '2020-01-01T00:00:00.000Z';
-  const endAt = '2021-01-01T00:00:00.000Z';
+// Each stream Calendar discovers, and whether its coverage is the event window.
+const coverages = [
+  { stream: 'accounts', windowed: false },
+  { stream: 'calendars', windowed: false },
+  { stream: 'events', windowed: true },
+  { stream: 'icsComponents', windowed: true },
+  { stream: 'icsProperties', windowed: true },
+  { stream: 'icsAttachments', windowed: true },
+  { stream: 'icsParameters', windowed: true },
+  { stream: 'attendees', windowed: true },
+  { stream: 'alarms', windowed: true },
+  { stream: 'recurrenceRules', windowed: true },
+  { stream: 'recurrenceRuleValues', windowed: true },
+] as const;
+
+test('Calendar describes its event window as the coverage of each stream it discovers', async () => {
   // No helper exists here: coverage must not need one.
   await using missing = await new TemporaryFiles().directory('no-helper-');
   const calendar = new AppleCalendarSource({
     store: new CalendarStore(join(missing.path, 'eventkit-helper'), {
       env: process.env,
     }),
-    startAt,
-    endAt,
+    startAt: '2020-01-01T00:00:00.000Z',
+    endAt: '2021-01-01T00:00:00.000Z',
   });
 
   const { streams } = await calendar.discover();
 
-  for (const stream of streams)
-    assert.deepEqual(
-      calendar.coverage(stream).selection,
-      stream === calendar.accounts || stream === calendar.calendars
-        ? {}
-        : { startAt, endAt },
-      stream.name,
-    );
+  assert.deepEqual(
+    new Set(streams),
+    new Set(coverages.map(({ stream }) => calendar[stream])),
+  );
   assert.match(
     calendar.coverage(calendar.events).description,
     /\[startAt, endAt\)/,
   );
 });
+
+void test.each(coverages, ({ stream, windowed }) =>
+  test(`Calendar declares ${windowed ? 'its event window' : 'no window'} as the coverage of ${stream}`, async () => {
+    const startAt = '2020-01-01T00:00:00.000Z';
+    const endAt = '2021-01-01T00:00:00.000Z';
+    // No helper exists here: coverage must not need one.
+    await using missing = await new TemporaryFiles().directory('no-helper-');
+    const calendar = new AppleCalendarSource({
+      store: new CalendarStore(join(missing.path, 'eventkit-helper'), {
+        env: process.env,
+      }),
+      startAt,
+      endAt,
+    });
+
+    await calendar.discover();
+
+    assert.deepEqual(
+      calendar.coverage(calendar[stream]).selection,
+      windowed ? { startAt, endAt } : {},
+      stream,
+    );
+  }),
+);
 
 test(
   'a Calendar watch keeps every stream current while EventKit reports no change',

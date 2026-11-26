@@ -3,9 +3,9 @@ import { randomUUID } from 'node:crypto';
 import { chmod, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { RollbackJournal, UnavailableError, open } from '@zukhruf/sqlite-open';
 import { Msw } from '@zukhruf/testing/msw';
 import { HttpResponse, http } from 'msw';
@@ -1031,7 +1031,44 @@ test('a date range ends the walk at the first post older than its start, so a na
   );
 });
 
-test('a scope narrowed to one profile reads that profile’s lists and nothing of another', async () => {
+void test.each(['profiles', 'posts', 'media'], (table) =>
+  test(`a scope narrowed to one profile loads only that profile’s ${table}`, async () => {
+    await using mac = await signedInMac();
+    await using dir = await new TemporaryFiles().directory('instagram-load-');
+    const other: Profile = {
+      pk: '555',
+      username: 'propertyplus.jo',
+      posts: posts(3, 1000),
+    };
+    await using wire = instagram({
+      profiles: [hive(posts(3)), other],
+      following: [
+        { pk: '44555906095', username: 'hivefitnationgym' },
+        { pk: '555', username: 'propertyplus.jo' },
+      ],
+    });
+    const run = await pipeline(
+      await InstagramWebSource.connect(
+        {
+          home: mac.path,
+          profileIds: ['44555906095'],
+        },
+        globalThis,
+      ),
+      dir.path,
+    );
+
+    await run.run();
+
+    assert.deepEqual(
+      rows(dir.path, `SELECT DISTINCT "profileId" AS id FROM ${table}`),
+      [{ id: '44555906095' }],
+      table,
+    );
+  }),
+);
+
+test('a scope narrowed to one profile reads nothing of another', async () => {
   await using mac = await signedInMac();
   await using dir = await new TemporaryFiles().directory('instagram-load-');
   const other: Profile = {
@@ -1059,12 +1096,6 @@ test('a scope narrowed to one profile reads that profile’s lists and nothing o
 
   await run.run();
 
-  for (const table of ['profiles', 'posts', 'media'])
-    assert.deepEqual(
-      rows(dir.path, `SELECT DISTINCT "profileId" AS id FROM ${table}`),
-      [{ id: '44555906095' }],
-      table,
-    );
   assert.deepEqual(
     wire.calls.filter(({ variables }) =>
       Object.values(variables).some(

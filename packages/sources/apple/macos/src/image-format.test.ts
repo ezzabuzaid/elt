@@ -4,7 +4,6 @@ import { constants } from 'node:fs';
 import { copyFile, open, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
-import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -12,6 +11,7 @@ import { promisify } from 'node:util';
 import { createClock } from '@sinonjs/fake-timers';
 import { type Clock, untilAborted } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import {
   DisposedError,
   Fixed,
@@ -406,39 +406,41 @@ test('disposing OCR during warm-up rejects readiness and stops every worker', as
   assert.deepEqual(await workerPids(), []);
 });
 
-test(
-  'the ready parser preserves automatically detected multilingual text in all reused workers',
-  textRecognition,
-  async () => {
-    await using directory = await new TemporaryFiles().directory(
-      'vision-languages-',
-    );
-    await using vision = await ocr();
-    await vision.ready();
-    const pids = await workerPids();
-    assert.equal(pids.length, workers);
-    const parser = new MacOSDocumentParser([new ImageFormat(vision.pool)]);
-    for (const text of [
-      'Good morning',
-      'صباح الخير',
-      'नमस्ते दुनिया',
-      '안녕하세요',
-      'Доброе утро',
-      'สวัสดีครับ',
-      '你好世界',
-      'こんにちは世界',
-    ]) {
-      const path = join(directory.path, 'multilingual.png');
-      await image(path, text);
-      assert.deepEqual(
-        await Promise.all(
-          (await copies(path, workers)).map((copy) => parser.parse(copy)),
-        ),
-        Array.from({ length: workers }, () => text),
-      );
-      assert.deepEqual(await workerPids(), pids);
-    }
-  },
+void test.each(
+  [
+    'Good morning',
+    'صباح الخير',
+    'नमस्ते दुनिया',
+    '안녕하세요',
+    'Доброе утро',
+    'สวัสดีครับ',
+    '你好世界',
+    'こんにちは世界',
+  ],
+  (text) =>
+    test(
+      `the ready parser preserves the automatically detected text ${text} in all reused workers`,
+      textRecognition,
+      async () => {
+        await using directory = await new TemporaryFiles().directory(
+          'vision-languages-',
+        );
+        await using vision = await ocr();
+        await vision.ready();
+        const pids = await workerPids();
+        assert.equal(pids.length, workers);
+        const parser = new MacOSDocumentParser([new ImageFormat(vision.pool)]);
+        const path = join(directory.path, 'multilingual.png');
+        await image(path, text);
+        assert.deepEqual(
+          await Promise.all(
+            (await copies(path, workers)).map((copy) => parser.parse(copy)),
+          ),
+          Array.from({ length: workers }, () => text),
+        );
+        assert.deepEqual(await workerPids(), pids);
+      },
+    ),
 );
 
 test(

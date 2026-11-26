@@ -3,8 +3,8 @@
 // host reads it. The embedding model is the one stand-in (LetterModel).
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { test } from 'node:test';
 
+import { test } from '@zukhruf/parameterized-test';
 import { FusionRetriever } from '@zukhruf/retrieval';
 import {
   SqlServerEmbeddingRetriever,
@@ -615,7 +615,40 @@ test(
   },
 );
 
-test('the vectorizer refuses a metadata column that has the name of a passage column of SQL Server, in any case, and takes rowid, which SQL Server passages do not have', () => {
+void test.each(['ID', 'Source', 'seq', 'start', 'END', 'text'], (named) =>
+  test(`the vectorizer refuses a metadata column that has the name of a passage column of SQL Server, in any case: ${named}`, () => {
+    const destination = new SqlServerDestination({
+      login: {
+        server: 'localhost',
+        database: 'none',
+        user: 'none',
+        password: 'none',
+      },
+    });
+    const declare = (metadata: readonly string[]) =>
+      new Vectorizer({
+        into: destination,
+        from: destination.table('tasks'),
+        name: 'docs',
+        description: 'The tasks.',
+        key: 'name',
+        loading: { columns: ['title'] },
+        chunking: 'none',
+        embedding: {
+          model: new LetterModel(),
+          dimensions: 26,
+          clock: globalThis,
+        },
+        metadata,
+      });
+    assert.throws(() => declare([named]), {
+      name: 'TypeError',
+      message: new RegExp(`metadata column ${named}\\b`),
+    });
+  }),
+);
+
+test('the vectorizer takes a metadata column named rowid, which SQL Server passages do not have', () => {
   const destination = new SqlServerDestination({
     login: {
       server: 'localhost',
@@ -640,15 +673,43 @@ test('the vectorizer refuses a metadata column that has the name of a passage co
       },
       metadata,
     });
-  for (const named of ['ID', 'Source', 'seq', 'start', 'END', 'text'])
-    assert.throws(() => declare([named]), {
-      name: 'TypeError',
-      message: new RegExp(`metadata column ${named}\\b`),
-    });
   assert.equal(declare(['rowid']).name, 'docs');
 });
 
-test('the vectorizer refuses a language of the keyword index that is not the LCID of a language, an integer of 0 or more', () => {
+void test.each([1033.5, -1, Number.NaN], (language) =>
+  test(`the vectorizer refuses a language of the keyword index that is not the LCID of a language, an integer of 0 or more: ${String(language)}`, () => {
+    const destination = new SqlServerDestination({
+      login: {
+        server: 'localhost',
+        database: 'none',
+        user: 'none',
+        password: 'none',
+      },
+    });
+    const declare = (language: number) =>
+      new Vectorizer({
+        into: destination,
+        from: destination.table('tasks'),
+        name: 'docs',
+        description: 'The tasks.',
+        key: 'name',
+        loading: { columns: ['title'] },
+        chunking: 'none',
+        embedding: {
+          model: new LetterModel(),
+          dimensions: 26,
+          clock: globalThis,
+        },
+        keywords: { language },
+      });
+    assert.throws(() => declare(language), {
+      name: 'RangeError',
+      message: new RegExp(`LCID of a language.*${String(language)}$`),
+    });
+  }),
+);
+
+test('the vectorizer takes the LCID of a language as the language of the keyword index', () => {
   const destination = new SqlServerDestination({
     login: {
       server: 'localhost',
@@ -672,11 +733,6 @@ test('the vectorizer refuses a language of the keyword index that is not the LCI
         clock: globalThis,
       },
       keywords: { language },
-    });
-  for (const language of [1033.5, -1, Number.NaN])
-    assert.throws(() => declare(language), {
-      name: 'RangeError',
-      message: new RegExp(`LCID of a language.*${String(language)}$`),
     });
   assert.equal(declare(1031).name, 'docs');
 });

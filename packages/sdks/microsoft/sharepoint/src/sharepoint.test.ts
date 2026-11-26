@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { ChangeWatcher, type Outcome } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { Msw } from '@zukhruf/testing/msw';
 import { type HttpHandler, http } from 'msw';
 
@@ -411,28 +411,30 @@ test('a 429 waits the Retry-After on the clock, then the request is sent again',
   assert.equal(microsoftSide.graphRequests().length, 2);
 });
 
-for (const [status, code] of [
-  [503, 'serviceNotAvailable'],
-  [504, 'gatewayTimeout'],
-] as const) {
-  test(`a ${status} waits on the clock, then the request is sent again`, async (t) => {
-    let served = 0;
-    await using microsoftSide = microsoft(() =>
-      served++ === 0
-        ? refusal(status, code, 'The service is busy')
-        : Response.json(sales),
-    );
+void test.each(
+  [
+    [503, 'serviceNotAvailable'],
+    [504, 'gatewayTimeout'],
+  ] as const,
+  ([status, code]) =>
+    test(`a ${status} waits on the clock, then the request is sent again`, async (t) => {
+      let served = 0;
+      await using microsoftSide = microsoft(() =>
+        served++ === 0
+          ? refusal(status, code, 'The service is busy')
+          : Response.json(sales),
+      );
 
-    const site = await microsoftSide.client.site(SITE_URL, t.signal);
+      const site = await microsoftSide.client.site(SITE_URL, t.signal);
 
-    assert.deepEqual(site, sales);
-    assert.equal(microsoftSide.graphRequests().length, 2);
-    // No Retry-After: the first wait is a full jitter of 1 s.
-    assert.equal(microsoftSide.waits.length, 1);
-    const [wait] = microsoftSide.waits;
-    assert.ok(wait !== undefined && wait >= 0 && wait <= 1000, `${wait}`);
-  });
-}
+      assert.deepEqual(site, sales);
+      assert.equal(microsoftSide.graphRequests().length, 2);
+      // No Retry-After: the first wait is a full jitter of 1 s.
+      assert.equal(microsoftSide.waits.length, 1);
+      const [wait] = microsoftSide.waits;
+      assert.ok(wait !== undefined && wait >= 0 && wait <= 1000, `${wait}`);
+    }),
+);
 
 test('a request that Graph answers 429 every time fails with a GraphError after five tries', async (t) => {
   await using microsoftSide = microsoft(() =>

@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
-import { type TestContext, test } from 'node:test';
+import type { TestContext } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { untilAborted } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 import { Msw } from '@zukhruf/testing/msw';
 import { http } from 'msw';
@@ -1724,45 +1725,47 @@ function proposalsSite(): FakeSite {
 
 const PROPOSALS = `${SALES}/Documents/Proposals`;
 
-test('a scope folder URL where the site has no folder fails only that site, as a config failure', async () => {
-  for (const missing of [
+void test.each(
+  [
     `${SALES}/Archive/Proposals`,
     `${SALES}/Documents/Pricing`,
     `${SALES}/Documents/Budget.xlsx`,
-  ]) {
-    await using dir = await new TemporaryFiles().directory('sharepoint-');
-    const marketing = { ...salesSite(), url: MARKETING, id: 'marketing-id' };
-    await using graph = microsoft({
-      sites: [proposalsSite(), marketing],
-      pageSize: 200,
-    });
-    const source = graph.source([
-      MARKETING,
-      { url: SALES, folders: [missing] },
-    ]);
-    const pipeline = await warehouse(source, dir.path);
+  ],
+  (missing) =>
+    test(`a scope folder URL ${missing} where the site has no folder fails only that site, as a config failure`, async () => {
+      await using dir = await new TemporaryFiles().directory('sharepoint-');
+      const marketing = { ...salesSite(), url: MARKETING, id: 'marketing-id' };
+      await using graph = microsoft({
+        sites: [proposalsSite(), marketing],
+        pageSize: 200,
+      });
+      const source = graph.source([
+        MARKETING,
+        { url: SALES, folders: [missing] },
+      ]);
+      const pipeline = await warehouse(source, dir.path);
 
-    const failed = await failedRun(pipeline.run());
+      const failed = await failedRun(pipeline.run());
 
-    const { streams } = await source.discover();
-    assert.deepEqual(
-      Object.keys(failed).sort(),
-      streams.map((stream) => stream.name).sort(),
-      missing,
-    );
-    for (const failures of Object.values(failed)) {
-      assert.deepEqual(failures?.[0]?.partition, { siteUrl: SALES });
-      assert.equal(failures?.[0]?.failureType, 'config');
-      const { error } = failures?.[0] ?? {};
-      assert.ok(error instanceof SharePointFolderNotFoundError, missing);
-      assert.equal(error.url, missing);
-    }
-    assert.deepEqual(
-      column(dir.path, 'SELECT DISTINCT siteUrl FROM driveItems'),
-      [MARKETING],
-    );
-  }
-});
+      const { streams } = await source.discover();
+      assert.deepEqual(
+        Object.keys(failed).sort(),
+        streams.map((stream) => stream.name).sort(),
+        missing,
+      );
+      for (const failures of Object.values(failed)) {
+        assert.deepEqual(failures?.[0]?.partition, { siteUrl: SALES });
+        assert.equal(failures?.[0]?.failureType, 'config');
+        const { error } = failures?.[0] ?? {};
+        assert.ok(error instanceof SharePointFolderNotFoundError, missing);
+        assert.equal(error.url, missing);
+      }
+      assert.deepEqual(
+        column(dir.path, 'SELECT DISTINCT siteUrl FROM driveItems'),
+        [MARKETING],
+      );
+    }),
+);
 
 test('a scope folder that someone renamed fails its site as a config failure, and keeps the rows of the pass before', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
@@ -2297,15 +2300,20 @@ test('other scope folders start the site over: the rows of the old folder go, an
   assert.deepEqual(itemIds(dir.path), ['file-cv', 'folder-bios']);
 });
 
-test('a scope folder URL as the browser shows it, with %20 and in another case, names the same folder', async () => {
-  for (const url of [
-    `${SALES}/Documents/Proposals/Proposals%202025`,
-    `${SALES}/documents/PROPOSALS/proposals 2025/`,
-  ]) {
-    await using run = await scopedRun(proposalsSite(), [url]);
-    assert.deepEqual(itemIds(run.dir.path), ['file-bid', 'folder-2025'], url);
-  }
-});
+void test.each(
+  [
+    { name: 'with %20', url: `${SALES}/Documents/Proposals/Proposals%202025` },
+    {
+      name: 'in another case',
+      url: `${SALES}/documents/PROPOSALS/proposals 2025/`,
+    },
+  ],
+  ({ name, url }) =>
+    test(`a scope folder URL as the browser shows it, ${name}, names the same folder`, async () => {
+      await using run = await scopedRun(proposalsSite(), [url]);
+      assert.deepEqual(itemIds(run.dir.path), ['file-bid', 'folder-2025'], url);
+    }),
+);
 
 test('a scope folder loads from the library that its URL names, when another library holds a folder at the same path', async () => {
   await using run = await scopedRun(proposalsSite(), [
@@ -2327,7 +2335,7 @@ test('a scope folder loads from the library that its URL names, when another lib
   ]);
 });
 
-test('a site named by its URL beside a scoped site still loads all of it', async () => {
+test('a site named by its URL beside a scoped site still loads all of its drive items', async () => {
   await using dir = await new TemporaryFiles().directory('sharepoint-');
   const marketing = { ...proposalsSite(), url: MARKETING, id: 'marketing-id' };
   await using graph = microsoft({
@@ -2352,13 +2360,35 @@ test('a site named by its URL beside a scoped site still loads all of it', async
       { siteUrl: SALES, items: 4 },
     ],
   );
-  for (const stream of ['lists', 'listItems', 'accessRequests', 'pages'])
+});
+
+void test.each(['lists', 'listItems', 'accessRequests', 'pages'], (stream) =>
+  test(`a site named by its URL beside a scoped site still loads its ${stream}, and the scoped site none`, async () => {
+    await using dir = await new TemporaryFiles().directory('sharepoint-');
+    const marketing = {
+      ...proposalsSite(),
+      url: MARKETING,
+      id: 'marketing-id',
+    };
+    await using graph = microsoft({
+      sites: [proposalsSite(), marketing],
+      pageSize: 200,
+    });
+
+    await (
+      await warehouse(
+        graph.source([MARKETING, { url: SALES, folders: [PROPOSALS] }]),
+        dir.path,
+      )
+    ).run();
+
     assert.deepEqual(
       column(dir.path, `SELECT DISTINCT siteUrl FROM "${stream}"`),
       [MARKETING],
       stream,
     );
-});
+  }),
+);
 
 test('the sync history names the scope folders of each site as the selection of the pass', async () => {
   await using run = await scopedRun(proposalsSite());

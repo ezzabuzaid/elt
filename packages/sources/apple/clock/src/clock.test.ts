@@ -10,11 +10,12 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
+import type { TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 
@@ -753,8 +754,14 @@ test('a Clock watch goes on when a preference file is removed, and loads it agai
   );
 });
 
-test('this Mac Clock stores load read-only through the real pipeline', async (t) => {
-  if (process.platform !== 'darwin') return t.skip('Clock requires macOS');
+// Loads this Mac's Clock stores into the warehouse in directory through the
+// real pipeline, and gives their location, or skips the test where this Mac
+// cannot load them.
+async function loadThisMac(t: TestContext, directory: string) {
+  if (process.platform !== 'darwin') {
+    t.skip('Clock requires macOS');
+    return undefined;
+  }
   // Clock reads the stores as macOS 27 lays them out. An older macOS, such as
   // the macOS 26 of GitHub's runners (CI run 44391479307), lacks columns the
   // source reads and fails with MissingColumnsError, so this check of the
@@ -764,25 +771,31 @@ test('this Mac Clock stores load read-only through the real pipeline', async (t)
       encoding: 'utf8',
     }).split('.')[0],
   );
-  if (macOS < 27)
-    return t.skip(
+  if (macOS < 27) {
+    t.skip(
       `Clock reads the stores of macOS 27, and this Mac runs macOS ${macOS}`,
     );
-  await using dir = await new TemporaryFiles().directory('clock-live-');
+    return undefined;
+  }
   const location = clockLocation(homedir());
-  const run = await pipeline(new AppleClockSource(location), dir.path);
+  const run = await pipeline(new AppleClockSource(location), directory);
   try {
     await run.run();
   } catch (error) {
     if (
       error instanceof PipelineError &&
       error.errors.every((cause) => cause instanceof StoreUnavailableError)
-    )
-      return t.skip('Clock stores are unavailable to this process');
+    ) {
+      t.skip('Clock stores are unavailable to this process');
+      return undefined;
+    }
     throw error;
   }
-  using db = open(location.database, { readOnly: true });
-  for (const [table, stream] of [
+  return location;
+}
+
+void test.each(
+  [
     ['ZMTCDALARM', 'alarms'],
     ['ZMTCDTIMER', 'timers'],
     ['ZMTCDTIMERDURATION', 'timerDurations'],
@@ -790,12 +803,25 @@ test('this Mac Clock stores load read-only through the real pipeline', async (t)
     ['ZMTCDCALENDARRELEASE', 'calendarReleases'],
     ['ZMTCDMAKEUPDAY', 'makeupDays'],
     ['ZMTCDREPORT', 'reports'],
-  ]) {
-    assert.equal(
-      rows(dir.path, `select count(*) n from ${stream}`)[0]?.n,
-      db.prepare(`select count(*) n from ${table}`).get()?.n,
-    );
-  }
+  ],
+  ([table, stream]) =>
+    test(`this Mac's Clock table ${table} loads read-only through the real pipeline into ${stream}, row for row`, async (t) => {
+      await using dir = await new TemporaryFiles().directory('clock-live-');
+      const location = await loadThisMac(t, dir.path);
+      if (location === undefined) return;
+      using db = open(location.database, { readOnly: true });
+
+      assert.equal(
+        rows(dir.path, `select count(*) n from ${stream}`)[0]?.n,
+        db.prepare(`select count(*) n from ${table}`).get()?.n,
+      );
+    }),
+);
+
+test('this Mac Clock world clocks and stopwatches load read-only through the real pipeline, and each timer has its uuid', async (t) => {
+  await using dir = await new TemporaryFiles().directory('clock-live-');
+  const location = await loadThisMac(t, dir.path);
+  if (location === undefined) return;
   const cities = await readPlist(location.cities);
   assert.ok(isDictionary(cities));
   assert.ok(Array.isArray(cities.cities));

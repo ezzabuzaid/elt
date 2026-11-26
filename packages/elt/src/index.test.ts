@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { execFile } from 'node:child_process';
 import { join } from 'node:path';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
 import { type Check, Gauge, Latch, untilAborted } from '@zukhruf/async';
+import { test } from '@zukhruf/parameterized-test';
 import { waitFor } from '@zukhruf/testing/async';
 
 import {
@@ -121,9 +121,13 @@ test('file storage declarations validate identities and keep parsing separate wi
   assert.throws(() => read.validate(stream), /identity changed/);
   storage.identity = '';
   assert.throws(() => stream.file.store(storage), /stable text identity/);
-  for (const directory of ['', 'bad\0path', '\ud800'])
-    assert.throws(() => new LocalFiles({ directory }), /requires a directory/);
 });
+
+void test.each(['', 'bad\0path', '\ud800'], (directory) =>
+  test(`local files refuse the directory ${JSON.stringify(directory)}`, () => {
+    assert.throws(() => new LocalFiles({ directory }), /requires a directory/);
+  }),
+);
 
 test('a file field accepts a file name only when its parser does, and a field of stored files accepts every name unless its reference accepts only what a parser accepts', () => {
   const stream = new Stream({
@@ -188,19 +192,31 @@ test('a file field accepts a file name only when its parser does, and a field of
   assert.equal(JSON.parse(JSON.stringify(narrowed)).accepting, 'documents');
 });
 
-test('date formats accept only canonical UTC timestamps and real calendar dates', () => {
+test('date formats accept a canonical UTC timestamp and a real calendar date', () => {
   assert.equal(isTimestamp('2025-01-02T03:04:05.006Z'), true);
-  for (const value of [
+  assert.equal(isCalendarDate('2024-02-29'), true);
+});
+
+void test.each(
+  [
     '2025-01-02T03:04:05Z',
     '2025-01-02T03:04:05.006+00:00',
     '2025-02-30T00:00:00.000Z',
     1735787045006,
-  ])
-    assert.equal(isTimestamp(value), false);
-  assert.equal(isCalendarDate('2024-02-29'), true);
-  for (const value of ['2025-02-29', '2025-1-02', '2025-01-02T00:00:00.000Z'])
-    assert.equal(isCalendarDate(value), false);
-});
+  ],
+  (value) =>
+    test(`the timestamp format refuses ${JSON.stringify(value)}`, () => {
+      assert.equal(isTimestamp(value), false);
+    }),
+);
+
+void test.each(
+  ['2025-02-29', '2025-1-02', '2025-01-02T00:00:00.000Z'],
+  (value) =>
+    test(`the calendar date format refuses ${JSON.stringify(value)}`, () => {
+      assert.equal(isCalendarDate(value), false);
+    }),
+);
 
 test('record validation enforces every property of the stream schema', () => {
   const stream = new Stream({
@@ -278,25 +294,30 @@ test('record validation enforces every property of the stream schema', () => {
       [{ ...valid, [field]: value }],
       `Test returned invalid items.${field}`,
     );
-  for (const tags of [
+});
+
+void test.each(
+  [
     { type: 'array' },
     { type: 'array', items: { type: 'null' } },
     { type: ['array', 'string'], items: { type: 'string' } },
     { type: 'string', items: { type: 'string' } },
     { type: 'array', minLength: 1, items: { type: 'string' } },
-  ]) {
-    const unsupported = new Stream({
-      name: 'nested',
-      // @ts-expect-error -- some of these schemas are invalid FieldSchemas; the check must reject them at run time too
-      jsonSchema: { type: 'object', properties: { tags } },
-      supportedSyncModes: ['full_refresh'],
-    });
-    assert.throws(
-      () => validateRecords(unsupported, [], 'Test'),
-      /nested\.tags declares an unsupported type/,
-    );
-  }
-});
+  ],
+  (tags) =>
+    test(`record validation refuses the field schema ${JSON.stringify(tags)}`, () => {
+      const unsupported = new Stream({
+        name: 'nested',
+        // @ts-expect-error -- some of these schemas are invalid FieldSchemas; the check must reject them at run time too
+        jsonSchema: { type: 'object', properties: { tags } },
+        supportedSyncModes: ['full_refresh'],
+      });
+      assert.throws(
+        () => validateRecords(unsupported, [], 'Test'),
+        /nested\.tags declares an unsupported type/,
+      );
+    }),
+);
 
 test('record validation checks an array of objects: each item has exactly its declared scalar fields, each one valid', () => {
   // A page's language copies, as a web page declares them.
@@ -348,7 +369,10 @@ test('record validation checks an array of objects: each item has exactly its de
     assert.throws(() => validateRecords(stream, [{ copies }], 'Test'), {
       message: 'Test returned invalid pages.copies',
     });
-  for (const copies of [
+});
+
+void test.each(
+  [
     { type: 'array', items: { type: 'object', properties: {}, required: [] } },
     {
       type: 'array',
@@ -368,19 +392,21 @@ test('record validation checks an array of objects: each item has exactly its de
         required: ['languages'],
       },
     },
-  ]) {
-    const unsupported = new Stream({
-      name: 'nested',
-      // @ts-expect-error -- some of these schemas are invalid FieldSchemas; the check must reject them at run time too
-      jsonSchema: { type: 'object', properties: { copies } },
-      supportedSyncModes: ['full_refresh'],
-    });
-    assert.throws(
-      () => validateRecords(unsupported, [], 'Test'),
-      /nested\.copies declares an unsupported type/,
-    );
-  }
-});
+  ],
+  (copies) =>
+    test(`record validation refuses the array of objects ${JSON.stringify(copies)}`, () => {
+      const unsupported = new Stream({
+        name: 'nested',
+        // @ts-expect-error -- some of these schemas are invalid FieldSchemas; the check must reject them at run time too
+        jsonSchema: { type: 'object', properties: { copies } },
+        supportedSyncModes: ['full_refresh'],
+      });
+      assert.throws(
+        () => validateRecords(unsupported, [], 'Test'),
+        /nested\.copies declares an unsupported type/,
+      );
+    }),
+);
 
 test('string formats accept exactly one canonical spelling of each value', () => {
   const stream = new Stream({
@@ -444,7 +470,10 @@ test('string formats accept exactly one canonical spelling of each value', () =>
       () => validateRecords(stream, [{ ...valid, [field]: value }], 'Test'),
       { message: `Test returned invalid values.${field}` },
     );
-  for (const value of [
+});
+
+void test.each(
+  [
     { type: 'integer', format: 'int64' },
     { type: 'string', precision: 3 },
     { type: 'string', format: 'date', precision: 3 },
@@ -461,34 +490,29 @@ test('string formats accept exactly one canonical spelling of each value', () =>
       precision: 3,
       items: { type: 'string', format: 'date-time' },
     },
-  ]) {
-    const declared = new Stream({
-      name: 'declared',
-      // @ts-expect-error -- some of these schemas are invalid FieldSchemas; the check must reject them at run time too
-      jsonSchema: { type: 'object', properties: { value } },
-      supportedSyncModes: ['full_refresh'],
-    });
-    assert.throws(
-      () => validateRecords(declared, [], 'Test'),
-      /declared\.value declares an unsupported type/,
-    );
-  }
-});
+  ],
+  (value) =>
+    test(`string formats refuse the declaration ${JSON.stringify(value)}`, () => {
+      const declared = new Stream({
+        name: 'declared',
+        // @ts-expect-error -- some of these schemas are invalid FieldSchemas; the check must reject them at run time too
+        jsonSchema: { type: 'object', properties: { value } },
+        supportedSyncModes: ['full_refresh'],
+      });
+      assert.throws(
+        () => validateRecords(declared, [], 'Test'),
+        /declared\.value declares an unsupported type/,
+      );
+    }),
+);
 
-test('expiry keeps millisecond timestamps, and decimal or base64 fields cannot be cursors', () => {
+test('expiry keeps millisecond timestamps', () => {
   const properties = {
     id: { type: 'string', format: 'int64' },
     amount: { type: 'string', format: 'decimal' },
     hash: { type: 'string', contentEncoding: 'base64' },
     at: { type: 'string', format: 'date-time', precision: 7 },
   } as const;
-  const stream = new Stream({
-    name: 'ledger',
-    jsonSchema: { type: 'object', properties },
-    primaryKey: ['id'],
-    supportedSyncModes: ['incremental'],
-    emitsDeletes: true,
-  });
 
   assert.throws(
     () =>
@@ -502,33 +526,55 @@ test('expiry keeps millisecond timestamps, and decimal or base64 fields cannot b
       }),
     { message: 'expiresBy at must keep milliseconds; it declares precision 7' },
   );
-  for (const [cursorField, format] of [
-    ['amount', 'decimal'],
-    ['hash', 'base64'],
-  ] as const)
-    assert.throws(
-      () =>
-        new CopyConfiguration(stream, {
-          syncMode: 'incremental',
-          destinationSyncMode: 'append_dedup',
-          cursorField,
-        }).validateSelection(),
-      {
-        message: `Deduplication cursor ${cursorField} cannot order ${format} values`,
-      },
-    );
 });
 
-test('an incremental copy refuses a cursor field its stream does not describe, appending or deduplicating', () => {
-  // A stream whose cursor field was dropped upstream since the copy chose it.
-  const stream = new Stream({
-    name: 'items',
-    jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
-    primaryKey: ['id'],
-    supportedSyncModes: ['incremental'],
-  });
+void test.each(
+  [
+    ['amount', 'decimal'],
+    ['hash', 'base64'],
+  ] as const,
+  ([cursorField, format]) =>
+    test(`a ${format} field cannot be a deduplication cursor`, () => {
+      const stream = new Stream({
+        name: 'ledger',
+        jsonSchema: {
+          type: 'object',
+          properties: {
+            id: { type: 'string', format: 'int64' },
+            amount: { type: 'string', format: 'decimal' },
+            hash: { type: 'string', contentEncoding: 'base64' },
+            at: { type: 'string', format: 'date-time', precision: 7 },
+          },
+        },
+        primaryKey: ['id'],
+        supportedSyncModes: ['incremental'],
+        emitsDeletes: true,
+      });
 
-  for (const destinationSyncMode of ['append', 'append_dedup'] as const)
+      assert.throws(
+        () =>
+          new CopyConfiguration(stream, {
+            syncMode: 'incremental',
+            destinationSyncMode: 'append_dedup',
+            cursorField,
+          }).validateSelection(),
+        {
+          message: `Deduplication cursor ${cursorField} cannot order ${format} values`,
+        },
+      );
+    }),
+);
+
+void test.each(['append', 'append_dedup'] as const, (destinationSyncMode) =>
+  test(`an incremental copy refuses a cursor field its stream does not describe, in ${destinationSyncMode} mode`, () => {
+    // A stream whose cursor field was dropped upstream since the copy chose it.
+    const stream = new Stream({
+      name: 'items',
+      jsonSchema: { type: 'object', properties: { id: { type: 'string' } } },
+      primaryKey: ['id'],
+      supportedSyncModes: ['incremental'],
+    });
+
     assert.throws(
       () =>
         new CopyConfiguration(stream, {
@@ -538,7 +584,8 @@ test('an incremental copy refuses a cursor field its stream does not describe, a
         }).validateSelection(),
       { message: 'Stream items does not describe cursor field updatedAt' },
     );
-});
+  }),
+);
 
 type ReadContext = AsyncDisposable & { readonly id: number };
 

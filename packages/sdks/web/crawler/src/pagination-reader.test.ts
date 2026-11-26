@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 
+import { test } from '@zukhruf/parameterized-test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
@@ -325,45 +325,56 @@ test('a /sitemap.xml guess answered by a soft 404 page is not read as a list', a
   assert.ok(!requests.includes('/offers'), requests.join(' '));
 });
 
-test('an archive that ArchiveReader finds and that fits on one page hands back the posts it lists, whatever the order of the readers', async (t) => {
-  // In the second order, PaginationReader finds /2024/ as a page before ArchiveReader finds it as a list.
-  for (const readers of [
-    [new ArchiveReader(), new PaginationReader()],
-    [new PaginationReader(), new ArchiveReader()],
-  ]) {
-    await using upstream = await new HttpServer().start((request, response) => {
-      response.setHeader('content-type', 'text/html');
-      if (request.url === '/') response.end('<a href="/2024/">2024</a>');
-      // A year archive without pagination.
-      else if (request.url === '/2024/')
-        response.end(
-          '<main><a href="/posts/a">A</a><a href="/posts/b">B</a></main>',
-        );
-      else response.end('<p>A post.</p>');
-    });
+// In the second order, PaginationReader finds /2024/ as a page before ArchiveReader finds it as a list.
+void test.each(
+  [
+    {
+      name: 'ArchiveReader before PaginationReader',
+      order: () => [new ArchiveReader(), new PaginationReader()],
+    },
+    {
+      name: 'PaginationReader before ArchiveReader',
+      order: () => [new PaginationReader(), new ArchiveReader()],
+    },
+  ],
+  ({ name, order }) =>
+    test(`an archive that ArchiveReader finds and that fits on one page hands back the posts it lists, with ${name}`, async (t) => {
+      const readers = order();
+      await using upstream = await new HttpServer().start(
+        (request, response) => {
+          response.setHeader('content-type', 'text/html');
+          if (request.url === '/') response.end('<a href="/2024/">2024</a>');
+          // A year archive without pagination.
+          else if (request.url === '/2024/')
+            response.end(
+              '<main><a href="/posts/a">A</a><a href="/posts/b">B</a></main>',
+            );
+          else response.end('<p>A post.</p>');
+        },
+      );
 
-    const pages = await crawl(
-      new Origins(noRetries, null, globalThis).crawler(
-        noRetries,
-        readers,
-        new AdaptiveRevisit(),
-      ),
-      `${upstream.origin}/`,
-      t.signal,
-      [new URLPattern({ pathname: '/posts/*' })],
-    );
+      const pages = await crawl(
+        new Origins(noRetries, null, globalThis).crawler(
+          noRetries,
+          readers,
+          new AdaptiveRevisit(),
+        ),
+        `${upstream.origin}/`,
+        t.signal,
+        [new URLPattern({ pathname: '/posts/*' })],
+      );
 
-    assert.deepEqual(
-      pages.map(location),
-      ['/posts/a', '/posts/b'].map((path) => ({
-        url: `${upstream.origin}${path}`,
-        lastModified: null,
-        listingUrl: `${upstream.origin}/2024/`,
-      })),
-      readers.map((reader) => reader.constructor.name).join(', '),
-    );
-  }
-});
+      assert.deepEqual(
+        pages.map(location),
+        ['/posts/a', '/posts/b'].map((path) => ({
+          url: `${upstream.origin}${path}`,
+          lastModified: null,
+          listingUrl: `${upstream.origin}/2024/`,
+        })),
+        readers.map((reader) => reader.constructor.name).join(', '),
+      );
+    }),
+);
 
 test('an archive that a later page of a list declares is no hop, so link limits count from the list', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
@@ -538,58 +549,71 @@ test('the pagination of a starting page is read to its end, both ways, from link
   );
 });
 
-test('undeclared pagination by page number is read to its last page, and a linked page that is gone is no failure', async (t) => {
-  // The CMS forms: WordPress, Ghost and Hugo /page/N/, Django and Drupal ?page=N, WordPress ?paged=N.
-  for (const at of [
-    (page: number) => (page === 1 ? '/tag/x/' : `/tag/x/page/${page}/`),
-    (page: number) => (page === 1 ? '/tag/x' : `/tag/x?page=${page}`),
-    (page: number) => (page === 1 ? '/tag/x' : `/tag/x?paged=${page}`),
-  ]) {
-    await using upstream = await new HttpServer().start((request, response) => {
-      response.setHeader('content-type', 'text/html');
-      switch (request.url) {
-        // As on Fortune: numbered links in navigation, and a page 0 that answers 404.
-        case at(1):
-          response.end(
-            `<main><a href="/item/1">One</a></main><nav><a href="${at(0)}">0</a><a href="${at(2)}">2</a></nav>`,
-          );
-          break;
-        // As on Ars Technica: a "Load more" link in the content.
-        case at(2):
-          response.end(
-            `<main><a href="/item/2">Two</a><a href="${at(3)}">Load more</a></main>`,
-          );
-          break;
-        case at(3):
-          response.end(
-            `<main><a href="/item/3">Three</a><a href="${at(2)}">Previous</a></main>`,
-          );
-          break;
-        case at(0):
-          response.writeHead(404).end();
-          break;
-        default:
-          response.end('<p>An item.</p>');
-      }
-    });
+// The CMS forms: WordPress, Ghost and Hugo /page/N/, Django and Drupal ?page=N, WordPress ?paged=N.
+void test.each(
+  [
+    {
+      name: '/page/N/',
+      at: (page: number) => (page === 1 ? '/tag/x/' : `/tag/x/page/${page}/`),
+    },
+    {
+      name: '?page=N',
+      at: (page: number) => (page === 1 ? '/tag/x' : `/tag/x?page=${page}`),
+    },
+    {
+      name: '?paged=N',
+      at: (page: number) => (page === 1 ? '/tag/x' : `/tag/x?paged=${page}`),
+    },
+  ],
+  ({ name, at }) =>
+    test(`undeclared pagination by page number in the form ${name} is read to its last page, and a linked page that is gone is no failure`, async (t) => {
+      await using upstream = await new HttpServer().start(
+        (request, response) => {
+          response.setHeader('content-type', 'text/html');
+          switch (request.url) {
+            // As on Fortune: numbered links in navigation, and a page 0 that answers 404.
+            case at(1):
+              response.end(
+                `<main><a href="/item/1">One</a></main><nav><a href="${at(0)}">0</a><a href="${at(2)}">2</a></nav>`,
+              );
+              break;
+            // As on Ars Technica: a "Load more" link in the content.
+            case at(2):
+              response.end(
+                `<main><a href="/item/2">Two</a><a href="${at(3)}">Load more</a></main>`,
+              );
+              break;
+            case at(3):
+              response.end(
+                `<main><a href="/item/3">Three</a><a href="${at(2)}">Previous</a></main>`,
+              );
+              break;
+            case at(0):
+              response.writeHead(404).end();
+              break;
+            default:
+              response.end('<p>An item.</p>');
+          }
+        },
+      );
 
-    const pages = await crawl(
-      pagination(),
-      `${upstream.origin}${at(1)}`,
-      t.signal,
-    );
+      const pages = await crawl(
+        pagination(),
+        `${upstream.origin}${at(1)}`,
+        t.signal,
+      );
 
-    assert.deepEqual(
-      pages.map(location).toSorted((a, b) => a.url.localeCompare(b.url)),
-      [1, 2, 3].map((page) => ({
-        url: `${upstream.origin}/item/${page}`,
-        lastModified: null,
-        listingUrl: `${upstream.origin}${at(page)}`,
-      })),
-      at(2),
-    );
-  }
-});
+      assert.deepEqual(
+        pages.map(location).toSorted((a, b) => a.url.localeCompare(b.url)),
+        [1, 2, 3].map((page) => ({
+          url: `${upstream.origin}/item/${page}`,
+          lastModified: null,
+          listingUrl: `${upstream.origin}${at(page)}`,
+        })),
+        at(2),
+      );
+    }),
+);
 
 test('a year, a filter, the pages of another list and the list without its slash are pages, not pagination', async (t) => {
   const requests: string[] = [];

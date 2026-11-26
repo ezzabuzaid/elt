@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 
 import { ClientRequestInterceptor } from '@mswjs/interceptors/ClientRequest';
 import { type TimerId, createClock } from '@sinonjs/fake-timers';
+import { test } from '@zukhruf/parameterized-test';
 import { Msw } from '@zukhruf/testing/msw';
 import got from 'got';
 import { HttpResponse, http } from 'msw';
@@ -239,41 +239,44 @@ test('after a 429 block ends, the next read spaces its requests to that origin',
   assert.deepEqual(gaps(started.map(({ at }) => at)), [1900]);
 });
 
-test('each 5xx answer slows the next request to its origin by one second', async (t) => {
-  const time = clock(0);
-  const statuses = [500, 501, 503, 504, 599];
-  const started = new Map<string, number[]>();
-  await using server = new Msw().intercept(
-    http.get('https://:host/*', ({ request }) => {
-      const { host, origin, pathname } = new URL(request.url);
-      if (pathname === '/robots.txt')
-        return new HttpResponse(null, { status: 404 });
-      if (pathname === '/sitemap.xml') return sitemap(origin, ['/a', '/b']);
-      started.set(host, [...(started.get(host) ?? []), time.performance.now()]);
-      if (pathname === '/a')
-        return new HttpResponse(null, {
-          status: Number.parseInt(host.slice(1)),
-        });
-      return HttpResponse.html('<p>B</p>');
-    }),
-  );
+void test.each([500, 501, 503, 504, 599], (status) =>
+  test(`a ${status} answer slows the next request to its origin by one second`, async (t) => {
+    const time = clock(0);
+    const started = new Map<string, number[]>();
+    await using server = new Msw().intercept(
+      http.get('https://:host/*', ({ request }) => {
+        const { host, origin, pathname } = new URL(request.url);
+        if (pathname === '/robots.txt')
+          return new HttpResponse(null, { status: 404 });
+        if (pathname === '/sitemap.xml') return sitemap(origin, ['/a', '/b']);
+        started.set(host, [
+          ...(started.get(host) ?? []),
+          time.performance.now(),
+        ]);
+        if (pathname === '/a')
+          return new HttpResponse(null, {
+            status: Number.parseInt(host.slice(1)),
+          });
+        return HttpResponse.html('<p>B</p>');
+      }),
+    );
 
-  await crawled(
-    read(0, null, time).crawler.crawl(
-      statuses.map((status) => `https://s${status}.test/sitemap.xml`),
-      null,
-      { signal: t.signal },
-    ),
-    time,
-  );
+    await crawled(
+      read(0, null, time).crawler.crawl(
+        [`https://s${status}.test/sitemap.xml`],
+        null,
+        { signal: t.signal },
+      ),
+      time,
+    );
 
-  for (const status of statuses)
     assert.deepEqual(
       gaps(started.get(`s${status}.test`) ?? []),
       [2000],
       `after a ${status}`,
     );
-});
+  }),
+);
 
 test('Got retries no refusal: a 503 is answered once, and its slowdown spaces the next requests', async (t) => {
   const time = clock(0);

@@ -25,10 +25,11 @@
     "yaml": "2.9.0"
   },
   "devDependencies": {
+    "@eltjs/sdk-web-crawler": "0.0.1",
     "@types/html-to-text": "9.0.4",
     "@types/http-link-header": "1.0.7",
     "@types/jsdom": "^28.0.3",
-    "@eltjs/sdk-web-crawler": "0.0.1",
-    "@zukhruf/testing": "^0.8.137"
+    "@zukhruf/parameterized-test": "^0.8.144",
+    "@zukhruf/testing": "^0.8.144"
   }
 }

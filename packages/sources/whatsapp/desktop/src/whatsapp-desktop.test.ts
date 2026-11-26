@@ -6,10 +6,10 @@ import { chmod, readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import { test } from 'node:test';
 import { pathToFileURL } from 'node:url';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 
 import {
@@ -1547,11 +1547,12 @@ test('outgoing reactions follow this account’s add, replacement and withdrawal
     );
     // Native WhatsApp 26.40 stores this Mac's outgoing reaction in 7.2,
     // alongside other senders in 7.1. Withdrawal omits the emoji.
-    for (const [stanzaId, emoji, time, reactedAt] of [
-      ['OUT1', '👍', 1_790_848_805_123, '2026-10-01T10:00:05.123Z'],
-      ['OUT2', '❤️', 1_790_848_806_123, '2026-10-01T10:00:06.123Z'],
-      ['OUT3', null, 1_790_848_807_123, '2026-10-01T10:00:07.123Z'],
-    ] as const) {
+    const react = async (
+      stanzaId: string,
+      emoji: string | null,
+      time: number,
+      reactedAt: string,
+    ) => {
       const outgoing: [number, ProtobufValue][] = [
         [1, stanzaId],
         [3, time],
@@ -1615,7 +1616,10 @@ test('outgoing reactions follow this account’s add, replacement and withdrawal
       assert.deepEqual(counts(await run.run()), {
         messageReactions: { count: 0, deleted: 0 },
       });
-    }
+    };
+    await react('OUT1', '👍', 1_790_848_805_123, '2026-10-01T10:00:05.123Z');
+    await react('OUT2', '❤️', 1_790_848_806_123, '2026-10-01T10:00:06.123Z');
+    await react('OUT3', null, 1_790_848_807_123, '2026-10-01T10:00:07.123Z');
   } finally {
     await dir.cleanup();
   }
@@ -2463,10 +2467,10 @@ test('a store that is no database fails only the streams that read it, as the sy
   assert.deepEqual(garbled.types, ['system']);
 });
 
-test('a store lacking a column or table this reader reads fails only that store’s streams, naming what is missing', async () => {
-  // A missing column is the package's MissingColumnsError; a missing
-  // relationship or entity is the SDK's own WhatsAppSchemaError.
-  const breaks: [Store, string, RegExp, string][] = [
+// A missing column is the package's MissingColumnsError; a missing
+// relationship or entity is the SDK's own WhatsAppSchemaError.
+void test.each<[Store, string, RegExp, string]>(
+  [
     [
       'chatStorage',
       'ALTER TABLE ZWAMESSAGE DROP COLUMN ZTEXT',
@@ -2521,27 +2525,24 @@ test('a store lacking a column or table this reader reads fails only that store�
       /ZWAKEYVALUEELEMENT\.Z_PK/,
       'MissingColumnsError',
     ],
-  ];
-  for (const [store, sql, named, name] of breaks) {
-    const broken = await failedAfter((whatsapp) => whatsapp.exec(store, sql));
-    assert.deepEqual(broken.streams, streamsOf[store], store);
-    for (const error of broken.errors) {
-      assert.ok(Error.isError(error), store);
-      assert.equal(error.name, name, store);
-      assert.match(error.message, named);
-    }
-    assert.equal(broken.messages, store === 'chatStorage' ? 0 : 8, store);
-  }
-});
+  ],
+  ([store, sql, named, name]) =>
+    test(`a ${store} store lacking a column or table this reader reads fails only that store’s streams, naming what is missing`, async () => {
+      const broken = await failedAfter((whatsapp) => whatsapp.exec(store, sql));
+      assert.deepEqual(broken.streams, streamsOf[store], store);
+      for (const error of broken.errors) {
+        assert.ok(Error.isError(error), store);
+        assert.equal(error.name, name, store);
+        assert.match(error.message, named);
+      }
+      assert.equal(broken.messages, store === 'chatStorage' ? 0 : 8, store);
+    }),
+);
 
-test('a blob this reader cannot decode fails the streams decoded from it and keeps what they loaded, rather than reading as empty', async () => {
-  const breaks: [
-    string,
-    Store,
-    string,
-    Record<string, SQLInputValue>,
-    string[],
-  ][] = [
+void test.each<
+  [string, Store, string, Record<string, SQLInputValue>, string[]]
+>(
+  [
     [
       'a receipt naming a recipient of an unknown kind',
       'chatStorage',
@@ -2589,46 +2590,47 @@ test('a blob this reader cannot decode fails the streams decoded from it and kee
       { recents: protobuf([[1, { message: [[3, 1]] }]]) },
       ['recentStickers'],
     ],
-  ];
-  for (const [what, store, sql, values, failed] of breaks) {
-    const { dir, whatsapp, out } = await scratch();
-    await using _ = dir;
-    const run = await pipeline(
-      new WhatsAppDesktopSource({ container: whatsapp.container }),
-      dir.path,
-    );
-    await run.run();
-    const loaded = Object.fromEntries(
-      failed.map((name) => [
-        name,
-        rows(out, `SELECT count(*) AS n FROM "${name}"`)[0]?.n,
-      ]),
-    );
-    for (const [name, count] of Object.entries(loaded))
-      assert.ok(Number(count) > 0, `${what}: ${name} loaded nothing to keep`);
-    {
-      using database = open(whatsapp.path(store));
-      database.prepare(sql).run(...Object.values(values));
-    }
-
-    await assert.rejects(run.run(), (error) => {
-      assert.deepEqual(failures(error).streams, failed, what);
-      assert.deepEqual(failures(error).types, ['system'], what);
-      return true;
-    });
-
-    assert.deepEqual(
-      Object.fromEntries(
+  ],
+  ([what, store, sql, values, failed]) =>
+    test(`a blob this reader cannot decode, ${what}, fails the streams decoded from it and keeps what they loaded, rather than reading as empty`, async () => {
+      const { dir, whatsapp, out } = await scratch();
+      await using _ = dir;
+      const run = await pipeline(
+        new WhatsAppDesktopSource({ container: whatsapp.container }),
+        dir.path,
+      );
+      await run.run();
+      const loaded = Object.fromEntries(
         failed.map((name) => [
           name,
           rows(out, `SELECT count(*) AS n FROM "${name}"`)[0]?.n,
         ]),
-      ),
-      loaded,
-      what,
-    );
-  }
-});
+      );
+      for (const [name, count] of Object.entries(loaded))
+        assert.ok(Number(count) > 0, `${what}: ${name} loaded nothing to keep`);
+      {
+        using database = open(whatsapp.path(store));
+        database.prepare(sql).run(...Object.values(values));
+      }
+
+      await assert.rejects(run.run(), (error) => {
+        assert.deepEqual(failures(error).streams, failed, what);
+        assert.deepEqual(failures(error).types, ['system'], what);
+        return true;
+      });
+
+      assert.deepEqual(
+        Object.fromEntries(
+          failed.map((name) => [
+            name,
+            rows(out, `SELECT count(*) AS n FROM "${name}"`)[0]?.n,
+          ]),
+        ),
+        loaded,
+        what,
+      );
+    }),
+);
 
 test('compact message scans keep unchanged groups across reopened pipelines and reload only an edited message', async () => {
   const { dir, whatsapp, out } = await scratch();
@@ -3619,8 +3621,8 @@ test('statuses load with their text styling and photo; one that vanishes within 
   );
 });
 
-test('a value WhatsApp always stores but left empty fails the streams read from it, rather than reading as zero or empty', async () => {
-  const breaks: [string, Store, string, string[], RegExp][] = [
+void test.each<[string, Store, string, string[], RegExp]>(
+  [
     [
       'a chat with no kind',
       'chatStorage',
@@ -3661,13 +3663,15 @@ test('a value WhatsApp always stores but left empty fails the streams read from 
         /message input has no row version/,
       ],
     ),
-  ];
-  for (const [what, store, sql, failed, named] of breaks) {
-    const broken = await failedAfter((whatsapp) => whatsapp.exec(store, sql));
-    assert.deepEqual(broken.streams, failed, what);
-    for (const error of broken.errors) assert.match(String(error), named, what);
-  }
-});
+  ],
+  ([what, store, sql, failed, named]) =>
+    test(`a value WhatsApp always stores but left empty, ${what}, fails the streams read from it, rather than reading as zero or empty`, async () => {
+      const broken = await failedAfter((whatsapp) => whatsapp.exec(store, sql));
+      assert.deepEqual(broken.streams, failed, what);
+      for (const error of broken.errors)
+        assert.match(String(error), named, what);
+    }),
+);
 
 test('large WhatsApp passes stream payloads and reuse compact metadata within a small heap', async () => {
   await using directory = await new TemporaryFiles().directory(
@@ -3817,9 +3821,10 @@ test('message streams reuse one completed metadata scan and refresh file availab
   assert.notDeepEqual(next[0], first[0]);
 });
 
-test('shared metadata respects combined chat and date scopes, empty scopes and derived-only selections', async () => {
-  for (const [scope, ids, hanging] of [
+void test.each(
+  [
     [
+      'one chat from 2026-10-04 09:00',
       {
         collectionIds: [group],
         startAt: '2026-10-04T09:00:00.000Z',
@@ -3829,6 +3834,7 @@ test('shared metadata respects combined chat and date scopes, empty scopes and d
       1,
     ],
     [
+      'one chat until 2026-10-04 09:00',
       {
         collectionIds: [group],
         startAt: '2026-10-03T08:00:00.000Z',
@@ -3837,49 +3843,60 @@ test('shared metadata respects combined chat and date scopes, empty scopes and d
       ['4', '5', '6'],
       0,
     ],
-    [{ collectionIds: [] }, [], 0],
-  ] satisfies [ImportScope, string[], number][]) {
-    const { dir, whatsapp, out } = await scratch();
-    await using _ = dir;
-    const selected = new Set([
-      'messageReceipts',
-      'messageReactions',
-      'messageReactionCounts',
-      'messageDataItems',
-      'messageAssociations',
-    ]);
-    const run = await pipeline(
-      new WhatsAppDesktopSource({ container: whatsapp.container, scope }),
-      dir.path,
-      ({ name }) => selected.has(name),
-    );
-    await run.run();
-    // Each stream keeps its groups as the entries of its diff space.
-    for (const id of [
-      'messageReceipts',
-      'messageReactions',
-      'messageReactionCounts',
-    ])
-      assert.deepEqual(
+    ['no chats', { collectionIds: [] }, [], 0],
+  ] satisfies [string, ImportScope, string[], number][],
+  ([label, scope, ids, hanging]) =>
+    test(`shared metadata of derived-only selections respects the scope of ${label}`, async () => {
+      const { dir, whatsapp, out } = await scratch();
+      await using _ = dir;
+      const selected = new Set([
+        'messageReceipts',
+        'messageReactions',
+        'messageReactionCounts',
+        'messageDataItems',
+        'messageAssociations',
+      ]);
+      const run = await pipeline(
+        new WhatsAppDesktopSource({ container: whatsapp.container, scope }),
+        dir.path,
+        ({ name }) => selected.has(name),
+      );
+      await run.run();
+      // Each stream keeps its groups as the entries of its diff space.
+      const diffKeys = (id: string) =>
         rows(
           join(dir.path, 'state.sqlite'),
           `SELECT key FROM checkpoint_entries WHERE id = '${id}' AND space = 'diff' ORDER BY key`,
-        ).map(({ key }) => key),
-        ids,
+        ).map(({ key }) => key);
+      assert.deepEqual(
+        {
+          messageReceipts: diffKeys('messageReceipts'),
+          messageReactions: diffKeys('messageReactions'),
+          messageReactionCounts: diffKeys('messageReactionCounts'),
+        },
+        {
+          messageReceipts: ids,
+          messageReactions: ids,
+          messageReactionCounts: ids,
+        },
       );
-    for (const name of ['messageDataItems', 'messageAssociations'])
-      assert.equal(
-        rows(out, 'SELECT count(*) AS n FROM "' + name + '"')[0]?.n,
-        hanging,
+      const loaded = (name: string) =>
+        rows(out, 'SELECT count(*) AS n FROM "' + name + '"')[0]?.n;
+      assert.deepEqual(
+        {
+          messageDataItems: loaded('messageDataItems'),
+          messageAssociations: loaded('messageAssociations'),
+        },
+        { messageDataItems: hanging, messageAssociations: hanging },
       );
-    assert.deepEqual(
-      counts(await run.run()),
-      Object.fromEntries(
-        [...selected].map((name) => [name, { count: 0, deleted: 0 }]),
-      ),
-    );
-  }
-});
+      assert.deepEqual(
+        counts(await run.run()),
+        Object.fromEntries(
+          [...selected].map((name) => [name, { count: 0, deleted: 0 }]),
+        ),
+      );
+    }),
+);
 
 test('cancelling a metadata build or replay publishes no partial checkpoint and a fresh read recovers', async () => {
   for (const cancelAt of ['messages', 'messageReceipts']) {
@@ -3954,8 +3971,8 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
   }
 });
 
-test('a failed metadata scan or payload leaves every affected checkpoint intact and retries from the beginning', async () => {
-  for (const column of ['Z_OPT', 'ZMESSAGETYPE']) {
+void test.each(['Z_OPT', 'ZMESSAGETYPE'], (column) =>
+  test(`a failed metadata scan or payload, here a NULL ${column}, leaves every affected checkpoint intact and retries from the beginning`, async () => {
     const { dir, whatsapp, out } = await scratch();
     await using _ = dir;
     const selected = new Set([
@@ -4012,5 +4029,5 @@ test('a failed metadata scan or payload leaves every affected checkpoint intact 
       rows(out, "SELECT text FROM messages WHERE stanzaId = 'A1'"),
       [{ text: 'Retry this edit' }],
     );
-  }
-});
+  }),
+);

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 
+import { test } from '@zukhruf/parameterized-test';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Msw } from '@zukhruf/testing/msw';
 import got from 'got';
@@ -44,38 +44,39 @@ async function results(crawl: Crawl) {
   return entries;
 }
 
-test('depth and page limits bound which pages contribute links, while every found page is handed back', async (t) => {
-  const requests: string[] = [];
-  await using server = mockWeb(
-    http.get('https://site.test/*', ({ request }) => {
-      const path = new URL(request.url).pathname;
-      requests.push(path);
-      if (path === '/')
-        return HttpResponse.html('<a href="/a">A</a><a href="/b">B</a>');
-      return HttpResponse.html(`<a href="${path}/child">Child</a>`);
-    }),
-  );
-  for (const [limits, paths] of [
+void test.each(
+  [
     [{ maxDepth: 0, maxPages: 100 }, ['/a', '/b']],
     [{ maxDepth: 3, maxPages: 0 }, ['/a', '/b']],
     [{ maxDepth: 3, maxPages: 1 }, ['/a', '/b', '/a/child']],
     [{ maxDepth: 1, maxPages: 100 }, ['/a', '/b', '/a/child', '/b/child']],
-  ] satisfies [{ maxDepth: number; maxPages: number }, string[]][]) {
-    requests.length = 0;
-    const pages = await results(
-      new Origins(got, null, globalThis)
-        .crawler(got, [new LinkReader(limits)], new AdaptiveRevisit())
-        .crawl(['https://site.test/'], null, {
-          signal: t.signal,
+  ] satisfies [{ maxDepth: number; maxPages: number }, string[]][],
+  ([limits, paths]) =>
+    test(`depth and page limits ${JSON.stringify(limits)} bound which pages contribute links, while every found page is handed back`, async (t) => {
+      const requests: string[] = [];
+      await using server = mockWeb(
+        http.get('https://site.test/*', ({ request }) => {
+          const path = new URL(request.url).pathname;
+          requests.push(path);
+          if (path === '/')
+            return HttpResponse.html('<a href="/a">A</a><a href="/b">B</a>');
+          return HttpResponse.html(`<a href="${path}/child">Child</a>`);
         }),
-    );
-    assert.deepEqual(pages.map(pathOf), paths, JSON.stringify(limits));
-    assert.deepEqual(requests, ['/', ...paths], JSON.stringify(limits));
-  }
-});
+      );
+      const pages = await results(
+        new Origins(got, null, globalThis)
+          .crawler(got, [new LinkReader(limits)], new AdaptiveRevisit())
+          .crawl(['https://site.test/'], null, {
+            signal: t.signal,
+          }),
+      );
+      assert.deepEqual(pages.map(pathOf), paths, JSON.stringify(limits));
+      assert.deepEqual(requests, ['/', ...paths], JSON.stringify(limits));
+    }),
+);
 
-test('invalid link limits fail on construction', () => {
-  for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+void test.each([-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1], (value) =>
+  test(`the invalid link limit ${value} fails on construction`, () => {
     assert.throws(
       () => new LinkReader({ maxDepth: value, maxPages: 1 }),
       RangeError,
@@ -84,8 +85,8 @@ test('invalid link limits fail on construction', () => {
       () => new LinkReader({ maxDepth: 1, maxPages: value }),
       RangeError,
     );
-  }
-});
+  }),
+);
 
 test('Markdown pages contribute their links on the starting origin', async (t) => {
   const requests: string[] = [];

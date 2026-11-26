@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { chmod, mkdir, readdir, rm, utimes } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 import { Client, FullDiskAccess } from '@zukhruf/tcc';
 import { waitFor } from '@zukhruf/testing/async';
@@ -2238,7 +2238,7 @@ test('a message or reaction gone from the history the app holds is deleted, and 
   ]);
 });
 
-test('a second account loads beside the first without rewriting it, and an account signed out of keeps every row', async () => {
+test('a second account loads beside the first without rewriting it, and a run after an account signs out writes nothing', async () => {
   const { dir, app, out } = await scratch();
   await using _ = dir;
   const first = account();
@@ -2278,7 +2278,10 @@ test('a second account loads beside the first without rewriting it, and an accou
   // The first account signed out: the app deleted its databases.
   await app.save(second);
   assert.deepEqual(counts(await run.run()), await unchanged(source));
-  for (const name of [
+});
+
+void test.each(
+  [
     'accounts',
     'conversations',
     'messages',
@@ -2287,13 +2290,43 @@ test('a second account loads beside the first without rewriting it, and an accou
     'activities',
     'people',
     'installedApps',
-  ])
-    assert.deepEqual(
-      perAccount(name).map(({ accountId }) => accountId),
-      [second.user, user],
-      name,
-    );
-});
+  ],
+  (name) =>
+    test(`an account signed out of keeps every row of ${name}`, async () => {
+      const { dir, app, out } = await scratch();
+      await using _ = dir;
+      const first = account();
+      // Another work account signed in to the app, in a chat with the same
+      // conversation ids.
+      const second: Account = {
+        ...account(),
+        tenant: '9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a',
+        user: '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+      };
+      await app.save(first);
+      const run = await pipeline(
+        new TeamsSource({ directory: app.directory }),
+        dir.path,
+        globalThis,
+      );
+      await run.run();
+      await app.save(first, second);
+      await run.run();
+
+      // The first account signed out: the app deleted its databases.
+      await app.save(second);
+      await run.run();
+
+      assert.deepEqual(
+        rows(
+          out,
+          `SELECT ${name === 'accounts' ? 'id' : 'accountId'} AS accountId, count(*) AS n FROM ${name} GROUP BY 1 ORDER BY 1`,
+        ).map(({ accountId }) => accountId),
+        [second.user, user],
+        name,
+      );
+    }),
+);
 
 test('people, meetings and searches the app drops stay, as do members and apps it no longer lists, while an app uninstalled where it still lists apps is deleted', async () => {
   const { dir, app, out } = await scratch();

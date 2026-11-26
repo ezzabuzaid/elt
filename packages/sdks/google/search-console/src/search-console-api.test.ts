@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { test } from '@zukhruf/parameterized-test';
 import { Msw } from '@zukhruf/testing/msw';
 import { http } from 'msw';
 
@@ -145,8 +145,8 @@ test('rate limits that never clear end after five attempts and say so', async ()
   assert.equal(searchConsole.calls.length, 5);
 });
 
-test('a rate-limit 403 that never clears ends after five attempts as a quota error', async () => {
-  for (const reason of ['rateLimitExceeded', 'userRateLimitExceeded']) {
+void test.each(['rateLimitExceeded', 'userRateLimitExceeded'], (reason) =>
+  test(`a ${reason} 403 that never clears ends after five attempts as a quota error`, async () => {
     await using searchConsole = google({
       reply: () => refusal(403, reason, 'Rate Limit Exceeded', RETRY_NOW),
     });
@@ -163,8 +163,8 @@ test('a rate-limit 403 that never clears ends after five attempts as a quota err
       },
     );
     assert.equal(searchConsole.calls.length, 5, reason);
-  }
-});
+  }),
+);
 
 test('a rate-limit 403 is retried but a scope 403 is not', async () => {
   const replies = [

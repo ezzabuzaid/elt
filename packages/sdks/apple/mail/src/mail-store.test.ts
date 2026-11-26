@@ -4,11 +4,11 @@ import { once } from 'node:events';
 import { watch } from 'node:fs';
 import { chmod, mkdir, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { test } from 'node:test';
 import { promisify } from 'node:util';
 
 import { ChangeWatcher } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { MissingColumnsError } from '@zukhruf/sqlite-snapshot';
 import { Client, FullDiskAccess } from '@zukhruf/tcc';
@@ -88,19 +88,25 @@ test('a store reached through a file says that it is not there and names no gran
   });
 });
 
-test('a store with a folder where its version file belongs fails with the file system error itself, not as unavailable', async () => {
-  await using dir = await new TemporaryFiles().directory('mail-store-');
-  await mkdir(join(dir.path, 'PersistenceInfo.plist'));
-  const store = new MailStore(dir.path);
+void test.each(
+  [
+    { name: 'open', read: (store: MailStore) => store.open() },
+    { name: 'lastWrite', read: (store: MailStore) => store.lastWrite() },
+  ],
+  ({ name, read }) =>
+    test(`a store with a folder where its version file belongs fails with the file system error itself, not as unavailable: ${name}`, async () => {
+      await using dir = await new TemporaryFiles().directory('mail-store-');
+      await mkdir(join(dir.path, 'PersistenceInfo.plist'));
+      const store = new MailStore(dir.path);
 
-  for (const read of [() => store.open(), () => store.lastWrite()])
-    await assert.rejects(read(), (error: unknown) => {
-      assert.ok(!(error instanceof StoreUnavailableError));
-      assert.ok(Error.isError(error) && 'code' in error);
-      assert.equal(error.code, 'EISDIR');
-      return true;
-    });
-});
+      await assert.rejects(read(store), (error: unknown) => {
+        assert.ok(!(error instanceof StoreUnavailableError));
+        assert.ok(Error.isError(error) && 'code' in error);
+        assert.equal(error.code, 'EISDIR');
+        return true;
+      });
+    }),
+);
 
 test(
   'a store whose version file or index the system keeps from this process says that it cannot be read and names the grant',

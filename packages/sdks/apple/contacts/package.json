@@ -13,9 +13,9 @@
     "@eltjs/codec-apple-reference-date": "0.0.1",
     "@eltjs/codec-plist": "0.0.1",
     "@eltjs/sdk-macos-app-database": "0.0.1",
-    "@zukhruf/async": "^0.8.137",
-    "@zukhruf/sqlite-data-version": "^0.8.137",
-    "@zukhruf/sqlite-snapshot": "^0.8.137",
-    "@zukhruf/tcc": "^0.8.137"
+    "@zukhruf/async": "^0.8.144",
+    "@zukhruf/sqlite-data-version": "^0.8.144",
+    "@zukhruf/sqlite-snapshot": "^0.8.144",
+    "@zukhruf/tcc": "^0.8.144"
   }
 }

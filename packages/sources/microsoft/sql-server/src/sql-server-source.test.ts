@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { hash, randomUUID } from 'node:crypto';
 import { type Socket, connect, createServer } from 'node:net';
-import { type TestContext, test } from 'node:test';
+import type { TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
+import { test } from '@zukhruf/parameterized-test';
 import { waitFor } from '@zukhruf/testing/async';
 import { Postgres } from '@zukhruf/testing/postgres';
 import {
@@ -333,7 +334,7 @@ function failureTypes(error: {
   ];
 }
 
-for (const snapshot of [false, true])
+void test.each([false, true], (snapshot) =>
   test(`a Change Tracking table loads every row, then applies what changed, deletions included, and writes nothing when nothing changed${snapshot ? ', in a database that allows snapshot isolation' : ''}`, async () => {
     await using server = await sqlServer.database();
     if (snapshot) {
@@ -415,7 +416,8 @@ for (const snapshot of [false, true])
       third.results.map(({ count, deleted }) => [count, deleted]),
       [[0, 0]],
     );
-  });
+  }),
+);
 
 test('tables and columns named as Postgres cannot hold them load whole, under names Airbyte would give, and changes apply by their renamed key', async () => {
   await using server = await sqlServer.database();
@@ -1291,28 +1293,30 @@ test(
 // the two logins that opening the session makes (the pool tries one
 // connection, and the query takes another), as in backlog #4206; in the
 // tables; and in the last writes, which discovery reads last.
-for (const [when, stallAt] of [
-  ['right after it logs in', ({ login }) => 2 * login],
-  ['while it reads the tables', ({ login }) => login + 20_000],
-  ['while it reads the last writes', ({ total }) => total - 100_000],
-] as const satisfies readonly (readonly [
-  string,
-  (bytes: { login: number; total: number }) => number,
-])[]) {
-  test(
-    `a discovery whose server stops sending ${when} fails with the reason of its signal when the signal aborts, and a discovery after the server sends again gives every table`,
-    { timeout: 120_000 },
-    async () => {
-      await using server = await sqlServer.database();
-      await using clients = new AsyncDisposableStack();
-      const admin = clients.adopt(
-        new sql.ConnectionPool(server.connectionString),
-        (pool) => pool.close(),
-      );
-      await admin.connect();
-      // Names long enough that the tables and the last writes each take more
-      // bytes than the hop forwards in one chunk.
-      await admin.request().batch(`
+void test.each(
+  [
+    ['right after it logs in', ({ login }) => 2 * login],
+    ['while it reads the tables', ({ login }) => login + 20_000],
+    ['while it reads the last writes', ({ total }) => total - 100_000],
+  ] as const satisfies readonly (readonly [
+    string,
+    (bytes: { login: number; total: number }) => number,
+  ])[],
+  ([when, stallAt]) =>
+    test(
+      `a discovery whose server stops sending ${when} fails with the reason of its signal when the signal aborts, and a discovery after the server sends again gives every table`,
+      { timeout: 120_000 },
+      async () => {
+        await using server = await sqlServer.database();
+        await using clients = new AsyncDisposableStack();
+        const admin = clients.adopt(
+          new sql.ConnectionPool(server.connectionString),
+          (pool) => pool.close(),
+        );
+        await admin.connect();
+        // Names long enough that the tables and the last writes each take more
+        // bytes than the hop forwards in one chunk.
+        await admin.request().batch(`
       DECLARE @table int = 0;
       WHILE @table < 800
       BEGIN
@@ -1320,41 +1324,41 @@ for (const [when, stallAt] of [
         EXEC(@create);
         SET @table += 1;
       END;`);
-      // A server permission, so it is granted in master.
-      await using reader = await readOnlyLogin(
-        server,
-        admin,
-        "EXEC master.sys.sp_executesql N'GRANT VIEW SERVER STATE TO {user}';",
-      );
-      await using hop = await relay(server);
-      const connectionString = reader.connectionString.replace(
-        `Server=${server.host},${server.port}`,
-        `Server=${hop.server}`,
-      );
-      const database = new SqlServerDatabase(connectionString);
-      const probe = new sql.ConnectionPool(connectionString);
-      await probe.connect();
-      const login = hop.received;
-      await probe.close();
-      await SqlServerSource.discover(database);
-      const total = hop.received - login;
-      const stalled = hop.stallAfter(stallAt({ login, total }));
-      const stop = new AbortController();
-      const discovery = SqlServerSource.discover(database, {
-        signal: stop.signal,
-      });
-      await stalled;
+        // A server permission, so it is granted in master.
+        await using reader = await readOnlyLogin(
+          server,
+          admin,
+          "EXEC master.sys.sp_executesql N'GRANT VIEW SERVER STATE TO {user}';",
+        );
+        await using hop = await relay(server);
+        const connectionString = reader.connectionString.replace(
+          `Server=${server.host},${server.port}`,
+          `Server=${hop.server}`,
+        );
+        const database = new SqlServerDatabase(connectionString);
+        const probe = new sql.ConnectionPool(connectionString);
+        await probe.connect();
+        const login = hop.received;
+        await probe.close();
+        await SqlServerSource.discover(database);
+        const total = hop.received - login;
+        const stalled = hop.stallAfter(stallAt({ login, total }));
+        const stop = new AbortController();
+        const discovery = SqlServerSource.discover(database, {
+          signal: stop.signal,
+        });
+        await stalled;
 
-      const reason = new Error('The host stopped discovery');
-      stop.abort(reason);
+        const reason = new Error('The host stopped discovery');
+        stop.abort(reason);
 
-      await assert.rejects(discovery, (error) => error === reason);
-      hop.resume();
-      const source = await SqlServerSource.discover(database);
-      assert.equal(source.streams.length, 800);
-    },
-  );
-}
+        await assert.rejects(discovery, (error) => error === reason);
+        hop.resume();
+        const source = await SqlServerSource.discover(database);
+        assert.equal(source.streams.length, 800);
+      },
+    ),
+);
 
 test('two databases that each hold a table of one name load side by side in one pipeline', async () => {
   await using billing = await sqlServer.database();

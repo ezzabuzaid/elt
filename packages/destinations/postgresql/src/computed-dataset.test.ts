@@ -2,10 +2,10 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { test } from 'node:test';
 
 import { Latch } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { waitFor } from '@zukhruf/testing/async';
 import { Postgres } from '@zukhruf/testing/postgres';
 import { Vector } from '@zukhruf/vectors';
@@ -1144,30 +1144,33 @@ test('a role that may not create the extension vector fails a dataset with a vec
   );
 });
 
-for (const [index, error] of [
+void test.each(
   [
-    { type: 'vector', column: 'size', metric: 'cosine', build: hnsw() },
-    'Computed dataset measures declares a vector index on size, which is bigint, not a vector',
-  ],
-  [
-    { type: 'btree', columns: ['size', 'missing'] },
-    'Computed dataset measures declares an index on missing, which "_warehouse"."raw_measures" does not have',
-  ],
-] as const)
-  test(`an index ${JSON.stringify(index)} is refused when the dataset is constructed`, () => {
-    assert.throws(
-      () =>
-        new ComputedDataset({
-          into: new PostgresDestination({ url: 'postgres://localhost/none' }),
-          name: 'measures',
-          description: 'The size and vector of each file a row names.',
-          from: [],
-          compute: new Measure(3),
-          indexes: [index],
-        }),
-      new TypeError(error),
-    );
-  });
+    [
+      { type: 'vector', column: 'size', metric: 'cosine', build: hnsw() },
+      'Computed dataset measures declares a vector index on size, which is bigint, not a vector',
+    ],
+    [
+      { type: 'btree', columns: ['size', 'missing'] },
+      'Computed dataset measures declares an index on missing, which "_warehouse"."raw_measures" does not have',
+    ],
+  ] as const,
+  ([index, error]) =>
+    test(`an index ${JSON.stringify(index)} is refused when the dataset is constructed`, () => {
+      assert.throws(
+        () =>
+          new ComputedDataset({
+            into: new PostgresDestination({ url: 'postgres://localhost/none' }),
+            name: 'measures',
+            description: 'The size and vector of each file a row names.',
+            from: [],
+            compute: new Measure(3),
+            indexes: [index],
+          }),
+        new TypeError(error),
+      );
+    }),
+);
 
 // A rule that only names its columns: the dataset checks them when it is
 // constructed, before any input reaches compute.
@@ -1197,27 +1200,30 @@ class NamedColumns extends Rule<string, RuleColumns> {
   }
 }
 
-for (const [column, owner] of [
-  ['replaced_in', 'the column its history adds'],
-  ['committed_in', 'a column the dataset writes itself'],
-  ['status', 'an engine column'],
-  ['ref', 'the key column'],
-] as const)
-  test(`a rule output column named ${column}, ${owner}, is refused when the dataset is constructed`, () => {
-    assert.throws(
-      () =>
-        new ComputedDataset({
-          into: new PostgresDestination({ url: 'postgres://localhost/none' }),
-          name: 'file_text',
-          description: 'The text of each file a row names.',
-          from: [],
-          compute: new NamedColumns(['content', column]),
-        }),
-      new TypeError(
-        `Computed dataset file_text cannot have the column ${column}: the dataset already has the column ${column}`,
-      ),
-    );
-  });
+void test.each(
+  [
+    ['replaced_in', 'the column its history adds'],
+    ['committed_in', 'a column the dataset writes itself'],
+    ['status', 'an engine column'],
+    ['ref', 'the key column'],
+  ] as const,
+  ([column, owner]) =>
+    test(`a rule output column named ${column}, ${owner}, is refused when the dataset is constructed`, () => {
+      assert.throws(
+        () =>
+          new ComputedDataset({
+            into: new PostgresDestination({ url: 'postgres://localhost/none' }),
+            name: 'file_text',
+            description: 'The text of each file a row names.',
+            from: [],
+            compute: new NamedColumns(['content', column]),
+          }),
+        new TypeError(
+          `Computed dataset file_text cannot have the column ${column}: the dataset already has the column ${column}`,
+        ),
+      );
+    }),
+);
 
 test('a rule output column that differs from the column of the history only in case is its own column, as Postgres keeps the case of a quoted name', () => {
   assert.doesNotThrow(

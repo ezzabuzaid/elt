@@ -14,13 +14,14 @@ import {
 import { homedir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { type TestContext, test } from 'node:test';
+import type { TestContext } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { crc32, deflateSync } from 'node:zlib';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import {
   Fixed,
   LeaderFirst,
@@ -1092,37 +1093,42 @@ test('Mail times keep SQLite’s millisecond rounding, and the years 0000 and 99
   );
 });
 
-test('A date before year 0 fails only messages, and a dated scope leaves that message out', async () => {
-  await using dir = await new TemporaryFiles().directory('elt-mail-');
-  // Year -1199, and year -1, which SQLite writes with a three-digit year.
-  for (const seconds of [-100000000000, -62180000000]) {
-    const store = await fixture(join(dir.path, `Mail${seconds}`));
-    exec(
-      store.index,
-      `UPDATE messages SET date_received=${seconds} WHERE ROWID=2`,
-    );
+void test.each(
+  [
+    { year: '-1199', seconds: -100000000000 },
+    // SQLite writes year -1 with a three-digit year.
+    { year: '-1', seconds: -62180000000 },
+  ],
+  ({ year, seconds }) =>
+    test(`A date before year 0, in year ${year}, fails only messages, and a dated scope leaves that message out`, async () => {
+      await using dir = await new TemporaryFiles().directory('elt-mail-');
+      const store = await fixture(join(dir.path, `Mail${seconds}`));
+      exec(
+        store.index,
+        `UPDATE messages SET date_received=${seconds} WHERE ROWID=2`,
+      );
 
-    const unscoped = await readAll(
-      new AppleMailSource({ path: store.root, accounts: store.accounts }),
-    );
-    const dated = await readAll(
-      new AppleMailSource({
-        path: store.root,
-        accounts: store.accounts,
-        scope: {
-          startAt: '2025-01-01T00:00:00.000Z',
-          endAt: '2025-02-01T00:00:00.000Z',
-        },
-      }),
-    );
+      const unscoped = await readAll(
+        new AppleMailSource({ path: store.root, accounts: store.accounts }),
+      );
+      const dated = await readAll(
+        new AppleMailSource({
+          path: store.root,
+          accounts: store.accounts,
+          scope: {
+            startAt: '2025-01-01T00:00:00.000Z',
+            endAt: '2025-02-01T00:00:00.000Z',
+          },
+        }),
+      );
 
-    assertFailed(unscoped.failed, {
-      messages: ['TypeError', /invalid messages\.dateReceived/],
-    });
-    assertFailed(dated.failed, {});
-    assert.deepEqual(values(dated.records, 'messages', 'id'), ['1']);
-  }
-});
+      assertFailed(unscoped.failed, {
+        messages: ['TypeError', /invalid messages\.dateReceived/],
+      });
+      assertFailed(dated.failed, {});
+      assert.deepEqual(values(dated.records, 'messages', 'id'), ['1']);
+    }),
+);
 
 test('Text in a Base64 column passes through, and a blob in a text column fails only messages', async () => {
   await using dir = await new TemporaryFiles().directory('elt-mail-');
@@ -2550,29 +2556,31 @@ test(
   },
 );
 
-test('Mail’s streams fail as config, saying that the store is not there and naming no grant, when its version file or index is not there, while the watch goes on', async (t) => {
-  await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
-  // A pass reads the store's last write before it opens the store, and a last
-  // write names the index that it reads.
-  for (const [name, file, named] of [
+// A pass reads the store's last write before it opens the store, and a last
+// write names the index that it reads.
+void test.each(
+  [
     ['version', 'PersistenceInfo.plist', ''],
     ['index', 'V10/MailData/Envelope Index', '/V10/MailData/Envelope Index'],
-  ] as const) {
-    const root = join(dir.path, name);
-    const failure = await firstWatchFailure(t, root, () =>
-      rm(join(root, file)),
-    );
-    // A failed copy's error is in the attempt's list of copies that failed.
-    assert.ok(
-      String(failure.error).endsWith(
-        `Mail's store at ${root}${named} is not there.`,
-      ),
-      String(failure.error),
-    );
-    assert.doesNotMatch(String(failure.error), /Full Disk Access/);
-    assert.equal(failure.failure_type, 'config');
-  }
-});
+  ] as const,
+  ([name, file, named]) =>
+    test(`Mail’s streams fail as config, saying that the store is not there and naming no grant, when its ${name} file is not there, while the watch goes on`, async (t) => {
+      await using dir = await new TemporaryFiles().directory('elt-mail-watch-');
+      const root = join(dir.path, name);
+      const failure = await firstWatchFailure(t, root, () =>
+        rm(join(root, file)),
+      );
+      // A failed copy's error is in the attempt's list of copies that failed.
+      assert.ok(
+        String(failure.error).endsWith(
+          `Mail's store at ${root}${named} is not there.`,
+        ),
+        String(failure.error),
+      );
+      assert.doesNotMatch(String(failure.error), /Full Disk Access/);
+      assert.equal(failure.failure_type, 'config');
+    }),
+);
 
 test('Mail’s streams fail as system for an index that is not a database, while the watch goes on', async (t) => {
   await using dir = await new TemporaryFiles().directory('elt-mail-watch-');

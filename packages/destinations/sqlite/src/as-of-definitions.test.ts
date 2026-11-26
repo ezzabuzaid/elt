@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { readdir, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 
 import {
@@ -226,30 +226,31 @@ test('the views of a position read each target, its reader view and a View over 
   assert.deepEqual(read(), expected);
 });
 
-test('the views of a position fail through their guard, with the reason, once the retention deletes the history that position reads', async () => {
-  await using scratch = await new TemporaryFiles().directory('elt-as-of-');
-  const { destination, pass } = notesImport(
-    scratch.path,
-    Temporal.Duration.from({ milliseconds: 20 }),
-  );
-  await pass([note('n1', 1, 'a'), checkpoint(1)]);
-  const position = newest(destination);
-  await pass([note('n1', 2, 'b'), checkpoint(2)]);
-  using database = federated(destination.path, position);
-  assert.deepEqual(rows(database, 'SELECT body FROM mail_raw_notes'), [
-    { body: 'a' },
-  ]);
-  now += 60;
+void test.each(['mail_raw_notes', 'mail_notes', 'mail_body_list'], (view) =>
+  test(`the view ${view} of a position fails through its guard, with the reason, once the retention deletes the history that position reads`, async () => {
+    await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+    const { destination, pass } = notesImport(
+      scratch.path,
+      Temporal.Duration.from({ milliseconds: 20 }),
+    );
+    await pass([note('n1', 1, 'a'), checkpoint(1)]);
+    const position = newest(destination);
+    await pass([note('n1', 2, 'b'), checkpoint(2)]);
+    using database = federated(destination.path, position);
+    assert.deepEqual(rows(database, 'SELECT body FROM mail_raw_notes'), [
+      { body: 'a' },
+    ]);
+    now += 60;
 
-  await pass([note('n1', 3, 'c'), checkpoint(3)]);
+    await pass([note('n1', 3, 'c'), checkpoint(3)]);
 
-  for (const view of ['mail_raw_notes', 'mail_notes', 'mail_body_list'])
     assert.throws(
       () => rows(database, `SELECT * FROM ${view}`),
       /older than the retention/,
       view,
     );
-});
+  }),
+);
 
 test('the views of a position fail through their guard when the file is made again, though its target holds no row', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-as-of-');
@@ -273,25 +274,37 @@ test('the views of a position fail through their guard when the file is made aga
   );
 });
 
-test('the views of the sync history, its tables and the catalog fail with a message that they cannot be read as of a position', async () => {
+void test.each(
+  [
+    'mail_sync_attempts',
+    'mail__elt_sync_attempts',
+    'mail_sync_status',
+    'mail_extraction_coverage',
+    'mail__elt_stream_checks',
+  ],
+  (view) =>
+    test(`the sync history view ${view} fails with a message that it cannot be read as of a position`, async () => {
+      await using scratch = await new TemporaryFiles().directory('elt-as-of-');
+      const { destination, pass } = notesImport(scratch.path);
+      await pass([note('n1', 1, 'a'), checkpoint(1)]);
+      installSQLiteCatalog({ path: destination.path });
+      using database = federated(destination.path, newest(destination));
+
+      assert.throws(
+        () => rows(database, `SELECT * FROM ${view}`),
+        /The sync history cannot be read as of a position/,
+        view,
+      );
+    }),
+);
+
+test('the view of the catalog fails with a message that it cannot be read as of a position', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-as-of-');
   const { destination, pass } = notesImport(scratch.path);
   await pass([note('n1', 1, 'a'), checkpoint(1)]);
   installSQLiteCatalog({ path: destination.path });
   using database = federated(destination.path, newest(destination));
 
-  for (const view of [
-    'mail_sync_attempts',
-    'mail__elt_sync_attempts',
-    'mail_sync_status',
-    'mail_extraction_coverage',
-    'mail__elt_stream_checks',
-  ])
-    assert.throws(
-      () => rows(database, `SELECT * FROM ${view}`),
-      /The sync history cannot be read as of a position/,
-      view,
-    );
   assert.throws(
     () => rows(database, 'SELECT * FROM mail_catalog'),
     /View "catalog" cannot be read as of a position/,

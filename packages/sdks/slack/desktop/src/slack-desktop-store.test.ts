@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { chmod, mkdir, symlink, utimes, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { Client, FullDiskAccess } from '@zukhruf/tcc';
 
 import {
@@ -48,7 +48,7 @@ async function read(home: string, directory?: string) {
   };
 }
 
-for (const [build, location] of Object.entries(locations)) {
+void test.each(Object.entries(locations), ([build, location]) =>
   test(`the store in a home folder reads Slack's ${build} installation`, async () => {
     await using home = await new TemporaryFiles().directory('slack-location-');
     const directory = join(home.path, location);
@@ -58,8 +58,8 @@ for (const [build, location] of Object.entries(locations)) {
 
     assert.deepEqual(result.clients, []);
     assert.equal(result.downloads[0]?.fileId, 'F1');
-  });
-}
+  }),
+);
 
 test('an empty App Store folder does not hide the direct-download store', async () => {
   await using home = await new TemporaryFiles().directory('slack-location-');
@@ -110,7 +110,7 @@ test('a missing store asks for saved Slack data without requiring the App Store'
   });
 });
 
-for (const [saved, location] of Object.entries(locations)) {
+void test.each(Object.entries(locations), ([saved, location]) =>
   test(`when both stores exist, the most recently saved database wins: ${location}`, async () => {
     await using home = await new TemporaryFiles().directory('slack-location-');
     for (const [build, path] of Object.entries(locations)) {
@@ -125,8 +125,8 @@ for (const [saved, location] of Object.entries(locations)) {
     await utimes(join(directory, indexedDB), 1, 1);
 
     assert.equal((await read(home.path)).downloads[0]?.fileId, saved);
-  });
-}
+  }),
+);
 
 // A reader reads the files after the app saves them, so each file's access
 // time is later than the time it was saved.

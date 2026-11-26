@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { gzipSync } from 'node:zlib';
 
+import { test } from '@zukhruf/parameterized-test';
 import { Msw } from '@zukhruf/testing/msw';
 import { Postgres } from '@zukhruf/testing/postgres';
 import { type PathParams, http } from 'msw';
@@ -2708,54 +2708,55 @@ test('sitemaps in every format feed the inspection universe', async () => {
   ]);
 });
 
-test('an unreadable sitemap is recorded as data and inspection covers everything else', async () => {
-  // s.xml indexes i1.xml, which indexes i2.xml, and so on.
-  const nested = (depth: number): Record<string, string> =>
-    Object.fromEntries(
-      Array.from({ length: depth }, (_, level) => [
-        level === 0
-          ? 'https://example.com/s.xml'
-          : `https://example.com/i${level}.xml`,
-        `<sitemapindex><sitemap><loc>https://example.com/i${level + 1}.xml</loc></sitemap></sitemapindex>`,
-      ]),
-    );
-  const cases: [
-    string,
-    Record<string, string | Uint8Array<ArrayBuffer> | number>,
-    RegExp,
-  ][] = [
-    ['missing', { 'https://example.com/s.xml': 404 }, /HTTP 404/],
-    [
-      'malformed',
-      { 'https://example.com/s.xml': '<urlset><url><loc>x</url></urlset>' },
-      /Expected closing tag/,
-    ],
-    [
-      'an HTML page',
-      { 'https://example.com/s.xml': '<!doctype html><p>Not found</p>' },
-      /could not be read/,
-    ],
-    [
-      'corrupt gzip',
-      { 'https://example.com/s.xml': Uint8Array.of(0x1f, 0x8b, 1, 2, 3) },
-      /could not be read/,
-    ],
-    ['nested too deep', nested(5), /nest deeper than 3 levels/],
-    [
-      'a url without a loc',
-      { 'https://example.com/s.xml': '<urlset><url></url></urlset>' },
-      /<urlset> url\.0:/,
-    ],
-    [
-      'a sitemap entry with two locs',
-      {
-        'https://example.com/s.xml':
-          '<sitemapindex><sitemap><loc>https://example.com/a.xml</loc><loc>https://example.com/b.xml</loc></sitemap></sitemapindex>',
-      },
-      /<sitemapindex> sitemap\.0\.loc:/,
-    ],
-  ];
-  for (const [label, broken, reason] of cases) {
+// s.xml indexes i1.xml, which indexes i2.xml, and so on.
+const nested = (depth: number): Record<string, string> =>
+  Object.fromEntries(
+    Array.from({ length: depth }, (_, level) => [
+      level === 0
+        ? 'https://example.com/s.xml'
+        : `https://example.com/i${level}.xml`,
+      `<sitemapindex><sitemap><loc>https://example.com/i${level + 1}.xml</loc></sitemap></sitemapindex>`,
+    ]),
+  );
+const unreadableSitemaps: [
+  string,
+  Record<string, string | Uint8Array<ArrayBuffer> | number>,
+  RegExp,
+][] = [
+  ['missing', { 'https://example.com/s.xml': 404 }, /HTTP 404/],
+  [
+    'malformed',
+    { 'https://example.com/s.xml': '<urlset><url><loc>x</url></urlset>' },
+    /Expected closing tag/,
+  ],
+  [
+    'an HTML page',
+    { 'https://example.com/s.xml': '<!doctype html><p>Not found</p>' },
+    /could not be read/,
+  ],
+  [
+    'corrupt gzip',
+    { 'https://example.com/s.xml': Uint8Array.of(0x1f, 0x8b, 1, 2, 3) },
+    /could not be read/,
+  ],
+  ['nested too deep', nested(5), /nest deeper than 3 levels/],
+  [
+    'a url without a loc',
+    { 'https://example.com/s.xml': '<urlset><url></url></urlset>' },
+    /<urlset> url\.0:/,
+  ],
+  [
+    'a sitemap entry with two locs',
+    {
+      'https://example.com/s.xml':
+        '<sitemapindex><sitemap><loc>https://example.com/a.xml</loc><loc>https://example.com/b.xml</loc></sitemap></sitemapindex>',
+    },
+    /<sitemapindex> sitemap\.0\.loc:/,
+  ],
+];
+
+void test.each(unreadableSitemaps, ([label, broken, reason]) =>
+  test(`an unreadable sitemap (${label}) is recorded as data and inspection covers everything else`, async () => {
     await using searchConsole = google({
       reply: property({
         pages: ['https://example.com/p'],
@@ -2829,8 +2830,8 @@ test('an unreadable sitemap is recorded as data and inspection covers everything
       label,
     );
     assert.match(String(bad?.readError), reason, label);
-  }
-});
+  }),
+);
 
 test(
   'watching with a poll longer than a Node timer can hold sleeps without overflowing it',
@@ -3416,24 +3417,35 @@ test('a server error during inspection fails the run and keeps none of its inspe
   assert.deepEqual(inspected(searchConsole).slice(before).toSorted(), pages);
 });
 
-test('inspection options are validated', () => {
-  const base = { requester: signedIn(), siteUrls: [SITE] };
-  for (const inspectionRefreshHours of [0, -1, Number.NaN])
+void test.each([0, -1, Number.NaN], (inspectionRefreshHours) =>
+  test(`inspectionRefreshHours ${inspectionRefreshHours} is rejected`, () => {
+    const base = { requester: signedIn(), siteUrls: [SITE] };
     assert.throws(
       () => new SearchConsoleSource({ ...base, inspectionRefreshHours }),
       /inspectionRefreshHours must be a positive number of hours/,
     );
-  for (const inspectionConcurrency of [0, 1.5])
+  }),
+);
+
+void test.each([0, 1.5], (inspectionConcurrency) =>
+  test(`inspectionConcurrency ${inspectionConcurrency} is rejected`, () => {
+    const base = { requester: signedIn(), siteUrls: [SITE] };
     assert.throws(
       () => new SearchConsoleSource({ ...base, inspectionConcurrency }),
       /inspectionConcurrency must be a whole number of at least one/,
     );
-  for (const streamConcurrency of [0, 1.5])
+  }),
+);
+
+void test.each([0, 1.5], (streamConcurrency) =>
+  test(`streamConcurrency ${streamConcurrency} is rejected`, () => {
+    const base = { requester: signedIn(), siteUrls: [SITE] };
     assert.throws(
       () => new SearchConsoleSource({ ...base, streamConcurrency }),
       /streamConcurrency must be a whole number of at least one/,
     );
-});
+  }),
+);
 
 test(
   'watching wakes inspection streams when URLs fall due, not when traffic changes',

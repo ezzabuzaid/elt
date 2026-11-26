@@ -7,13 +7,13 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import type { DatabaseSync } from 'node:sqlite';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { ChangeWatcher } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { Calendars, Client, Reminders } from '@zukhruf/tcc';
 import { waitFor } from '@zukhruf/testing/async';
@@ -522,30 +522,31 @@ test('missing access fails reads and watches with the entity’s own error', asy
   );
 });
 
-test('access that macOS has decided against fails at once, with no request and no second read', async () => {
-  // Arrange
-  const read = { entity: 'events', ...january, ics: false } as const;
-  await using denied = await StubEventKitHelper.create();
-  await using restricted = await StubEventKitHelper.create();
-  denied.answer(read, {
-    stderr: 'CALENDAR_UNAVAILABLE: full access is required; status=2\n',
-  });
-  restricted.answer(read, {
-    stderr: 'CALENDAR_UNAVAILABLE: full access is required; status=1\n',
-  });
+void test.each(
+  [
+    { decision: 'denied', status: 2 },
+    { decision: 'restricted', status: 1 },
+  ],
+  ({ decision, status }) =>
+    test(`access that macOS has ${decision} fails at once, with no request and no second read`, async () => {
+      // Arrange
+      const read = { entity: 'events', ...january, ics: false } as const;
+      await using stub = await StubEventKitHelper.create();
+      stub.answer(read, {
+        stderr: `CALENDAR_UNAVAILABLE: full access is required; status=${status}\n`,
+      });
 
-  for (const stub of [denied, restricted]) {
-    // Act
-    const reading = new CalendarStore(stub.path, { env: process.env }).read(
-      { ...january, ics: false },
-      undefined,
-    );
+      // Act
+      const reading = new CalendarStore(stub.path, { env: process.env }).read(
+        { ...january, ics: false },
+        undefined,
+      );
 
-    // Assert
-    await assert.rejects(reading, CalendarUnavailableError);
-    assert.equal(stub.reads(read), 1);
-  }
-});
+      // Assert
+      await assert.rejects(reading, CalendarUnavailableError);
+      assert.equal(stub.reads(read), 1);
+    }),
+);
 
 test('missing access names the client that macOS charges and the pane that grants it', async () => {
   const denied = (marker: string) =>

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { join } from 'node:path';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import { open } from '@zukhruf/sqlite-open';
-import { test } from '@zukhruf/testing/node';
 
 import {
   Catalog,

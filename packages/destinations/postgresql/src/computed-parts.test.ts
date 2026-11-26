@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { test } from 'node:test';
 
+import { test } from '@zukhruf/parameterized-test';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -442,7 +442,7 @@ test('a removed input removes its output row and its parts, and a reading before
   );
 });
 
-for (const column of ['tokens', 'start'] as const)
+void test.each(['tokens', 'start'] as const, (column) =>
   test(`a value of a part that does not fit its column, here ${column}, fails its input with the part and the column named, and the input keeps no part`, async () => {
     await using database = await databases.database();
     await using clients = new AsyncDisposableStack();
@@ -473,7 +473,8 @@ for (const column of ['tokens', 'start'] as const)
         parts: [],
       },
     );
-  });
+  }),
+);
 
 test('a rule call that fails rejects the run, and each input of the calls before it keeps its output row with all its parts', async () => {
   await using database = await databases.database();
@@ -672,44 +673,47 @@ test('a changed declaration of the parts makes both tables again, a view over <n
   );
 });
 
-for (const [output, place, column] of [
-  [['text', 'seq'], ['start'], 'seq'],
-  [['text'], ['part_hash'], 'part_hash'],
-  [['text'], ['id'], 'id'],
-  [['status'], ['start'], 'status'],
-  [['text'], ['input_hash'], 'input_hash'],
-  [['rule'], ['start'], 'rule'],
-  [['text'], ['error'], 'error'],
-  [['text'], ['_elt_row_hash'], '_elt_row_hash'],
-  [['text'], ['committed_in'], 'committed_in'],
-  [['text'], ['replaced_in'], 'replaced_in'],
-  [['text'], ['text'], 'text'],
-] as const)
-  test(`a table rule column named ${column} is refused when the dataset is constructed, as the dataset already has ${column}`, () => {
-    const columns = (names: readonly string[]): RuleColumns =>
-      Object.fromEntries(
-        names.map((name) => [name, { type: 'text', description: name }]),
-      );
+void test.each(
+  [
+    [['text', 'seq'], ['start'], 'seq'],
+    [['text'], ['part_hash'], 'part_hash'],
+    [['text'], ['id'], 'id'],
+    [['status'], ['start'], 'status'],
+    [['text'], ['input_hash'], 'input_hash'],
+    [['rule'], ['start'], 'rule'],
+    [['text'], ['error'], 'error'],
+    [['text'], ['_elt_row_hash'], '_elt_row_hash'],
+    [['text'], ['committed_in'], 'committed_in'],
+    [['text'], ['replaced_in'], 'replaced_in'],
+    [['text'], ['text'], 'text'],
+  ] as const,
+  ([output, place, column]) =>
+    test(`a table rule column named ${column} is refused when the dataset is constructed, as the dataset already has ${column}`, () => {
+      const columns = (names: readonly string[]): RuleColumns =>
+        Object.fromEntries(
+          names.map((name) => [name, { type: 'text', description: name }]),
+        );
 
-    assert.throws(
-      () =>
-        new ComputedDataset({
-          into: new PostgresDestination({
-            url: 'postgres://localhost/none',
+      assert.throws(
+        () =>
+          new ComputedDataset({
+            into: new PostgresDestination({
+              url: 'postgres://localhost/none',
+            }),
+            name: 'pieces',
+            description: 'The pieces of each note.',
+            from: [],
+            compute: new Pieces({
+              output: columns(output),
+              place: columns(place),
+            }),
           }),
-          name: 'pieces',
-          description: 'The pieces of each note.',
-          from: [],
-          compute: new Pieces({
-            output: columns(output),
-            place: columns(place),
-          }),
-        }),
-      new TypeError(
-        `Computed dataset pieces cannot have the column ${column}: the dataset already has the column ${column}`,
-      ),
-    );
-  });
+        new TypeError(
+          `Computed dataset pieces cannot have the column ${column}: the dataset already has the column ${column}`,
+        ),
+      );
+    }),
+);
 
 test('a table rule column that differs from a column of the dataset only in case is its own column, as Postgres keeps the case of a quoted name', () => {
   assert.doesNotThrow(

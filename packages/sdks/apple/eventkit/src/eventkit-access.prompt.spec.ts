@@ -10,11 +10,11 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 
 // A person at the Mac runs this suite (npx nx run sdk-apple-eventkit:test-prompt)
 // and answers each prompt, either way. Each test launches an app that macOS
@@ -74,68 +74,70 @@ try {
 writeFileSync(output, JSON.stringify({ before, read, after: service.status() }));
 `;
 
-for (const { entity, service, denied } of [
-  {
-    entity: 'events',
-    service: 'Calendar',
-    denied: 'CalendarUnavailableError',
-  },
-  {
-    entity: 'reminders',
-    service: 'Reminders',
-    denied: 'RemindersUnavailableError',
-  },
-]) {
-  test(
-    `a read of ${entity} that macOS has decided nothing for asks through tcc and reads with the answer`,
-    { timeout: 600_000 },
-    async () => {
-      // Arrange
-      // LaunchServices finds no app in a temporary folder by its identifier,
-      // and tccutil resets a grant through that lookup, so the app is built
-      // under Caches.
-      await using scratch = await new TemporaryFiles().directory(
-        'eventkit-prompt-',
-        { parent: join(homedir(), 'Library', 'Caches') },
-      );
-      const folder = await realpath(scratch.path);
-      const bundle = join(folder, 'EventKit Prompt.app');
-      await app(bundle);
-      const script = join(folder, 'probe.mjs');
-      await writeFile(script, probe);
-      const output = join(folder, 'result.json');
-      const log = join(folder, 'stderr.log');
-
-      try {
-        // Act
-        await run('/usr/bin/open', [
-          '-n',
-          '-W',
-          '--stderr',
-          log,
-          bundle,
-          '--args',
-          script,
-          import.meta.resolve('@eltjs/sdk-apple-eventkit'),
-          import.meta.resolve('@zukhruf/tcc'),
-          fileURLToPath(
-            import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
-          ),
-          entity,
-          output,
-        ]);
-
-        // Assert
-        const result = await readFile(output, 'utf8').catch(async () =>
-          assert.fail(await readFile(log, 'utf8')),
-        );
-        const { before, read, after } = JSON.parse(result);
-        assert.equal(before, 'notDetermined');
-        assert.notEqual(after, 'notDetermined');
-        assert.equal(read, after === 'fullAccess' ? 'read' : denied);
-      } finally {
-        await run('/usr/bin/tccutil', ['reset', service, identifier]);
-      }
+void test.each(
+  [
+    {
+      entity: 'events',
+      service: 'Calendar',
+      denied: 'CalendarUnavailableError',
     },
-  );
-}
+    {
+      entity: 'reminders',
+      service: 'Reminders',
+      denied: 'RemindersUnavailableError',
+    },
+  ],
+  ({ entity, service, denied }) =>
+    test(
+      `a read of ${entity} that macOS has decided nothing for asks through tcc and reads with the answer`,
+      { timeout: 600_000 },
+      async () => {
+        // Arrange
+        // LaunchServices finds no app in a temporary folder by its identifier,
+        // and tccutil resets a grant through that lookup, so the app is built
+        // under Caches.
+        await using scratch = await new TemporaryFiles().directory(
+          'eventkit-prompt-',
+          { parent: join(homedir(), 'Library', 'Caches') },
+        );
+        const folder = await realpath(scratch.path);
+        const bundle = join(folder, 'EventKit Prompt.app');
+        await app(bundle);
+        const script = join(folder, 'probe.mjs');
+        await writeFile(script, probe);
+        const output = join(folder, 'result.json');
+        const log = join(folder, 'stderr.log');
+
+        try {
+          // Act
+          await run('/usr/bin/open', [
+            '-n',
+            '-W',
+            '--stderr',
+            log,
+            bundle,
+            '--args',
+            script,
+            import.meta.resolve('@eltjs/sdk-apple-eventkit'),
+            import.meta.resolve('@zukhruf/tcc'),
+            fileURLToPath(
+              import.meta.resolve('@eltjs/sdk-apple-eventkit/eventkit-helper'),
+            ),
+            entity,
+            output,
+          ]);
+
+          // Assert
+          const result = await readFile(output, 'utf8').catch(async () =>
+            assert.fail(await readFile(log, 'utf8')),
+          );
+          const { before, read, after } = JSON.parse(result);
+          assert.equal(before, 'notDetermined');
+          assert.notEqual(after, 'notDetermined');
+          assert.equal(read, after === 'fullAccess' ? 'read' : denied);
+        } finally {
+          await run('/usr/bin/tccutil', ['reset', service, identifier]);
+        }
+      },
+    ),
+);

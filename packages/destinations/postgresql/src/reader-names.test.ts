@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { Postgres } from '@zukhruf/testing/postgres';
 import postgres from 'postgres';
 
@@ -391,26 +391,36 @@ test('a copy whose stream leaves a field undescribed fails at declaration, namin
   );
 });
 
-test('a reader name that the sync history publishes in marts is refused, and a name that starts with _elt_ is renamed', () => {
-  const destination = new PostgresDestination({
-    url: 'postgres://nobody@127.0.0.1:1/none',
-  });
-
-  for (const name of [
+void test.each(
+  [
     'catalog',
     'sync_attempts',
     'sync_status',
     'stream_status',
     'extraction_coverage',
     'derived_status',
-  ])
-    assert.throws(
-      () => destination.table(name),
-      new RegExp(
-        `^TypeError: Reader name ${name} is a relation the destination makes$`,
-      ),
-      name,
-    );
+  ],
+  (name) =>
+    test(`the reader name ${name}, a relation the sync history publishes in marts, is refused`, () => {
+      const destination = new PostgresDestination({
+        url: 'postgres://nobody@127.0.0.1:1/none',
+      });
+
+      assert.throws(
+        () => destination.table(name),
+        new RegExp(
+          `^TypeError: Reader name ${name} is a relation the destination makes$`,
+        ),
+        name,
+      );
+    }),
+);
+
+test('a reader name that starts with _elt_ is renamed, and a name that differs from a published relation only in case is kept', () => {
+  const destination = new PostgresDestination({
+    url: 'postgres://nobody@127.0.0.1:1/none',
+  });
+
   assert.match(destination.table('_elt_notes').name, /^elt_notes_[0-9a-f]{8}$/);
   assert.equal(destination.table('Catalog').name, 'Catalog');
 });

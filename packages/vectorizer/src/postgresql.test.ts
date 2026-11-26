@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import {
   ContextWindow,
   FusionRetriever,
@@ -569,7 +569,7 @@ test('with indexing none the vectors have no vector index', async () => {
   );
 });
 
-for (const incremental of [false, true])
+void test.each([false, true], (incremental) =>
   test(`a row that the host stops giving leaves the passages, the keywords and the vectors, and a vector that another row shares stays (${incremental ? 'incremental with append_dedup' : 'full refresh with overwrite_dedup'})`, async () => {
     await using database = await databases.database();
     const url = database.connectionString;
@@ -596,21 +596,28 @@ for (const incremental of [false, true])
       await column('SELECT "source" FROM marts.docs_chunks_parts'),
       ['b'],
     );
-    for (const relation of [
+    const relations = [
       'marts.docs_passages',
       '_warehouse.raw_docs_keywords',
       'marts.docs_passage_vectors',
-    ])
-      assert.deepEqual(
-        await column(`SELECT "id" FROM ${relation}`),
-        ['b:0'],
-        relation,
-      );
+    ];
+    assert.deepEqual(
+      Object.fromEntries(
+        await Promise.all(
+          relations.map(async (relation) => [
+            relation,
+            await column(`SELECT "id" FROM ${relation}`),
+          ]),
+        ),
+      ),
+      Object.fromEntries(relations.map((relation) => [relation, ['b:0']])),
+    );
     assert.deepEqual(
       await column('SELECT count(*)::int FROM marts.docs_chunk_vectors'),
       [1],
     );
-  });
+  }),
+);
 
 test('a key of one integer column gives its plain value as the source, and joins the row it comes from', async () => {
   await using database = await databases.database();

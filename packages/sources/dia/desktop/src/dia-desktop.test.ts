@@ -10,10 +10,10 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { test } from 'node:test';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 
@@ -171,53 +171,54 @@ const ids = (out: string) =>
 
 const unchanged = { archivedTabs: { count: 0, deleted: 0 } };
 
-test('an archive in a format Dia did not write before fails the pass, names where it is wrong, and keeps what loaded', async () => {
-  await using dir = await new TemporaryFiles().directory('elt-dia-');
-  await writeArchive(dir.path, { 'Profile 1': [page] });
-  const run = await pipeline(
-    new DiaDesktopSource({ home: dir.path }),
-    dir.path,
-    globalThis,
-  );
-  const out = join(dir.path, 'out.sqlite');
-  await run.run();
+const brokenArchives: [
+  string,
+  Record<string, readonly Tab[]>,
+  ((containers: unknown[]) => unknown) | undefined,
+  RegExp,
+][] = [
+  [
+    'a new version',
+    { 'Profile 1': [page] },
+    (containers) => ({ version: 3, containers }),
+    /version is 3, not 2/,
+  ],
+  [
+    'a date that is not a number',
+    { 'Profile 1': [page, { ...other, archiveDate: '2026-10-03' }] },
+    undefined,
+    /containers\[0\]\.archivedTabs\[1\]\.archiveDate is not a number/,
+  ],
+  [
+    'a variant with two cases',
+    {
+      'Profile 1': [
+        { ...page, variant: { ...page.variant, ...supertab.variant } },
+      ],
+    },
+    undefined,
+    /containers\[0\]\.archivedTabs\[0\]\.variant has 2 cases, not 1/,
+  ],
+  [
+    'a container that is not a profile',
+    { 'Profile 1': [page] },
+    () => ({ version: 2, containers: [{ id: {}, archivedTabs: [] }] }),
+    /containers\[0\]\.id\.profile is not an object/,
+  ],
+];
 
-  const broken: [
-    string,
-    Record<string, readonly Tab[]>,
-    ((containers: unknown[]) => unknown) | undefined,
-    RegExp,
-  ][] = [
-    [
-      'a new version',
-      { 'Profile 1': [page] },
-      (containers) => ({ version: 3, containers }),
-      /version is 3, not 2/,
-    ],
-    [
-      'a date that is not a number',
-      { 'Profile 1': [page, { ...other, archiveDate: '2026-10-03' }] },
-      undefined,
-      /containers\[0\]\.archivedTabs\[1\]\.archiveDate is not a number/,
-    ],
-    [
-      'a variant with two cases',
-      {
-        'Profile 1': [
-          { ...page, variant: { ...page.variant, ...supertab.variant } },
-        ],
-      },
-      undefined,
-      /containers\[0\]\.archivedTabs\[0\]\.variant has 2 cases, not 1/,
-    ],
-    [
-      'a container that is not a profile',
-      { 'Profile 1': [page] },
-      () => ({ version: 2, containers: [{ id: {}, archivedTabs: [] }] }),
-      /containers\[0\]\.id\.profile is not an object/,
-    ],
-  ];
-  for (const [label, profiles, document, message] of broken) {
+void test.each(brokenArchives, ([label, profiles, document, message]) =>
+  test(`an archive in a format Dia did not write before fails the pass, names where it is wrong, and keeps what loaded: ${label}`, async () => {
+    await using dir = await new TemporaryFiles().directory('elt-dia-');
+    await writeArchive(dir.path, { 'Profile 1': [page] });
+    const run = await pipeline(
+      new DiaDesktopSource({ home: dir.path }),
+      dir.path,
+      globalThis,
+    );
+    const out = join(dir.path, 'out.sqlite');
+    await run.run();
+
     await writeArchive(dir.path, profiles, document);
     await assert.rejects(
       run.run(),
@@ -231,7 +232,21 @@ test('an archive in a format Dia did not write before fails the pass, names wher
       },
       label,
     );
-  }
+
+    assert.deepEqual(ids(out), [`Profile 1/${page.id}`]);
+  }),
+);
+
+test('an archive read in the middle of a write that is not a rename fails the pass as not JSON, and keeps what loaded', async () => {
+  await using dir = await new TemporaryFiles().directory('elt-dia-');
+  await writeArchive(dir.path, { 'Profile 1': [page] });
+  const run = await pipeline(
+    new DiaDesktopSource({ home: dir.path }),
+    dir.path,
+    globalThis,
+  );
+  const out = join(dir.path, 'out.sqlite');
+  await run.run();
   // A read in the middle of a write that is not a rename sees part of it.
   await writeFile(diaArchivePath(dir.path), '{"version":2,"contain');
   await assert.rejects(run.run(), (error) => {
@@ -496,22 +511,23 @@ test('a rewrite that orders keys differently writes nothing, and an edited tab i
   );
 });
 
-test('an import scope keeps the tabs of the selected profiles archived within its dates', async () => {
-  const cases: [ImportScope, string[]][] = [
-    [{ collectionIds: ['Default'] }, [`Default/${other.id}`]],
-    [
-      {
-        startAt: '2026-10-01T09:00:00.124Z',
-        endAt: '2026-10-03T09:00:00.123Z',
-      },
-      [`Profile 1/${supertab.id}`],
-    ],
-    [
-      { collectionIds: ['Profile 1'], startAt: '2026-10-01T09:00:00.123Z' },
-      [`Profile 1/${page.id}`, `Profile 1/${supertab.id}`],
-    ],
-  ];
-  for (const [scope, expected] of cases) {
+const importScopes: [ImportScope, string[]][] = [
+  [{ collectionIds: ['Default'] }, [`Default/${other.id}`]],
+  [
+    {
+      startAt: '2026-10-01T09:00:00.124Z',
+      endAt: '2026-10-03T09:00:00.123Z',
+    },
+    [`Profile 1/${supertab.id}`],
+  ],
+  [
+    { collectionIds: ['Profile 1'], startAt: '2026-10-01T09:00:00.123Z' },
+    [`Profile 1/${page.id}`, `Profile 1/${supertab.id}`],
+  ],
+];
+
+void test.each(importScopes, ([scope, expected]) =>
+  test(`an import scope keeps the tabs of the selected profiles archived within its dates: ${JSON.stringify(scope)}`, async () => {
     await using dir = await new TemporaryFiles().directory('elt-dia-');
     await writeArchive(dir.path, {
       'Profile 1': [page, supertab],
@@ -531,8 +547,8 @@ test('an import scope keeps the tabs of the selected profiles archived within it
       expected,
       JSON.stringify(scope),
     );
-  }
-});
+  }),
+);
 
 test('a pass is current as of Dia’s last write of its archive', async () => {
   await using dir = await new TemporaryFiles().directory('elt-dia-');

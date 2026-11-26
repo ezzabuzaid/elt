@@ -5,11 +5,11 @@ import { chmod, mkdir, readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 
@@ -456,53 +456,59 @@ const tableSizes = (out: string) =>
     ]),
   );
 
-test('a pass whose bundle cannot be read fails the run, naming the pass, and every loaded row stays', async () => {
-  await using dir = await new TemporaryFiles().directory('elt-wallet-');
-  walletFixture(dir.path);
-  const run = await pipeline(
-    new AppleWalletSource({ directory: dir.path }),
-    dir.path,
-  );
-  const out = join(dir.path, 'out.sqlite');
-  await run.run();
-  const loaded = tableSizes(out);
-  using wallet = new ScratchWallet(dir.path, { existing: true });
-  const bundle = wallet.bundle(eventTicket.uniqueId);
-  const breakages = [
-    // A bundle gone while its row stays.
-    () => rmSync(bundle, { recursive: true }),
-    // A pass.json whose date has no time zone, which PassKit's format
-    // requires.
-    () => {
-      wallet.update({
-        ...eventTicket,
-        files: {
-          ...eventTicket.files,
-          'pass.json': String(eventTicket.files['pass.json']).replace(
-            '2026-02-13T23:00:00.250Z',
-            '2026-02-13T23:00',
-          ),
-        },
-      });
+void test.each(
+  [
+    {
+      name: 'its bundle is gone while its row stays',
+      breakage: (wallet: ScratchWallet, bundle: string) =>
+        rmSync(bundle, { recursive: true }),
     },
-  ];
+    {
+      // PassKit's format requires a time zone.
+      name: 'its pass.json has a date with no time zone',
+      breakage: (wallet: ScratchWallet) => {
+        wallet.update({
+          ...eventTicket,
+          files: {
+            ...eventTicket.files,
+            'pass.json': String(eventTicket.files['pass.json']).replace(
+              '2026-02-13T23:00:00.250Z',
+              '2026-02-13T23:00',
+            ),
+          },
+        });
+      },
+    },
+  ],
+  ({ name, breakage }) =>
+    test(`a pass whose bundle cannot be read because ${name} fails the run, naming the pass, and every loaded row stays`, async () => {
+      await using dir = await new TemporaryFiles().directory('elt-wallet-');
+      walletFixture(dir.path);
+      const run = await pipeline(
+        new AppleWalletSource({ directory: dir.path }),
+        dir.path,
+      );
+      const out = join(dir.path, 'out.sqlite');
+      await run.run();
+      const loaded = tableSizes(out);
+      using wallet = new ScratchWallet(dir.path, { existing: true });
+      const bundle = wallet.bundle(eventTicket.uniqueId);
 
-  for (const breakage of breakages) {
-    wallet.update(eventTicket);
-    breakage();
+      wallet.update(eventTicket);
+      breakage(wallet, bundle);
 
-    await assert.rejects(run.run(), (error) => {
-      assert.ok(error instanceof PipelineError);
-      assert.equal(error.errors.length, streamNames.length);
-      for (const cause of error.errors) {
-        assert.ok(cause instanceof PassBundleError);
-        assert.ok(cause.message.includes(eventTicket.uniqueId));
-      }
-      return true;
-    });
-    assert.deepEqual(tableSizes(out), loaded);
-  }
-});
+      await assert.rejects(run.run(), (error) => {
+        assert.ok(error instanceof PipelineError);
+        assert.equal(error.errors.length, streamNames.length);
+        for (const cause of error.errors) {
+          assert.ok(cause instanceof PassBundleError);
+          assert.ok(cause.message.includes(eventTicket.uniqueId));
+        }
+        return true;
+      });
+      assert.deepEqual(tableSizes(out), loaded);
+    }),
+);
 
 // Each kind of failure a run's copies reported, once.
 function failureTypes(error: PipelineError<Target>): string[] {
@@ -1485,21 +1491,20 @@ test('a Wallet watch loads each commit while passd keeps its store open, and sto
       { signal: t.signal, interval: 10 },
     );
   const watching = run.watch({ signal: controller.signal });
-  for (const change of [
-    () => passd.add(eventTicket),
-    // CloudKit bookkeeping commits without changing a pass.
-    () =>
-      passd.exec(
-        "INSERT INTO cloud_store_zone (pid, zone_name) VALUES (1, 'passes')",
-      ),
-    () => {},
-  ]) {
+  const nextPass = async () => {
     const pass = await passed(watching.next());
     assert.ok(!pass.done);
     assert.equal(pass.value.kind, 'pass');
     batches.push(counts(pass.value.outcomes));
-    change();
-  }
+  };
+  await nextPass();
+  passd.add(eventTicket);
+  await nextPass();
+  // CloudKit bookkeeping commits without changing a pass.
+  passd.exec(
+    "INSERT INTO cloud_store_zone (pid, zone_name) VALUES (1, 'passes')",
+  );
+  await nextPass();
   // Past the next one-second poll, so a spurious batch would show.
   const ending = watching.next();
   await clock.tickAsync(1500);

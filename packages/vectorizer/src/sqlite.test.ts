@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import {
   ContextWindow,
   FusionRetriever,
@@ -316,7 +316,7 @@ test('a member that the store refuses fails only the vectorizer: the run rejects
   );
 });
 
-for (const name of ['docs', 'docs_passages'])
+void test.each(['docs', 'docs_passages'], (name) =>
   test(`the name of the vectorizer and the names of its members count in the check of distinct names: a view named ${name} stops the run before any pass`, async () => {
     await using scratch = await new TemporaryFiles().directory('vectorizer-');
     const tasks = tasksPipeline({
@@ -338,7 +338,8 @@ for (const name of ['docs', 'docs_passages'])
       message: 'Pipeline derived dataset names must be distinct',
     });
     assert.equal(existsSync(tasks.path), false);
-  });
+  }),
+);
 
 test('a view after the vectorizer that reads its passages waits while the passages wait', async () => {
   await using scratch = await new TemporaryFiles().directory('vectorizer-');
@@ -802,7 +803,7 @@ test('a key of one integer column gives its plain value as the source, and joins
   );
 });
 
-for (const incremental of [false, true])
+void test.each([false, true], (incremental) =>
   test(`a row that the host stops giving leaves the passages, the keywords and the vectors, and a vector that another row shares stays (${incremental ? 'incremental with append_dedup' : 'full refresh with overwrite_dedup'})`, async () => {
     await using scratch = await new TemporaryFiles().directory('vectorizer-');
     let rows = [
@@ -831,24 +832,29 @@ for (const incremental of [false, true])
       ),
       ['b'],
     );
-    for (const relation of [
+    const relations = [
       'docs_passages',
       'docs_keywords',
       'docs_passage_vectors',
-    ])
-      assert.deepEqual(
-        rowsOf(tasks.path, `SELECT "id" FROM "${relation}"`).map(
-          ({ id }) => id,
-        ),
-        ['b:0'],
-        relation,
-      );
+    ];
+    assert.deepEqual(
+      Object.fromEntries(
+        relations.map((relation) => [
+          relation,
+          rowsOf(tasks.path, `SELECT "id" FROM "${relation}"`).map(
+            ({ id }) => id,
+          ),
+        ]),
+      ),
+      Object.fromEntries(relations.map((relation) => [relation, ['b:0']])),
+    );
     assert.equal(
       rowsOf(tasks.path, 'SELECT count(*) AS "n" FROM "docs_chunk_vectors"')[0]
         ?.n,
       1,
     );
-  });
+  }),
+);
 
 test('after a remake of the keyword index its FTS5 index checks and a keyword search finds the passages', async () => {
   await using scratch = await new TemporaryFiles().directory('vectorizer-');
@@ -1016,9 +1022,8 @@ test('a string model id and the provider model write one model identity, which a
   }
 });
 
-test('the vectorizer refuses a metadata column that has the name of a passage column, a metadata column listed twice and a key column listed twice', async () => {
-  await using scratch = await new TemporaryFiles().directory('vectorizer-');
-  for (const [metadata, named] of [
+void test.each(
+  [
     [['rowid'], 'rowid'],
     [['ID'], 'ID'],
     [['Source'], 'Source'],
@@ -1027,69 +1032,83 @@ test('the vectorizer refuses a metadata column that has the name of a passage co
     [['END'], 'END'],
     [['text'], 'text'],
     [['category', 'category'], 'category'],
-  ] as const)
-    assert.throws(
-      () =>
-        tasksPipeline({
-          directory: scratch.path,
-          rows: () => [],
-          metadata,
-        }),
-      (error: unknown) =>
-        error instanceof TypeError && error.message.includes(named),
-    );
-  const destination = new SQLiteDestination({
-    path: join(scratch.path, 'keys.sqlite'),
-  });
-  for (const [first, second] of [
+  ] as const,
+  ([metadata, named]) =>
+    test(`the vectorizer refuses a metadata column that has the name of a passage column and a metadata column listed twice: ${JSON.stringify(metadata)}`, async () => {
+      await using scratch = await new TemporaryFiles().directory('vectorizer-');
+      assert.throws(
+        () =>
+          tasksPipeline({
+            directory: scratch.path,
+            rows: () => [],
+            metadata,
+          }),
+        (error: unknown) =>
+          error instanceof TypeError && error.message.includes(named),
+      );
+    }),
+);
+
+void test.each(
+  [
     ['name', 'name'],
     ['name', 'Name'],
-  ] as const)
-    assert.throws(
-      () =>
-        new Vectorizer({
-          into: destination,
-          from: destination.table('tasks'),
-          name: 'docs',
-          description: 'The tasks.',
-          key: [first, second],
-          loading: { columns: ['title'] },
-          chunking: 'none',
-          embedding: {
-            model: new LetterModel(),
-            dimensions: 26,
-            clock: globalThis,
-          },
-        }),
-      (error: unknown) =>
-        error instanceof TypeError &&
-        error.message.includes(`key column ${second}`),
-    );
-});
+  ] as const,
+  ([first, second]) =>
+    test(`the vectorizer refuses a key column listed twice: ${first} and ${second}`, async () => {
+      await using scratch = await new TemporaryFiles().directory('vectorizer-');
+      const destination = new SQLiteDestination({
+        path: join(scratch.path, 'keys.sqlite'),
+      });
+      assert.throws(
+        () =>
+          new Vectorizer({
+            into: destination,
+            from: destination.table('tasks'),
+            name: 'docs',
+            description: 'The tasks.',
+            key: [first, second],
+            loading: { columns: ['title'] },
+            chunking: 'none',
+            embedding: {
+              model: new LetterModel(),
+              dimensions: 26,
+              clock: globalThis,
+            },
+          }),
+        (error: unknown) =>
+          error instanceof TypeError &&
+          error.message.includes(`key column ${second}`),
+      );
+    }),
+);
 
-for (const declaration of [
-  { metadata: ['owner'] },
-  { key: 'owner' },
-  { columns: ['title', 'owner'] },
-] as const)
-  test(`a run refuses a vectorizer that reads a column the stream does not declare, before it reads: ${JSON.stringify(declaration)}`, async () => {
-    await using scratch = await new TemporaryFiles().directory('vectorizer-');
-    let read = false;
-    const tasks = tasksPipeline({
-      directory: scratch.path,
-      rows: () => {
-        read = true;
-        return [];
-      },
-      ...declaration,
-    });
+void test.each(
+  [
+    { metadata: ['owner'] },
+    { key: 'owner' },
+    { columns: ['title', 'owner'] },
+  ] as const,
+  (declaration) =>
+    test(`a run refuses a vectorizer that reads a column the stream does not declare, before it reads: ${JSON.stringify(declaration)}`, async () => {
+      await using scratch = await new TemporaryFiles().directory('vectorizer-');
+      let read = false;
+      const tasks = tasksPipeline({
+        directory: scratch.path,
+        rows: () => {
+          read = true;
+          return [];
+        },
+        ...declaration,
+      });
 
-    await assert.rejects(tasks.pipeline.run(), {
-      name: 'TypeError',
-      message: /the column owner of tasks/,
-    });
-    assert.equal(read, false);
-  });
+      await assert.rejects(tasks.pipeline.run(), {
+        name: 'TypeError',
+        message: /the column owner of tasks/,
+      });
+      assert.equal(read, false);
+    }),
+);
 
 // The text of a plain text file.
 class TextParser extends DocumentParser {

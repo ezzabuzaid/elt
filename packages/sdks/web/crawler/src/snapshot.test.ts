@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 
+import { test } from '@zukhruf/parameterized-test';
 import { Msw } from '@zukhruf/testing/msw';
-import { test } from '@zukhruf/testing/node';
 import got from 'got';
 import { HttpResponse, http } from 'msw';
 import { z } from 'zod';

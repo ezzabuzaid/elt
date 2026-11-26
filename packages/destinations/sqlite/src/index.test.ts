@@ -5,12 +5,12 @@ import { EventEmitter, on, once } from 'node:events';
 import { readFileSync, rmSync, statSync } from 'node:fs';
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { Latch } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import {
   ClosedWorld,
   Coverage,
@@ -816,36 +816,37 @@ test('an array item whose field is not a scalar fails its copy', async () => {
   );
 });
 
-test('a source accepts only the stream objects from its own catalog', async () => {
-  class OwnedSource extends LiveSource {
-    override coverage() {
-      return { description: 'test', selection: {} };
-    }
-
-    protected override async open() {
-      return new AsyncDisposableStack();
-    }
-
-    readonly identity = 'owned-test';
-    readonly records = new Stream({
-      name: 'records',
-      jsonSchema: {
-        description: 'One records record.',
-        type: 'object',
-        properties: {
-          id: { description: 'Id of the record.', type: 'string' },
-        },
-        required: ['id'],
-      },
-      supportedSyncModes: ['full_refresh'],
-    });
-    protected readonly catalog = new Catalog([this.records]);
-    override changeSignals(streams: readonly Stream[]) {
-      return filled(streams);
-    }
-    protected override async *extract() {}
+// A source whose catalog holds one stream, records.
+class OwnedSource extends LiveSource {
+  override coverage() {
+    return { description: 'test', selection: {} };
   }
 
+  protected override async open() {
+    return new AsyncDisposableStack();
+  }
+
+  readonly identity = 'owned-test';
+  readonly records = new Stream({
+    name: 'records',
+    jsonSchema: {
+      description: 'One records record.',
+      type: 'object',
+      properties: {
+        id: { description: 'Id of the record.', type: 'string' },
+      },
+      required: ['id'],
+    },
+    supportedSyncModes: ['full_refresh'],
+  });
+  protected readonly catalog = new Catalog([this.records]);
+  override changeSignals(streams: readonly Stream[]) {
+    return filled(streams);
+  }
+  protected override async *extract() {}
+}
+
+test('a source discovers the stream objects of its own catalog, and a copy of one of them validates', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-owned-');
   const source = new OwnedSource();
   const destination = new SQLiteDestination({
@@ -853,24 +854,41 @@ test('a source accepts only the stream objects from its own catalog', async () =
   });
 
   assert.deepEqual((await source.discover()).streams, [source.records]);
-  for (const stream of [
-    new Stream({ ...source.records }),
-    new OwnedSource().records,
-  ]) {
-    assert.throws(
-      () =>
-        new Copy(stream, destination.table('records')).validate(
-          source,
-          destination,
-        ),
-      /not from this source's discovered catalog/,
-    );
-  }
   new Copy(source.records, destination.table('records')).validate(
     source,
     destination,
   );
 });
+
+void test.each(
+  [
+    {
+      name: 'a copy of its stream',
+      stream: (source: OwnedSource) => new Stream({ ...source.records }),
+    },
+    {
+      name: 'the stream of another instance of the source',
+      stream: () => new OwnedSource().records,
+    },
+  ],
+  (row) =>
+    test(`a source refuses ${row.name}, which is not from its own catalog`, async () => {
+      await using scratch = await new TemporaryFiles().directory('elt-owned-');
+      const source = new OwnedSource();
+      const destination = new SQLiteDestination({
+        path: join(scratch.path, 'owned.sqlite'),
+      });
+
+      assert.throws(
+        () =>
+          new Copy(row.stream(source), destination.table('records')).validate(
+            source,
+            destination,
+          ),
+        /not from this source's discovered catalog/,
+      );
+    }),
+);
 
 test('watch loads and checkpoints before yielding, coalesces edits during a load, and closes on break', async () => {
   const changes = new EventEmitter();
@@ -2382,32 +2400,34 @@ test('a grouped pass whose groups are all unchanged, stopped by the host partway
   assert.deepEqual(await pipeline.run(), [{ copy, count: 0, deleted: 0 }]);
 });
 
+const expiringFields = {
+  id: { type: 'string', description: 'Event id.' },
+  seenAt: {
+    type: 'string',
+    format: 'date-time',
+    description: 'When the event was seen.',
+  },
+} as const;
+
+const expiringDeclaration = {
+  jsonSchema: {
+    description: 'One test record.',
+    type: 'object',
+    properties: expiringFields,
+  },
+  primaryKey: ['id'],
+  supportedSyncModes: ['full_refresh', 'incremental'],
+  sourceDefinedCursor: true,
+  emitsDeletes: true,
+  expiresBy: 'seenAt',
+} as const;
+
 test('an expiring stream keeps the rows its upstream expired and deletes only what vanished after the horizon', async () => {
   type Row = { id: string; seenAt: string };
   type Group = { key: string; fingerprint: string; rows: Row[] };
   let scan: { horizon: string; groups: Group[] } = { horizon: '', groups: [] };
-  const fields = {
-    id: { type: 'string', description: 'Event id.' },
-    seenAt: {
-      type: 'string',
-      format: 'date-time',
-      description: 'When the event was seen.',
-    },
-  } as const;
-  const declaration = {
-    jsonSchema: {
-      description: 'One test record.',
-      type: 'object',
-      properties: fields,
-    },
-    primaryKey: ['id'],
-    supportedSyncModes: ['full_refresh', 'incremental'],
-    sourceDefinedCursor: true,
-    emitsDeletes: true,
-    expiresBy: 'seenAt',
-  } as const;
-  const events = new Stream({ name: 'events', ...declaration });
-  const grouped = new Stream({ name: 'grouped', ...declaration });
+  const events = new Stream({ name: 'events', ...expiringDeclaration });
+  const grouped = new Stream({ name: 'grouped', ...expiringDeclaration });
   class ExpiringSource extends LiveSource {
     override coverage() {
       return { description: 'test', selection: {} };
@@ -2576,31 +2596,49 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
     () => new Retention('yesterday'),
     /Retention horizon yesterday is not a timestamp/,
   );
-  for (const invalid of [
-    { ...declaration, expiresBy: 'id' },
-    { ...declaration, expiresBy: 'missing' },
-    { ...declaration, emitsDeletes: undefined },
+});
+
+void test.each(
+  [
     {
-      ...declaration,
-      jsonSchema: {
-        description: 'One test record.',
-        type: 'object',
-        properties: {
-          ...fields,
-          seenAt: {
-            description: 'Seen At of the record.',
-            type: ['string', 'null'],
-            format: 'date-time',
+      name: 'whose expiresBy names a property that is no date-time',
+      invalid: { ...expiringDeclaration, expiresBy: 'id' },
+    },
+    {
+      name: 'whose expiresBy names no property',
+      invalid: { ...expiringDeclaration, expiresBy: 'missing' },
+    },
+    {
+      name: 'that emits no deletions',
+      invalid: { ...expiringDeclaration, emitsDeletes: undefined },
+    },
+    {
+      name: 'whose expiresBy property can be null',
+      invalid: {
+        ...expiringDeclaration,
+        jsonSchema: {
+          description: 'One test record.',
+          type: 'object',
+          properties: {
+            ...expiringFields,
+            seenAt: {
+              description: 'Seen At of the record.',
+              type: ['string', 'null'],
+              format: 'date-time',
+            },
           },
         },
       },
     },
-  ] as const)
-    assert.throws(
-      () => new Stream({ name: 'invalid', ...invalid }),
-      /expiresBy must name a non-null date-time property of a stream that emits deletions/,
-    );
-});
+  ] as const,
+  ({ name, invalid }) =>
+    test(`an expiring stream ${name} is refused when it is constructed`, () => {
+      assert.throws(
+        () => new Stream({ name: 'invalid', ...invalid }),
+        /expiresBy must name a non-null date-time property of a stream that emits deletions/,
+      );
+    }),
+);
 
 test('a read that covers part of a stream deletes the vanished rows it covers, keeps the rest, and deletes those once a read covers them again', async () => {
   type Row = { channel: string; ts: string };
@@ -5680,7 +5718,9 @@ test('text with a lone surrogate fails its stream instead of loading as a replac
   );
 });
 
-test('string formats load exactly into checked columns, and int64 cursors and keys work by value', async () => {
+// The ledger import of the string format tests: a pipeline that loads
+// the messages a test gives into one table of a new SQLite file.
+function ledgerImport(directory: string) {
   let messages: SourceMessage[] = [];
   const described = (description: string) => ({ description });
   const ledger = new Stream({
@@ -5767,9 +5807,8 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
     },
   });
 
-  await using scratch = await new TemporaryFiles().directory('elt-format-');
   const destination = new SQLiteDestination({
-    path: join(scratch.path, 'ledger.sqlite'),
+    path: join(directory, 'ledger.sqlite'),
   });
   const pipeline = new Pipeline({
     clock: globalThis,
@@ -5780,7 +5819,7 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
         source: new LedgerSource(),
         destination,
         checkpoints: new SQLiteCheckpointStore({
-          path: join(scratch.path, 'state.sqlite'),
+          path: join(directory, 'state.sqlite'),
         }),
         steps: [
           new Copy(ledger, destination.table('ledger'), {
@@ -5800,15 +5839,24 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
     });
     return database.prepare(sql).all();
   };
+  const run = (next: SourceMessage[]) => {
+    messages = next;
+    return pipeline.run();
+  };
+  return { destination, entry, read, run };
+}
+
+test('string formats load exactly into their columns, and int64 cursors and keys work by value', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-format-');
+  const { entry, read, run } = ledgerImport(scratch.path);
 
   // As text "9" sorts after "10"; as doubles the second entry's versions tie.
-  messages = [
+  await run([
     entry('9223372036854775807', '9', '1.0000'),
     entry('9223372036854775807', '10', '2.0000'),
     entry('9007199254740993', '9007199254740992', '-0.5000'),
     entry('9007199254740993', '9007199254740993', '922337203685477.5807'),
-  ];
-  await pipeline.run();
+  ]);
 
   assert.deepEqual(
     read(
@@ -5852,36 +5900,43 @@ test('string formats load exactly into checked columns, and int64 cursors and ke
       'ledger.version': 'int64',
     },
   );
-  {
-    using database = open(destination.path);
-    for (const [column, value] of [
-      ['at', '2025-01-02T03:04:05.123Z'],
-      ['at', '2025-02-30T03:04:05.1234567Z'],
-      ['local', '2025-01-02T03:04:05.1234567Z'],
-      ['clock', '23:59:59.0'],
-      ['clock', '25:00:00'],
-    ] as const)
-      assert.throws(
-        () =>
-          database.prepare(`UPDATE raw_ledger SET "${column}" = ?`).run(value),
-        /CHECK constraint failed/,
-      );
-  }
 
-  messages = [
+  await run([
     {
       type: 'DELETE',
       stream: 'ledger',
       key: { id: '9007199254740993' },
       cursor: '9007199254740994',
     },
-  ];
-  await pipeline.run();
+  ]);
   assert.deepEqual(
     read('SELECT id FROM ledger').map(({ id }) => id),
     [9223372036854775807n],
   );
 });
+
+void test.each(
+  [
+    ['at', '2025-01-02T03:04:05.123Z'],
+    ['at', '2025-02-30T03:04:05.1234567Z'],
+    ['local', '2025-01-02T03:04:05.1234567Z'],
+    ['clock', '23:59:59.0'],
+    ['clock', '25:00:00'],
+  ] as const,
+  ([column, value]) =>
+    test(`the checked column ${column} refuses the string ${value}`, async () => {
+      await using scratch = await new TemporaryFiles().directory('elt-format-');
+      const { destination, entry, run } = ledgerImport(scratch.path);
+      await run([entry('9223372036854775807', '10', '2.0000')]);
+      using database = open(destination.path);
+
+      assert.throws(
+        () =>
+          database.prepare(`UPDATE raw_ledger SET "${column}" = ?`).run(value),
+        /CHECK constraint failed/,
+      );
+    }),
+);
 
 test('a reset replaces only its partition at the next commit, and one a failure dropped never reaches a later commit', async () => {
   const items = new Stream({

@@ -3,10 +3,10 @@ import { hash } from 'node:crypto';
 import { EventEmitter, on } from 'node:events';
 import { readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import { waitFor } from '@zukhruf/testing/async';
 import { HttpServer } from '@zukhruf/testing/http';
@@ -583,14 +583,19 @@ test('schema annotations follow each copy, including projections, append history
   );
 });
 
-test('invalid schema annotations fail before extraction or storage access', async () => {
-  await using database = await databases.database();
-  const history = new PostgresSyncHistory({ url: database.connectionString });
-  const destination = new PostgresDestination({
-    url: 'postgres://unused/unused',
-  });
-  for (const invalid of [null, 1, 'bad\0text', '\ud800']) {
-    for (const atRoot of [true, false]) {
+void test.each(
+  [null, 1, 'bad\0text', '\ud800'].flatMap((invalid) =>
+    [true, false].map((atRoot) => ({ invalid, atRoot })),
+  ),
+  ({ invalid, atRoot }) =>
+    test(`the invalid schema annotation ${JSON.stringify(invalid)} on the ${atRoot ? 'stream' : 'field'} fails before extraction or storage access`, async () => {
+      await using database = await databases.database();
+      const history = new PostgresSyncHistory({
+        url: database.connectionString,
+      });
+      const destination = new PostgresDestination({
+        url: 'postgres://unused/unused',
+      });
       const stream = new Stream({
         name: 'items',
         // @ts-expect-error -- null and 1 are deliberately mistyped descriptions the destination must reject
@@ -623,9 +628,8 @@ test('invalid schema annotations fail before extraction or storage access', asyn
         /JSON Schema description/,
       );
       assert.equal(source.extracted, 0);
-    }
-  }
-});
+    }),
+);
 
 test('file text survives replay, replacement and deletion with checkpoints', async () => {
   await using database = await databases.database();

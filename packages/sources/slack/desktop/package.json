@@ -13,15 +13,15 @@
     "@eltjs/elt": "*",
     "@eltjs/sdk-slack-desktop": "0.0.1",
     "@eltjs/source-apple-macos": "0.0.1",
-    "@zukhruf/snapshot-differential": "^0.8.137"
+    "@zukhruf/snapshot-differential": "^0.8.144"
   },
   "devDependencies": {
     "@eltjs/codec-chromium-indexeddb": "0.0.1",
     "@eltjs/elt-sqlite": "*",
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/fs": "^0.8.137",
-    "@zukhruf/sqlite-open": "^0.8.137",
-    "@zukhruf/tcc": "^0.8.137",
-    "@zukhruf/testing": "^0.8.137"
+    "@zukhruf/fs": "^0.8.144",
+    "@zukhruf/sqlite-open": "^0.8.144",
+    "@zukhruf/tcc": "^0.8.144",
+    "@zukhruf/testing": "^0.8.144"
   }
 }

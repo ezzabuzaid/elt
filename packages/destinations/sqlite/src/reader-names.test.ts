@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 
 import {
@@ -245,12 +245,8 @@ test('a copy whose stream leaves a field undescribed fails at declaration, namin
   assert.deepEqual(namedRelations(destination.path), []);
 });
 
-test('a reader name that the destination makes is refused', () => {
-  const destination = new SQLiteDestination({
-    path: '/nonexistent/notes.sqlite',
-  });
-
-  for (const name of [
+void test.each(
+  [
     'catalog',
     'Catalog',
     'sync_attempts',
@@ -258,14 +254,28 @@ test('a reader name that the destination makes is refused', () => {
     'stream_status',
     'extraction_coverage',
     'derived_status',
-  ])
-    assert.throws(
-      () => destination.table(name),
-      new RegExp(
-        `^TypeError: Reader name ${name} is a relation the destination makes$`,
-      ),
-      name,
-    );
+  ],
+  (name) =>
+    test(`the reader name ${name}, which the destination makes, is refused`, () => {
+      const destination = new SQLiteDestination({
+        path: '/nonexistent/notes.sqlite',
+      });
+
+      assert.throws(
+        () => destination.table(name),
+        new RegExp(
+          `^TypeError: Reader name ${name} is a relation the destination makes$`,
+        ),
+        name,
+      );
+    }),
+);
+
+test('a reader name that the destination does not make is accepted', () => {
+  const destination = new SQLiteDestination({
+    path: '/nonexistent/notes.sqlite',
+  });
+
   assert.equal(destination.table('notes').name, 'notes');
 });
 

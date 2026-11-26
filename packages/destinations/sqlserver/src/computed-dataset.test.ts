@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 
+import { test } from '@zukhruf/parameterized-test';
 import { waitFor } from '@zukhruf/testing/async';
 import { SqlServer } from '@zukhruf/testing/sqlserver';
 import { Vector } from '@zukhruf/vectors';
@@ -851,40 +851,43 @@ test(
   },
 );
 
-for (const [index, error] of [
+void test.each(
   [
-    { type: 'nonclustered', columns: ['size', 'missing'] },
-    'Computed dataset measures declares an index on missing, which [_warehouse].[raw_measures] does not have',
-  ],
-  [
-    { type: 'vector', column: 'label', metric: 'cosine' },
-    'Computed dataset measures declares a vector index on label, which is nvarchar(max), not a vector',
-  ],
-  [
-    { type: 'nonclustered', columns: ['label'] },
-    'Computed dataset measures cannot make label an index key: SQL Server refuses a column of type nvarchar(max) as one',
-  ],
-  [
-    { type: 'nonclustered', columns: ['vector'] },
-    'Computed dataset measures cannot make vector an index key: SQL Server refuses a column of type vector(3) as one',
-  ],
-] as const)
-  test(`an index ${JSON.stringify(index)} is refused when the dataset is constructed`, () => {
-    assert.throws(
-      () =>
-        new ComputedDataset({
-          into: new SqlServerDestination({
-            login: 'Server=none;Database=none',
+    [
+      { type: 'nonclustered', columns: ['size', 'missing'] },
+      'Computed dataset measures declares an index on missing, which [_warehouse].[raw_measures] does not have',
+    ],
+    [
+      { type: 'vector', column: 'label', metric: 'cosine' },
+      'Computed dataset measures declares a vector index on label, which is nvarchar(max), not a vector',
+    ],
+    [
+      { type: 'nonclustered', columns: ['label'] },
+      'Computed dataset measures cannot make label an index key: SQL Server refuses a column of type nvarchar(max) as one',
+    ],
+    [
+      { type: 'nonclustered', columns: ['vector'] },
+      'Computed dataset measures cannot make vector an index key: SQL Server refuses a column of type vector(3) as one',
+    ],
+  ] as const,
+  ([index, error]) =>
+    test(`an index ${JSON.stringify(index)} is refused when the dataset is constructed`, () => {
+      assert.throws(
+        () =>
+          new ComputedDataset({
+            into: new SqlServerDestination({
+              login: 'Server=none;Database=none',
+            }),
+            name: 'measures',
+            description: 'The measures of each record.',
+            from: [],
+            compute: new Measure(),
+            indexes: [index],
           }),
-          name: 'measures',
-          description: 'The measures of each record.',
-          from: [],
-          compute: new Measure(),
-          indexes: [index],
-        }),
-      new TypeError(error),
-    );
-  });
+        new TypeError(error),
+      );
+    }),
+);
 
 // A rule whose key is named distance, as the column of the distance that the
 // search of a vector index gives.
@@ -892,37 +895,40 @@ class DistanceMeasure extends Measure {
   override readonly key = { name: 'distance', description: 'The record.' };
 }
 
-for (const [compute, indexes, error] of [
+void test.each(
   [
-    new Measure(),
     [
-      { type: 'vector', column: 'vector', metric: 'cosine' },
-      { type: 'vector', column: 'vector', metric: 'euclidean' },
+      new Measure(),
+      [
+        { type: 'vector', column: 'vector', metric: 'cosine' },
+        { type: 'vector', column: 'vector', metric: 'euclidean' },
+      ],
+      'Computed dataset measures declares 2 vector indexes on [_warehouse].[raw_measures], and [marts].[measures_nearest] searches one',
     ],
-    'Computed dataset measures declares 2 vector indexes on [_warehouse].[raw_measures], and [marts].[measures_nearest] searches one',
-  ],
-  [
-    new DistanceMeasure(),
-    [{ type: 'vector', column: 'vector', metric: 'cosine' }],
-    'Computed dataset measures cannot search [_warehouse].[raw_measures] through [marts].[measures_nearest]: its column distance has the name of the distance that the search gives',
-  ],
-] as const)
-  test(`a search function whose name or columns clash is refused when the dataset is constructed: ${error}`, () => {
-    assert.throws(
-      () =>
-        new ComputedDataset({
-          into: new SqlServerDestination({
-            login: 'Server=none;Database=none',
+    [
+      new DistanceMeasure(),
+      [{ type: 'vector', column: 'vector', metric: 'cosine' }],
+      'Computed dataset measures cannot search [_warehouse].[raw_measures] through [marts].[measures_nearest]: its column distance has the name of the distance that the search gives',
+    ],
+  ] as const,
+  ([compute, indexes, error]) =>
+    test(`a search function whose name or columns clash is refused when the dataset is constructed: ${error}`, () => {
+      assert.throws(
+        () =>
+          new ComputedDataset({
+            into: new SqlServerDestination({
+              login: 'Server=none;Database=none',
+            }),
+            name: 'measures',
+            description: 'The measures of each record.',
+            from: [],
+            compute,
+            indexes,
           }),
-          name: 'measures',
-          description: 'The measures of each record.',
-          from: [],
-          compute,
-          indexes,
-        }),
-      new TypeError(error),
-    );
-  });
+        new TypeError(error),
+      );
+    }),
+);
 
 test(
   'a computed dataset with a vector index refuses a pipeline whose copy makes Measures_Nearest, in another case, before anything is made',
@@ -1186,29 +1192,32 @@ class NamedColumns extends Rule<string, RuleColumns> {
   }
 }
 
-for (const [column, taken, owner] of [
-  ['replaced_in', 'replaced_in', 'the column its history adds'],
-  ['Committed_In', 'committed_in', 'in another case, as SQL Server compares'],
-  ['status', 'status', 'an engine column'],
-  ['ref', 'ref', 'the key column'],
-  ['_elt_row', '_elt_row', 'the row number of the raw table'],
-  ['_elt_row_hash', '_elt_row_hash', 'the row hash of the raw table'],
-  ['_ELT_KEY_HASH', '_elt_key_hash', 'the key hash of the raw table'],
-] as const)
-  test(`a rule output column named ${column}, ${owner}, is refused when the dataset is constructed`, () => {
-    assert.throws(
-      () =>
-        new ComputedDataset({
-          into: new SqlServerDestination({
-            login: 'Server=none;Database=none',
+void test.each(
+  [
+    ['replaced_in', 'replaced_in', 'the column its history adds'],
+    ['Committed_In', 'committed_in', 'in another case, as SQL Server compares'],
+    ['status', 'status', 'an engine column'],
+    ['ref', 'ref', 'the key column'],
+    ['_elt_row', '_elt_row', 'the row number of the raw table'],
+    ['_elt_row_hash', '_elt_row_hash', 'the row hash of the raw table'],
+    ['_ELT_KEY_HASH', '_elt_key_hash', 'the key hash of the raw table'],
+  ] as const,
+  ([column, taken, owner]) =>
+    test(`a rule output column named ${column}, ${owner}, is refused when the dataset is constructed`, () => {
+      assert.throws(
+        () =>
+          new ComputedDataset({
+            into: new SqlServerDestination({
+              login: 'Server=none;Database=none',
+            }),
+            name: 'measures',
+            description: 'The text of each record.',
+            from: [],
+            compute: new NamedColumns(['content', column]),
           }),
-          name: 'measures',
-          description: 'The text of each record.',
-          from: [],
-          compute: new NamedColumns(['content', column]),
-        }),
-      new TypeError(
-        `Computed dataset measures cannot have the column ${column}: the dataset already has the column ${taken}`,
-      ),
-    );
-  });
+        new TypeError(
+          `Computed dataset measures cannot have the column ${column}: the dataset already has the column ${taken}`,
+        ),
+      );
+    }),
+);

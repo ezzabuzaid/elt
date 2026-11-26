@@ -9,11 +9,11 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { Latch, untilAborted } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 import { Vector } from '@zukhruf/vectors';
@@ -1306,28 +1306,31 @@ class NamedColumns extends Rule<string, RuleColumns> {
   }
 }
 
-for (const [column, owner] of [
-  ['status', 'an engine column'],
-  ['Committed_In', 'a column the dataset writes itself, in another case'],
-  ['REPLACED_IN', 'the column its history adds, in another case'],
-  ['_ELT_ROW_HASH', 'the hash of the values of a row, in another case'],
-  ['ref', 'the key column'],
-] as const)
-  test(`a rule output column named ${column}, ${owner}, is refused when the dataset is constructed, by name`, () => {
-    assert.throws(
-      () =>
-        new ComputedDataset({
-          into: new SQLiteDestination({ path: ':memory:' }),
-          name: 'file_text',
-          description: 'The text of each file a row names.',
-          from: [],
-          compute: new NamedColumns(['content', column]),
-        }),
-      new TypeError(
-        `Computed dataset file_text cannot have the column ${column}: the dataset already has the column ${column.toLowerCase()}`,
-      ),
-    );
-  });
+void test.each(
+  [
+    ['status', 'an engine column'],
+    ['Committed_In', 'a column the dataset writes itself, in another case'],
+    ['REPLACED_IN', 'the column its history adds, in another case'],
+    ['_ELT_ROW_HASH', 'the hash of the values of a row, in another case'],
+    ['ref', 'the key column'],
+  ] as const,
+  ([column, owner]) =>
+    test(`a rule output column named ${column}, ${owner}, is refused when the dataset is constructed, by name`, () => {
+      assert.throws(
+        () =>
+          new ComputedDataset({
+            into: new SQLiteDestination({ path: ':memory:' }),
+            name: 'file_text',
+            description: 'The text of each file a row names.',
+            from: [],
+            compute: new NamedColumns(['content', column]),
+          }),
+        new TypeError(
+          `Computed dataset file_text cannot have the column ${column}: the dataset already has the column ${column.toLowerCase()}`,
+        ),
+      );
+    }),
+);
 
 // A size and a vector of 3 dimensions for each file, as a model that measures
 // files gives them; the test sets the answer for each ref.

@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 
@@ -53,7 +53,7 @@ const modes = [
   { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
 ] as const;
 
-for (const mode of modes)
+void test.each(modes, (mode) =>
   test(`a key that the host gives twice in one push fails the read of a ${mode.syncMode} copy, and the target keeps the rows of the pass before`, async () => {
     let rows: Task[] = [{ name: 'a', text: 'first a' }];
     const source = new IterableSource({
@@ -115,9 +115,10 @@ for (const mode of modes)
     assert.deepEqual(contentOf(destination.path), [
       { name: 'a', text: 'first a' },
     ]);
-  });
+  }),
+);
 
-for (const mode of modes) {
+void test.each(modes, (mode) =>
   test(`a host whose rows throw halfway fails the ${mode.syncMode} stream, and the target keeps every row of the pass before`, async () => {
     let failing = false;
     const source = new IterableSource({
@@ -182,8 +183,10 @@ for (const mode of modes) {
       [{ stream: 'tasks', status: 'failed' }],
     );
     assert.deepEqual(loaded(destination.path), before);
-  });
+  }),
+);
 
+void test.each(modes, (mode) =>
   test(
     `an abort halfway cancels the ${mode.syncMode} stream, stops the host's rows through the run's signal, and the target keeps every row of the pass before`,
     { timeout: 30_000 },
@@ -263,10 +266,10 @@ for (const mode of modes) {
       );
       assert.deepEqual(loaded(destination.path), before);
     },
-  );
-}
+  ),
+);
 
-for (const mode of modes)
+void test.each(modes, (mode) =>
   test(`a ${mode.syncMode} scan that ends after an abort is no complete scan: the stream is cancelled and the target keeps every row of the pass before`, async () => {
     let aborting = false;
     const controller = new AbortController();
@@ -337,9 +340,10 @@ for (const mode of modes)
       [{ stream: 'tasks', status: 'cancelled' }],
     );
     assert.deepEqual(loaded(destination.path), before);
-  });
+  }),
+);
 
-for (const mode of modes)
+void test.each(modes, (mode) =>
   test(`a ${mode.syncMode} copy of rows that did not change writes no row`, async () => {
     const rows: Task[] = [
       { name: 'a', text: 'a' },
@@ -388,9 +392,10 @@ for (const mode of modes)
 
     assert.equal(before.length, 2);
     assert.deepEqual(loaded(destination.path), before);
-  });
+  }),
+);
 
-for (const mode of modes)
+void test.each(modes, (mode) =>
   test(`a ${mode.syncMode} copy of a closed-world stream deletes the row that the host stops giving`, async () => {
     let rows: Task[] = [
       { name: 'a', text: 'a' },
@@ -438,7 +443,8 @@ for (const mode of modes)
     await pipeline.run();
 
     assert.deepEqual(contentOf(destination.path), [{ name: 'b', text: 'b' }]);
-  });
+  }),
+);
 
 test('an incremental copy of a stream that declares no deletions keeps the row that the host stops giving', async () => {
   let rows: Task[] = [
@@ -1538,114 +1544,124 @@ test('an ordered stream saves the rows that share a version together, so a pass 
   ]);
 });
 
-for (const selection of [
-  { cursorField: 'text', dedupPolicy: 'cursor_newer' },
-  { cursorField: 'version', dedupPolicy: 'replace' },
-] as const)
-  test(`a copy of a changes stream with cursorField ${selection.cursorField} and dedupPolicy ${selection.dedupPolicy} is refused before the pipeline reads`, async () => {
-    let read = false;
-    const source = new IterableSource({
-      identity: 'tasks',
-      streams: {
-        tasks: {
-          description: 'The tasks that the test gives.',
-          jsonSchema: versionedSchema,
-          primaryKey: ['name'],
-          cursorField: 'version',
-          changes: () => {
-            read = true;
-            return [];
+void test.each(
+  [
+    { cursorField: 'text', dedupPolicy: 'cursor_newer' },
+    { cursorField: 'version', dedupPolicy: 'replace' },
+  ] as const,
+  (selection) =>
+    test(`a copy of a changes stream with cursorField ${selection.cursorField} and dedupPolicy ${selection.dedupPolicy} is refused before the pipeline reads`, async () => {
+      let read = false;
+      const source = new IterableSource({
+        identity: 'tasks',
+        streams: {
+          tasks: {
+            description: 'The tasks that the test gives.',
+            jsonSchema: versionedSchema,
+            primaryKey: ['name'],
+            cursorField: 'version',
+            changes: () => {
+              read = true;
+              return [];
+            },
           },
         },
-      },
-    });
-    await using scratch = await new TemporaryFiles().directory('elt-iterable-');
-    const destination = new SQLiteDestination({
-      path: join(scratch.path, 'd.sqlite'),
-    });
-    const pipeline = new Pipeline({
-      clock: globalThis,
-      history: new SQLiteSyncHistory(),
-      connections: [
-        new Connection({
-          name: 'tasks',
-          source,
-          destination,
-          checkpoints: new SQLiteCheckpointStore({
-            path: join(scratch.path, 'state.sqlite'),
-          }),
-          steps: [
-            new Copy(source.streams.tasks, destination.table('tasks'), {
-              id: 'tasks',
-              syncMode: 'incremental',
-              destinationSyncMode: 'append_dedup',
-              ...selection,
+      });
+      await using scratch = await new TemporaryFiles().directory(
+        'elt-iterable-',
+      );
+      const destination = new SQLiteDestination({
+        path: join(scratch.path, 'd.sqlite'),
+      });
+      const pipeline = new Pipeline({
+        clock: globalThis,
+        history: new SQLiteSyncHistory(),
+        connections: [
+          new Connection({
+            name: 'tasks',
+            source,
+            destination,
+            checkpoints: new SQLiteCheckpointStore({
+              path: join(scratch.path, 'state.sqlite'),
             }),
-          ],
-        }),
-      ],
-    });
+            steps: [
+              new Copy(source.streams.tasks, destination.table('tasks'), {
+                id: 'tasks',
+                syncMode: 'incremental',
+                destinationSyncMode: 'append_dedup',
+                ...selection,
+              }),
+            ],
+          }),
+        ],
+      });
 
-    await assert.rejects(pipeline.run(), {
-      name: 'TypeError',
-      message:
-        'Stream tasks gives changes by version; a copy of it deduplicates with dedupPolicy cursor_newer on cursorField version',
-    });
-    assert.equal(read, false);
-  });
+      await assert.rejects(pipeline.run(), {
+        name: 'TypeError',
+        message:
+          'Stream tasks gives changes by version; a copy of it deduplicates with dedupPolicy cursor_newer on cursorField version',
+      });
+      assert.equal(read, false);
+    }),
+);
 
-for (const mode of [
-  { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
-  { syncMode: 'full_refresh', destinationSyncMode: 'overwrite_dedup' },
-] as const)
-  test(`a ${mode.syncMode} copy of a changes stream that selects no cursorField compares the declared cursor field`, async () => {
-    // A later text of a, at an older version.
-    const changes: Versioned[] = [
-      { name: 'a', text: 'a v5', version: 5 },
-      { name: 'a', text: 'a v1', version: 1 },
-      { name: 'b', text: 'b v2', version: 2 },
-    ];
-    const source = new IterableSource({
-      identity: 'tasks',
-      streams: {
-        tasks: {
-          description: 'The tasks that the test gives.',
-          jsonSchema: versionedSchema,
-          primaryKey: ['name'],
-          cursorField: 'version',
-          changes: () => changes,
+void test.each(
+  [
+    { syncMode: 'incremental', destinationSyncMode: 'append_dedup' },
+    { syncMode: 'full_refresh', destinationSyncMode: 'overwrite_dedup' },
+  ] as const,
+  (mode) =>
+    test(`a ${mode.syncMode} copy of a changes stream that selects no cursorField compares the declared cursor field`, async () => {
+      // A later text of a, at an older version.
+      const changes: Versioned[] = [
+        { name: 'a', text: 'a v5', version: 5 },
+        { name: 'a', text: 'a v1', version: 1 },
+        { name: 'b', text: 'b v2', version: 2 },
+      ];
+      const source = new IterableSource({
+        identity: 'tasks',
+        streams: {
+          tasks: {
+            description: 'The tasks that the test gives.',
+            jsonSchema: versionedSchema,
+            primaryKey: ['name'],
+            cursorField: 'version',
+            changes: () => changes,
+          },
         },
-      },
-    });
-    await using scratch = await new TemporaryFiles().directory('elt-iterable-');
-    const destination = new SQLiteDestination({
-      path: join(scratch.path, 'd.sqlite'),
-    });
-    const pipeline = new Pipeline({
-      clock: globalThis,
-      history: new SQLiteSyncHistory(),
-      connections: [
-        new Connection({
-          name: 'tasks',
-          source,
-          destination,
-          checkpoints: new SQLiteCheckpointStore({
-            path: join(scratch.path, 'state.sqlite'),
-          }),
-          steps: [
-            new Copy(source.streams.tasks, destination.table('tasks'), {
-              id: 'tasks',
-              ...mode,
+      });
+      await using scratch = await new TemporaryFiles().directory(
+        'elt-iterable-',
+      );
+      const destination = new SQLiteDestination({
+        path: join(scratch.path, 'd.sqlite'),
+      });
+      const pipeline = new Pipeline({
+        clock: globalThis,
+        history: new SQLiteSyncHistory(),
+        connections: [
+          new Connection({
+            name: 'tasks',
+            source,
+            destination,
+            checkpoints: new SQLiteCheckpointStore({
+              path: join(scratch.path, 'state.sqlite'),
             }),
-          ],
-        }),
-      ],
-    });
+            steps: [
+              new Copy(source.streams.tasks, destination.table('tasks'), {
+                id: 'tasks',
+                ...mode,
+              }),
+            ],
+          }),
+        ],
+      });
 
-    await pipeline.run();
+      await pipeline.run();
 
-    assert.deepEqual(versionedContent(destination.path), [
-      { name: 'a', text: 'a v5', version: 5 },
-      { name: 'b', text: 'b v2', version: 2 },
-    ]);
-  });
+      assert.deepEqual(versionedContent(destination.path), [
+        { name: 'a', text: 'a v5', version: 5 },
+        { name: 'b', text: 'b v2', version: 2 },
+      ]);
+    }),
+);

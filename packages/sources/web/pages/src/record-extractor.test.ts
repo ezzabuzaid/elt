@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 import type { Response } from 'got';
@@ -179,7 +179,7 @@ test('the discovered stream holds the provenance columns and the extractor prope
   assert.deepEqual(discovered.partitionKey, ['inputUrl']);
 });
 
-for (const accept of ['application/vnd.sections+json', null])
+void test.each(['application/vnd.sections+json', null], (accept) =>
   test(`an extractor's ${accept === null ? 'null Accept leaves the client default' : 'Accept reaches only the pages handed back'}`, async () => {
     await using cache = await new TemporaryFiles().directory('web-cache-');
     const accepts = new Map<string, string | undefined>();
@@ -219,7 +219,8 @@ for (const accept of ['application/vnd.sections+json', null])
       'application/vnd.sections+json',
     );
     assert.equal(accepts.get('/guide'), accept ?? accepts.get('/sitemap.xml'));
-  });
+  }),
+);
 
 // One record per item of a JSON list page's top-level array, as WooCommerce's
 // Store API answers.

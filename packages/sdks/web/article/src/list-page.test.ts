@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 
+import { test } from '@zukhruf/parameterized-test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
@@ -29,8 +29,8 @@ const blogIndex = `
         <article><h2><a href="/workers-observability/">Observability for Workers</a></h2><p>Every Worker now gets traces and logs with no code change. We describe how the data flows from the edge to your dashboard, what it costs to keep, and how to export it to the tools your team already uses.</p></article>
         <article><h2><a href="https://blog.google/technology/ai/gemini-update/">A Gemini update for developers</a></h2><p>A guest post from a partner team about the models that power the new features, how we tested them with customers over the summer, and which limits we plan to remove before the end of the year.</p></article>`;
 
-test('a page that lists pages of its own origin is still an article, labeled a list', async (t) => {
-  for (const { name, html } of [
+void test.each(
+  [
     {
       // As anthropic.com/news/features: cards inside one article element, og:type website, no JSON-LD.
       name: 'cards',
@@ -66,21 +66,23 @@ test('a page that lists pages of its own origin is still an article, labeled a l
         ${blogIndex}
       </main></body></html>`,
     },
-  ]) {
-    const article = await extract(
-      new HTMLExtraction(),
-      'text/html',
-      html,
-      t.signal,
-    );
+  ],
+  ({ name, html }) =>
+    test(`a page that lists pages of its own origin is still an article, labeled a list: ${name}`, async (t) => {
+      const article = await extract(
+        new HTMLExtraction(),
+        'text/html',
+        html,
+        t.signal,
+      );
 
-    assert.ok(article, name);
-    assert.equal(article.list, true, name);
-  }
-});
+      assert.ok(article, name);
+      assert.equal(article.list, true, name);
+    }),
+);
 
-test('an article that links many pages is not labeled a list', async (t) => {
-  for (const { name, html } of [
+void test.each(
+  [
     {
       // As this-week-in-rust.org: a roundup of links to other origins.
       name: 'roundup',
@@ -135,18 +137,20 @@ test('an article that links many pages is not labeled a list', async (t) => {
       name: 'a table of links',
       html: '<html><body><article><p>Our releases this year:</p><table><tr><td><a href="/releases/1">Release one</a></td></tr><tr><td><a href="/releases/2">Release two</a></td></tr></table></article></body></html>',
     },
-  ]) {
-    const article = await extract(
-      new HTMLExtraction(),
-      'text/html',
-      html,
-      t.signal,
-    );
+  ],
+  ({ name, html }) =>
+    test(`an article that links many pages is not labeled a list: ${name}`, async (t) => {
+      const article = await extract(
+        new HTMLExtraction(),
+        'text/html',
+        html,
+        t.signal,
+      );
 
-    assert.ok(article, name);
-    assert.equal(article.list, false, name);
-  }
-});
+      assert.ok(article, name);
+      assert.equal(article.list, false, name);
+    }),
+);
 
 test('a live blog that declares LiveBlogPosting is not labeled a list, although each update links its permalink, a share address and other articles', async (t) => {
   // theguardian.com/business/live/2026/oct/30/uk-house-price-growth-crypto-industry-6bn-binance-hack-eurozone-france-gdp-latest-news-updates,

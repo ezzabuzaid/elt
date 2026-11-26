@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import type {
   EmbeddingModelV4,
@@ -8,6 +7,7 @@ import type {
   EmbeddingModelV4Result,
 } from '@ai-sdk/provider';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 import { Vector } from '@zukhruf/vectors';
@@ -458,33 +458,36 @@ test('an input the model refuses fails only its own row, and the next run asks a
   assert.deepEqual(model.calls, [['too long']]);
 });
 
-for (const [status, calls] of [
-  // A refused API key or model is not tried again.
-  [401, 1],
-  [403, 1],
-  // The AI SDK tries a server failure 3 times, each time with the whole call.
-  [500, 3],
-] as const)
-  test(`a call the model answers with ${status} says nothing about its inputs, so it is not split`, async () => {
-    await using scratch = await new TemporaryFiles().directory('embedding-');
-    const model = new LetterModel('letters-1');
-    const listings = listingsImport(scratch.path, () => model);
-    listings.host.rows = ['red car', 'blue van', 'old bus'].map(
-      (title, index) => ({ id: String(index + 1), title, description: null }),
-    );
-    model.answer = () => status;
+void test.each(
+  [
+    // A refused API key or model is not tried again.
+    [401, 1],
+    [403, 1],
+    // The AI SDK tries a server failure 3 times, each time with the whole call.
+    [500, 3],
+  ] as const,
+  ([status, calls]) =>
+    test(`a call the model answers with ${status} says nothing about its inputs, so it is not split`, async () => {
+      await using scratch = await new TemporaryFiles().directory('embedding-');
+      const model = new LetterModel('letters-1');
+      const listings = listingsImport(scratch.path, () => model);
+      listings.host.rows = ['red car', 'blue van', 'old bus'].map(
+        (title, index) => ({ id: String(index + 1), title, description: null }),
+      );
+      model.answer = () => status;
 
-    await listings.run();
+      await listings.run();
 
-    assert.deepEqual(
-      model.calls,
-      Array.from({ length: calls }, () => ['red car', 'blue van', 'old bus']),
-    );
-    assert.deepEqual(
-      listings.vectors().map(({ status: stored }) => stored),
-      ['failed', 'failed', 'failed'],
-    );
-  });
+      assert.deepEqual(
+        model.calls,
+        Array.from({ length: calls }, () => ['red car', 'blue van', 'old bus']),
+      );
+      assert.deepEqual(
+        listings.vectors().map(({ status: stored }) => stored),
+        ['failed', 'failed', 'failed'],
+      );
+    }),
+);
 
 test(
   'a call the model never answers fails its rows at the limit, and the next batch still runs',

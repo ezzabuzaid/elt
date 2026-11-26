@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 import { brotliCompressSync, gzipSync } from 'node:zlib';
 
+import { test } from '@zukhruf/parameterized-test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got, { HTTPError, TimeoutError } from 'got';
 
@@ -23,18 +23,19 @@ const paragraphs = [
 ] as const;
 const body = `<article><h1>Field observations</h1>${paragraphs.map((text) => `<p>${text}</p>`).join('')}</article>`;
 
-test('chosen websites and feeds compose with extraction without merging URL variants or losing successful pages', async (t) => {
-  await using upstream = await new HttpServer().start((request, response) => {
-    response.setHeader('content-type', 'text/html; charset=utf-8');
-    switch (request.url) {
-      case '/':
-        response.end(
-          '<link rel="alternate" type="application/rss+xml" href="/feed.xml">',
-        );
-        break;
-      case '/feed.xml':
-        response.setHeader('content-type', 'application/rss+xml');
-        response.end(`<rss><channel>
+void test.each(['/', '/feed.xml'], (input) =>
+  test(`chosen websites and feeds compose with extraction without merging URL variants or losing successful pages: ${input}`, async (t) => {
+    await using upstream = await new HttpServer().start((request, response) => {
+      response.setHeader('content-type', 'text/html; charset=utf-8');
+      switch (request.url) {
+        case '/':
+          response.end(
+            '<link rel="alternate" type="application/rss+xml" href="/feed.xml">',
+          );
+          break;
+        case '/feed.xml':
+          response.setHeader('content-type', 'application/rss+xml');
+          response.end(`<rss><channel>
           <item><link>/story?edition=1</link></item>
           <item><link>/story?edition=1#again</link></item>
           <item><link>/story?edition=2</link></item>
@@ -43,31 +44,30 @@ test('chosen websites and feeds compose with extraction without merging URL vari
           <item><link>/empty</link></item>
           <item><link>/missing</link></item>
         </channel></rss>`);
-        break;
-      case '/story?edition=1':
-      case '/story?edition=2':
-      case '/story':
-      case '/story/':
-        response.end(
-          `<html><head><title>${request.url}</title><link rel="canonical" href="/shared-canonical"></head><body>${body}</body></html>`,
-        );
-        break;
-      case '/empty':
-        response.end(
-          '<html><body><nav><a href="/">Home</a></nav></body></html>',
-        );
-        break;
-      default:
-        response.writeHead(404).end();
-    }
-  });
-  const crawler = new Origins(got, null, globalThis).crawler(
-    got,
-    [new ListingReader(), new ArchiveReader(), new PaginationReader()],
-    new AdaptiveRevisit(),
-  );
-  const reader = new WebArticle([new HTMLExtraction()], got);
-  for (const input of ['/', '/feed.xml']) {
+          break;
+        case '/story?edition=1':
+        case '/story?edition=2':
+        case '/story':
+        case '/story/':
+          response.end(
+            `<html><head><title>${request.url}</title><link rel="canonical" href="/shared-canonical"></head><body>${body}</body></html>`,
+          );
+          break;
+        case '/empty':
+          response.end(
+            '<html><body><nav><a href="/">Home</a></nav></body></html>',
+          );
+          break;
+        default:
+          response.writeHead(404).end();
+      }
+    });
+    const crawler = new Origins(got, null, globalThis).crawler(
+      got,
+      [new ListingReader(), new ArchiveReader(), new PaginationReader()],
+      new AdaptiveRevisit(),
+    );
+    const reader = new WebArticle([new HTMLExtraction()], got);
     // Each origin answers one request a second, so a crawl takes seconds.
     const signal = t.signal;
     const entries = await Array.fromAsync(
@@ -116,8 +116,8 @@ test('chosen websites and feeds compose with extraction without merging URL vari
       assert.ok(result.value.textContent.includes(paragraphs[0]));
     }
     assert.deepEqual(results[4], { status: 'fulfilled', value: null });
-  }
-});
+  }),
+);
 
 test('fetches an article with metadata and excludes surrounding navigation', async (t) => {
   await using upstream = await new HttpServer().start((_request, response) => {
@@ -491,8 +491,8 @@ test('standard structured metadata takes precedence and absent publication dates
   }
 });
 
-test('decodes HTTP and HTML charset declarations and preserves Unicode', async (t) => {
-  for (const declaration of ['http', 'html', 'utf8']) {
+void test.each(['http', 'html', 'utf8'], (declaration) =>
+  test(`decodes HTTP and HTML charset declarations and preserves Unicode: ${declaration}`, async (t) => {
     await using upstream = await new HttpServer().start(
       (_request, response) => {
         if (declaration !== 'html')
@@ -522,8 +522,8 @@ test('decodes HTTP and HTML charset declarations and preserves Unicode', async (
       ),
     );
     assert.doesNotMatch(article.textContent, /�|Ã/);
-  }
-});
+  }),
+);
 
 test('invalid and non-web canonical declarations cannot become article identities', async (t) => {
   for (const href of [

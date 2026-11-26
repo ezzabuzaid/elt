@@ -9,10 +9,10 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { test } from 'node:test';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 
@@ -320,49 +320,57 @@ async function arcImport(
 const tree =
   'select id, profileId, spaceId, section, parentId, position, kind from sidebarItems order by id';
 
-test(
-  'a denied or missing sidebar fails every stream as a config failure and keeps the loaded rows',
-  {
-    // chmod denies nothing on Windows, and nothing to root.
-    skip: process.platform === 'win32' || process.getuid?.() === 0,
-  },
-  async () => {
-    await using dir = await new TemporaryFiles().directory('arc-missing-');
-    const file = await writeSidebar(dir.path, sidebar());
-    const { source, pipeline, read } = await arcImport(
-      dir.path,
-      dir.path,
-      globalThis,
-    );
-    await pipeline.run();
-
-    for (const [take, reason] of [
-      [() => chmod(file, 0o000), /StorableSidebar\.json cannot be read\.$/],
-      [
-        () => rm(file),
+void test.each(
+  [
+    {
+      name: 'denied',
+      take: (file: string) => chmod(file, 0o000),
+      reason: /StorableSidebar\.json cannot be read\.$/,
+    },
+    {
+      name: 'missing',
+      take: (file: string) => rm(file),
+      reason:
         /StorableSidebar\.json is not there\. Open Arc once so it saves its sidebar\.$/,
-      ],
-    ] as const) {
-      await take();
-      const failure = await pipeline.run().then(
-        () => assert.fail('the run succeeded without the file'),
-        (error: unknown) => error,
-      );
-
-      assert.ok(failure instanceof PipelineError);
-      assert.equal(failure.errors.length, 2);
-      for (const error of failure.errors) {
-        assert.equal(source.failureType(error), 'config');
-        assert.match(
-          String(error),
-          /^StoreUnavailableError: Arc's sidebar at /,
+    },
+  ],
+  ({ name, take, reason }) =>
+    test(
+      `a ${name} sidebar fails every stream as a config failure and keeps the loaded rows`,
+      {
+        // chmod denies nothing on Windows, and nothing to root.
+        skip: process.platform === 'win32' || process.getuid?.() === 0,
+      },
+      async () => {
+        await using dir = await new TemporaryFiles().directory('arc-missing-');
+        const file = await writeSidebar(dir.path, sidebar());
+        const { source, pipeline, read } = await arcImport(
+          dir.path,
+          dir.path,
+          globalThis,
         );
-        assert.match(String(error), reason);
-      }
-      assert.equal(read('select count(*) n from sidebarItems')[0]?.n, 11);
-      assert.equal(read('select count(*) n from spaces')[0]?.n, 2);
-    }
-  },
+        await pipeline.run();
+
+        await take(file);
+        const failure = await pipeline.run().then(
+          () => assert.fail('the run succeeded without the file'),
+          (error: unknown) => error,
+        );
+
+        assert.ok(failure instanceof PipelineError);
+        assert.equal(failure.errors.length, 2);
+        for (const error of failure.errors) {
+          assert.equal(source.failureType(error), 'config');
+          assert.match(
+            String(error),
+            /^StoreUnavailableError: Arc's sidebar at /,
+          );
+          assert.match(String(error), reason);
+        }
+        assert.equal(read('select count(*) n from sidebarItems')[0]?.n, 11);
+        assert.equal(read('select count(*) n from spaces')[0]?.n, 2);
+      },
+    ),
 );
 
 test('a read of a sidebar that is not there says so and how to make it, without its last write first', async () => {
@@ -428,41 +436,64 @@ test('a sidebar path that is a folder fails as a system failure with the file sy
   }
 });
 
-test('a malformed sidebar fails with what is wrong and deletes nothing', async () => {
-  await using dir = await new TemporaryFiles().directory('arc-format-');
-  const file = await writeSidebar(dir.path, sidebar());
-  const { source, pipeline, read } = await arcImport(
-    dir.path,
-    dir.path,
-    globalThis,
-  );
-  await pipeline.run();
-  const unknownKind = sidebar();
-  unknownKind.items.push(item('easel-1', 'home-unpinned', { easel: {} }));
-  unknownKind.items
-    .find(({ id }) => id === 'home-unpinned')
-    ?.childrenIds.push('easel-1');
-  const stray = sidebar();
-  stray.items.push(tab('tab-stray', 'nowhere', 'https://example.com/stray'));
+// The home folder of a test's Arc and the file of its sidebar.
+type SidebarPlace = { home: string; file: string };
 
-  for (const [write, reason] of [
-    [() => writeFile(file, '{"version":1,'), /is not JSON/],
-    [() => writeSidebar(dir.path, unknownKind), /easel-1 is of the kind easel/],
-    [() => writeSidebar(dir.path, stray), /tab-stray is in no space/],
-  ] as const) {
-    await write();
-    const failure = await pipeline.run().then(
-      () => assert.fail('the run succeeded over a malformed file'),
-      (error: unknown) => error,
-    );
-    assert.ok(failure instanceof PipelineError);
-    for (const error of failure.errors) {
-      assert.match(String(error), reason);
-      assert.equal(source.failureType(error), 'system');
-    }
-    assert.equal(read('select count(*) n from sidebarItems')[0]?.n, 11);
-  }
-});
+void test.each(
+  [
+    {
+      name: 'is not JSON',
+      write: ({ file }: SidebarPlace) => writeFile(file, '{"version":1,'),
+      reason: /is not JSON/,
+    },
+    {
+      name: 'holds an item of an unknown kind',
+      write: ({ home }: SidebarPlace) => {
+        const unknownKind = sidebar();
+        unknownKind.items.push(item('easel-1', 'home-unpinned', { easel: {} }));
+        unknownKind.items
+          .find(({ id }) => id === 'home-unpinned')
+          ?.childrenIds.push('easel-1');
+        return writeSidebar(home, unknownKind);
+      },
+      reason: /easel-1 is of the kind easel/,
+    },
+    {
+      name: 'holds a tab in no space',
+      write: ({ home }: SidebarPlace) => {
+        const stray = sidebar();
+        stray.items.push(
+          tab('tab-stray', 'nowhere', 'https://example.com/stray'),
+        );
+        return writeSidebar(home, stray);
+      },
+      reason: /tab-stray is in no space/,
+    },
+  ],
+  ({ name, write, reason }) =>
+    test(`a sidebar that ${name} fails with what is wrong and deletes nothing`, async () => {
+      await using dir = await new TemporaryFiles().directory('arc-format-');
+      const file = await writeSidebar(dir.path, sidebar());
+      const { source, pipeline, read } = await arcImport(
+        dir.path,
+        dir.path,
+        globalThis,
+      );
+      await pipeline.run();
+
+      await write({ home: dir.path, file });
+      const failure = await pipeline.run().then(
+        () => assert.fail('the run succeeded over a malformed file'),
+        (error: unknown) => error,
+      );
+      assert.ok(failure instanceof PipelineError);
+      for (const error of failure.errors) {
+        assert.match(String(error), reason);
+        assert.equal(source.failureType(error), 'system');
+      }
+      assert.equal(read('select count(*) n from sidebarItems')[0]?.n, 11);
+    }),
+);
 
 test('an Arc import loads the spaces and every item with its place in the tree', async () => {
   await using dir = await new TemporaryFiles().directory('arc-load-');

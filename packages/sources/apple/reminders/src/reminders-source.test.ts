@@ -6,12 +6,12 @@ import { writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { DatabaseSync } from 'node:sqlite';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { UnchangedJournal, open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 
@@ -992,7 +992,7 @@ test(
   },
 );
 
-test('Reminders keeps a leap-month start and a due without a calendar, and rejects unidentified reminders, which EventKit does not write', async () => {
+test('Reminders keeps a leap-month start and a due without a calendar, which EventKit does not write', async () => {
   await using stub = await StubEventKitHelper.create();
   // A leap-month start and a due without a calendar: EventKit drops the first
   // and fills in the second on a Gregorian list, so only the stub returns them.
@@ -1076,14 +1076,27 @@ test('Reminders keeps a leap-month start and a due without a calendar, and rejec
     },
     { calendarIdentifier: null, dayOfYear: null },
   );
-  for (const unidentified of [reminder({ id: '' }), reminder({ listId: '' })]) {
-    stub.answer(remindersRead, { documents: [unidentified] });
-    await assert.rejects(
-      readRows(source, [source.reminders]),
-      /invalid reminders/,
-    );
-  }
 });
+
+void test.each(
+  [
+    { name: 'an empty id', unidentified: reminder({ id: '' }) },
+    { name: 'an empty list id', unidentified: reminder({ listId: '' }) },
+  ],
+  ({ name, unidentified }) =>
+    test(`Reminders rejects a reminder with ${name}, which EventKit does not write`, async () => {
+      await using stub = await StubEventKitHelper.create();
+      stub.answer(remindersRead, { documents: [unidentified] });
+      const source = new AppleRemindersSource({
+        store: new RemindersStore(stub.path, { env: process.env }),
+      });
+
+      await assert.rejects(
+        readRows(source, [source.reminders]),
+        /invalid reminders/,
+      );
+    }),
+);
 
 test('Reminders rejects unsupported selections without the EventKit helper', async () => {
   // No helper exists here: starting one would fail, so each rejection below

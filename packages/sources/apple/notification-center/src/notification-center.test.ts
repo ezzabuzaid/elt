@@ -4,12 +4,12 @@ import { chmod } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { pathToFileURL } from 'node:url';
 
 import { createClock } from '@sinonjs/fake-timers';
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 import { waitFor } from '@zukhruf/testing/async';
 
@@ -874,35 +874,32 @@ test('an app macOS forgets deletes its app and categories while its notification
   );
 });
 
-test('a date range loads the notifications delivered in it, to the microsecond, and every app and category', async () => {
-  await using dir = await new TemporaryFiles().directory('elt-notes-center-');
-  const path = join(dir.path, 'db');
-  notificationCenterFixture(path);
-  const scopes: [ImportScope, string[]][] = [
-    [
-      { startAt: '2026-10-07T00:00:00.000Z' },
-      [codexDelivery.uuid, scriptEditorDelivery.uuid],
-    ],
-    // Delivered at 12:30:00.000125, inside its own millisecond.
-    [
-      {
-        startAt: '2026-10-07T12:30:00.000Z',
-        endAt: '2026-10-07T12:30:00.001Z',
-      },
-      [scriptEditorDelivery.uuid],
-    ],
-  ];
+const dateRanges: [ImportScope, string[]][] = [
+  [
+    { startAt: '2026-10-07T00:00:00.000Z' },
+    [codexDelivery.uuid, scriptEditorDelivery.uuid],
+  ],
+  // Delivered at 12:30:00.000125, inside its own millisecond.
+  [
+    {
+      startAt: '2026-10-07T12:30:00.000Z',
+      endAt: '2026-10-07T12:30:00.001Z',
+    },
+    [scriptEditorDelivery.uuid],
+  ],
+];
 
-  for (const [scope, expected] of scopes) {
-    await using runDir = await new TemporaryFiles().directory('run-', {
-      parent: dir.path,
-    });
+void test.each(dateRanges, ([scope, expected]) =>
+  test(`a date range loads the notifications delivered in it, to the microsecond, and every app and category: ${JSON.stringify(scope)}`, async () => {
+    await using dir = await new TemporaryFiles().directory('elt-notes-center-');
+    const path = join(dir.path, 'db');
+    notificationCenterFixture(path);
     const run = await pipeline(
       new AppleNotificationCenterSource({ path, scope }),
-      runDir.path,
+      dir.path,
       globalThis,
     );
-    const out = join(runDir.path, 'out.sqlite');
+    const out = join(dir.path, 'out.sqlite');
 
     const loaded = counts(await run.run());
 
@@ -914,8 +911,8 @@ test('a date range loads the notifications delivered in it, to the microsecond, 
     );
     assert.deepEqual(loaded.apps, { count: 3, deleted: 0 });
     assert.deepEqual(loaded.categories, { count: 2, deleted: 0 });
-  }
-});
+  }),
+);
 
 test('a store that stops being readable fails every stream, naming Full Disk Access, and keeps what loaded', async () => {
   await using dir = await new TemporaryFiles().directory('elt-notes-center-');

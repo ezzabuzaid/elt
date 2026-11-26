@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { test } from 'node:test';
 
+import { test } from '@zukhruf/parameterized-test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got from 'got';
 
@@ -277,95 +277,104 @@ test('a list that an expansion finds hands back only the pages that match, and e
   assert.ok(!fourth.includes('/startups-apply'), fourth.join(' '));
 });
 
-test('a page that a sitemap or a feed lists on another website is not expanded', async (t) => {
-  const company: string[] = [];
-  await using site = await new HttpServer().start(
-    website(company, () => ({
-      '/': '<a href="/startups">Startups</a>',
-      '/startups': '<p>Credits.</p>',
-      '/robots.txt': {
-        type: 'text/plain',
-        body: `Sitemap: ${site.origin}/sitemap.xml`,
-      },
-      '/sitemap.xml': xml(
-        `<urlset><url><loc>${site.origin}/startup-program/</loc></url></urlset>`,
-      ),
-      '/startup-program/': '<p>Credits.</p>',
-    })),
-  );
-  await using listing = await new HttpServer().start(
-    website([], () => ({
-      '/sitemap.xml': xml(
-        `<urlset><url><loc>${site.origin}/</loc></url></urlset>`,
-      ),
-      '/feed.xml': {
-        type: 'application/rss+xml',
-        body: `<rss><channel><item><link>${site.origin}/</link></item></channel></rss>`,
-      },
-    })),
-  );
+void test.each(
+  [
+    { name: 'a sitemap', start: '/sitemap.xml' },
+    { name: 'a feed', start: '/feed.xml' },
+  ] as const,
+  ({ name, start }) =>
+    test(`a page that ${name} lists on another website is not expanded`, async (t) => {
+      const company: string[] = [];
+      await using site = await new HttpServer().start(
+        website(company, () => ({
+          '/': '<a href="/startups">Startups</a>',
+          '/startups': '<p>Credits.</p>',
+          '/robots.txt': {
+            type: 'text/plain',
+            body: `Sitemap: ${site.origin}/sitemap.xml`,
+          },
+          '/sitemap.xml': xml(
+            `<urlset><url><loc>${site.origin}/startup-program/</loc></url></urlset>`,
+          ),
+          '/startup-program/': '<p>Credits.</p>',
+        })),
+      );
+      await using listing = await new HttpServer().start(
+        website([], () => ({
+          '/sitemap.xml': xml(
+            `<urlset><url><loc>${site.origin}/</loc></url></urlset>`,
+          ),
+          '/feed.xml': {
+            type: 'application/rss+xml',
+            body: `<rss><channel><item><link>${site.origin}/</link></item></channel></rss>`,
+          },
+        })),
+      );
 
-  for (const start of ['/sitemap.xml', '/feed.xml']) {
-    company.length = 0;
-    const pages = await handed(
-      programs({ maxDepth: 0, maxPages: 0 }).crawl(
-        [`${listing.origin}${start}`],
-        null,
-        {
-          signal: t.signal,
-          include: [new URLPattern(`${site.origin}/*`)],
-          expand,
-        },
-      ),
-    );
-
-    assert.deepEqual(pages, [`${site.origin}/`], start);
-    assert.deepEqual(company, ['/robots.txt', '/'], start);
-  }
-});
-
-test('a page that a sitemap and a list both name is expanded, whether the sitemap names it before or after its download', async (t) => {
-  await using site = await new HttpServer().start(
-    website([], () => ({
-      '/': '<a href="/startups">Startups</a>',
-      '/startups': '<p>Credits.</p>',
-    })),
-  );
-  // The sitemap names the home page first. The first page of the list names
-  // it while it is pending; the second page names it after its download.
-  for (const [later, firstPage] of [
-    ['first page', `<main><a href="${site.origin}/">Company</a></main>`],
-    ['second page', '<link rel="next" href="/programs?page=2">'],
-  ] as const) {
-    await using list = await new HttpServer().start(
-      website([], () => ({
-        '/sitemap.xml': xml(
-          `<urlset><url><loc>${site.origin}/</loc></url></urlset>`,
+      const pages = await handed(
+        programs({ maxDepth: 0, maxPages: 0 }).crawl(
+          [`${listing.origin}${start}`],
+          null,
+          {
+            signal: t.signal,
+            include: [new URLPattern(`${site.origin}/*`)],
+            expand,
+          },
         ),
-        '/programs': firstPage,
-        '/programs?page=2': `<main><a href="${site.origin}/">Company</a></main>`,
-      })),
-    );
+      );
 
-    const pages = await handed(
-      programs({ maxDepth: 0, maxPages: 0 }).crawl(
-        [`${list.origin}/sitemap.xml`, `${list.origin}/programs`],
-        null,
-        {
-          signal: t.signal,
-          include: [new URLPattern(`${site.origin}/*`)],
-          expand,
-        },
-      ),
-    );
+      assert.deepEqual(pages, [`${site.origin}/`], start);
+      assert.deepEqual(company, ['/robots.txt', '/'], start);
+    }),
+);
 
-    assert.deepEqual(
-      pages,
-      [`${site.origin}/`, `${site.origin}/startups`],
-      later,
-    );
-  }
-});
+// The sitemap names the home page first. The first page of the list names it
+// while it is pending; the second page names it after its download.
+void test.each(
+  [
+    [
+      'first page',
+      (origin: string) => `<main><a href="${origin}/">Company</a></main>`,
+    ],
+    ['second page', () => '<link rel="next" href="/programs?page=2">'],
+  ] as const,
+  ([later, firstPage]) =>
+    test(`a page that a sitemap and a list both name is expanded when the ${later} of the list names it`, async (t) => {
+      await using site = await new HttpServer().start(
+        website([], () => ({
+          '/': '<a href="/startups">Startups</a>',
+          '/startups': '<p>Credits.</p>',
+        })),
+      );
+      await using list = await new HttpServer().start(
+        website([], () => ({
+          '/sitemap.xml': xml(
+            `<urlset><url><loc>${site.origin}/</loc></url></urlset>`,
+          ),
+          '/programs': firstPage(site.origin),
+          '/programs?page=2': `<main><a href="${site.origin}/">Company</a></main>`,
+        })),
+      );
+
+      const pages = await handed(
+        programs({ maxDepth: 0, maxPages: 0 }).crawl(
+          [`${list.origin}/sitemap.xml`, `${list.origin}/programs`],
+          null,
+          {
+            signal: t.signal,
+            include: [new URLPattern(`${site.origin}/*`)],
+            expand,
+          },
+        ),
+      );
+
+      assert.deepEqual(
+        pages,
+        [`${site.origin}/`, `${site.origin}/startups`],
+        later,
+      );
+    }),
+);
 
 test('without expand patterns, the home page that a list links on another website is handed back and not expanded', async (t) => {
   const company: string[] = [];

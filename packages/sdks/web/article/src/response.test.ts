@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 
+import { test } from '@zukhruf/parameterized-test';
 import { HttpServer } from '@zukhruf/testing/http';
 import got, { HTTPError } from 'got';
 
@@ -132,8 +132,8 @@ test('supplied HTML follows advertised Markdown and keeps the original HTML as i
   }
 });
 
-test('supplied rejected and unreadable Markdown responses retain the HTML fallback', async (t) => {
-  for (const mode of ['406', 'empty', 'malformed']) {
+void test.each(['406', 'empty', 'malformed'], (mode) =>
+  test(`supplied rejected and unreadable Markdown responses retain the HTML fallback: ${mode}`, async (t) => {
     const requests: string[] = [];
     await using upstream = await new HttpServer().start((request, response) => {
       if (request.headers.accept?.startsWith('text/markdown')) {
@@ -162,18 +162,20 @@ test('supplied rejected and unreadable Markdown responses retain the HTML fallba
     ).read(response, signal);
     assert.equal((await download.extract())?.textContent, 'Readable fallback.');
     assert.deepEqual(requests, ['markdown', 'html']);
-  }
-});
+  }),
+);
 
-test('supplied HTTP failures retain attribution and cancellation preserves the exact reason', async (t) => {
-  await using upstream = await new HttpServer().start((request, response) => {
-    response
-      .writeHead(Number(request.url?.slice(1)), { 'content-type': 'text/html' })
-      .end('<article><p>A complete report.</p></article>');
-  });
-  const signal = t.signal;
-  const reader = new WebArticle([new HTMLExtraction()], got);
-  for (const status of [304, 404, 406, 500]) {
+void test.each([304, 404, 406, 500], (status) =>
+  test(`supplied HTTP failures retain attribution: ${status}`, async (t) => {
+    await using upstream = await new HttpServer().start((request, response) => {
+      response
+        .writeHead(Number(request.url?.slice(1)), {
+          'content-type': 'text/html',
+        })
+        .end('<article><p>A complete report.</p></article>');
+    });
+    const signal = t.signal;
+    const reader = new WebArticle([new HTMLExtraction()], got);
     const response = await got(`${upstream.origin}/${status}`, {
       signal,
       throwHttpErrors: false,
@@ -186,7 +188,17 @@ test('supplied HTTP failures retain attribution and cancellation preserves the e
       assert.equal(error.cause.response, response);
       return true;
     });
-  }
+  }),
+);
+
+test('cancellation of a supplied response preserves the exact reason', async (t) => {
+  await using upstream = await new HttpServer().start((request, response) => {
+    response
+      .writeHead(Number(request.url?.slice(1)), { 'content-type': 'text/html' })
+      .end('<article><p>A complete report.</p></article>');
+  });
+  const signal = t.signal;
+  const reader = new WebArticle([new HTMLExtraction()], got);
   const response = await got(`${upstream.origin}/200`, { signal });
   const controller = new AbortController();
   const download = await reader.read(response, controller.signal);

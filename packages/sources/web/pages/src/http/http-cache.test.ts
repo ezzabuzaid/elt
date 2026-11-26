@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { gzipSync } from 'node:zlib';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { RollbackJournal, open } from '@zukhruf/sqlite-open';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
@@ -282,7 +282,7 @@ test('persistent HTTP cache respects negotiated Markdown and HTML metadata', asy
   }
 });
 
-for (const revalidate of [false, true])
+void test.each([false, true], (revalidate) =>
   test(`a shared cache write failure fails a ${revalidate ? '304' : 'cold'} scan`, async () => {
     let fail = !revalidate;
     await using database = await new Sqlite().database();
@@ -342,4 +342,5 @@ for (const revalidate of [false, true])
       message: /no such table: keyv/,
       stderr: /PipelineError/,
     });
-  });
+  }),
+);

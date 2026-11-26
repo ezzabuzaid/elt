@@ -16,7 +16,7 @@
   "dependencies": {
     "@crawlee/utils": "3.18.2",
     "@eltjs/codec-sitemap": "0.0.1",
-    "@zukhruf/async": "^0.8.137",
+    "@zukhruf/async": "^0.8.144",
     "fast-xml-parser": "^5.11.1",
     "fast-xml-validator": "^1.4.2",
     "feedscout": "2.2.1",
@@ -35,7 +35,8 @@
     "@types/html-encoding-sniffer": "3.0.2",
     "@types/http-cache-semantics": "4.2.0",
     "@types/jsdom": "28.0.3",
-    "@zukhruf/testing": "^0.8.137",
+    "@zukhruf/parameterized-test": "^0.8.144",
+    "@zukhruf/testing": "^0.8.144",
     "msw": "^3.0.3"
   }
 }

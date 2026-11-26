@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
 
+import { test } from '@zukhruf/parameterized-test';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Msw } from '@zukhruf/testing/msw';
 import got from 'got';
@@ -196,68 +196,76 @@ test("a sitemap's xhtml:link language copies of a page are the page's localized 
   );
 });
 
-test('a JSON alternate under the WordPress REST API is never fetched as a feed, as feedscout knows that path is none, while a JSON Feed declared the same way is read', async (t) => {
-  const requested: string[] = [];
-  await using upstream = await new HttpServer().start((request, response) => {
-    requested.push(request.url ?? '');
-    switch (request.url) {
-      case '/':
-        response.setHeader('content-type', 'text/html');
-        response.end(
-          '<html><head><link rel="alternate" type="application/json" href="/wp-json/wp/v2/posts/7"><link rel="alternate" type="application/json" href="/feed.json"></head></html>',
-        );
-        break;
-      case '/headers':
-        response.setHeader('content-type', 'text/html');
-        response.setHeader(
-          'link',
-          '</wp-json/wp/v2/posts/7>; rel="alternate"; type="application/json", </feed.json>; rel="alternate"; type="application/json"',
-        );
-        response.end('<html/>');
-        break;
-      case '/feed.json':
-        response.setHeader('content-type', 'application/json');
-        response.end(
-          '{"version":"https://jsonfeed.org/version/1.1","title":"Journal","items":[{"id":"1","url":"/json-story"}]}',
-        );
-        break;
-      case '/json-story':
-        response.setHeader('content-type', 'text/html');
-        response.end(article);
-        break;
-      default:
-        response.writeHead(404).end();
-    }
-  });
+void test.each(
+  [
+    { name: 'an HTML page', input: '/' },
+    { name: 'a Link header', input: '/headers' },
+  ],
+  ({ name, input }) =>
+    test(`a JSON alternate under the WordPress REST API that ${name} declares is never fetched as a feed, as feedscout knows that path is none, while a JSON Feed declared the same way is read`, async (t) => {
+      const requested: string[] = [];
+      await using upstream = await new HttpServer().start(
+        (request, response) => {
+          requested.push(request.url ?? '');
+          switch (request.url) {
+            case '/':
+              response.setHeader('content-type', 'text/html');
+              response.end(
+                '<html><head><link rel="alternate" type="application/json" href="/wp-json/wp/v2/posts/7"><link rel="alternate" type="application/json" href="/feed.json"></head></html>',
+              );
+              break;
+            case '/headers':
+              response.setHeader('content-type', 'text/html');
+              response.setHeader(
+                'link',
+                '</wp-json/wp/v2/posts/7>; rel="alternate"; type="application/json", </feed.json>; rel="alternate"; type="application/json"',
+              );
+              response.end('<html/>');
+              break;
+            case '/feed.json':
+              response.setHeader('content-type', 'application/json');
+              response.end(
+                '{"version":"https://jsonfeed.org/version/1.1","title":"Journal","items":[{"id":"1","url":"/json-story"}]}',
+              );
+              break;
+            case '/json-story':
+              response.setHeader('content-type', 'text/html');
+              response.end(article);
+              break;
+            default:
+              response.writeHead(404).end();
+          }
+        },
+      );
 
-  for (const input of ['/', '/headers']) {
-    requested.length = 0;
-    const found = (
-      await crawl(listings(), `${upstream.origin}${input}`, t.signal)
-    ).map(location);
+      const found = (
+        await crawl(listings(), `${upstream.origin}${input}`, t.signal)
+      ).map(location);
 
-    assert.deepEqual(
-      {
-        found,
-        restRecordRequested: requested.includes('/wp-json/wp/v2/posts/7'),
-      },
-      {
-        found: [
-          {
-            url: `${upstream.origin}/json-story`,
-            lastModified: null,
-            listingUrl: `${upstream.origin}/feed.json`,
-          },
-        ],
-        restRecordRequested: false,
-      },
-      input,
-    );
-  }
-});
+      assert.deepEqual(
+        {
+          found,
+          restRecordRequested: requested.includes('/wp-json/wp/v2/posts/7'),
+        },
+        {
+          found: [
+            {
+              url: `${upstream.origin}/json-story`,
+              lastModified: null,
+              listingUrl: `${upstream.origin}/feed.json`,
+            },
+          ],
+          restRecordRequested: false,
+        },
+        input,
+      );
+    }),
+);
 
-test('JSON alternates are validated without hiding explicit listing errors', async (t) => {
-  await using upstream = await new HttpServer().start((request, response) => {
+// A site that declares JSON alternates beside an RSS feed, in its HTML and in
+// a Link header, and an explicit JSON Feed declaration of a record that is none.
+function jsonAlternates() {
+  return new HttpServer().start((request, response) => {
     switch (request.url) {
       case '/':
         response.setHeader('content-type', 'text/html');
@@ -305,39 +313,58 @@ test('JSON alternates are validated without hiding explicit listing errors', asy
         response.writeHead(404).end();
     }
   });
-  for (const input of ['/', '/headers'])
-    assert.deepEqual(
-      (await crawl(listings(), `${upstream.origin}${input}`, t.signal))
-        .map(location)
-        .toSorted((a, b) => a.url.localeCompare(b.url)),
-      [
-        {
-          url: `${upstream.origin}/json-story`,
-          lastModified: null,
-          listingUrl: `${upstream.origin}/feed.json`,
-        },
-        {
-          url: `${upstream.origin}/rss-story`,
-          lastModified: null,
-          listingUrl: `${upstream.origin}/rss.xml`,
-        },
-      ],
-      input,
-    );
-  for (const input of ['/api', '/explicit']) {
-    const entries = await crawl(
-      listings(),
-      `${upstream.origin}${input}`,
-      t.signal,
-    );
-    assert.deepEqual(pages(entries), [], input);
-    assert.deepEqual(
-      failures(entries).map((failure) => [failure.url, failure.error.url]),
-      [[`${upstream.origin}/api`, `${upstream.origin}/api`]],
-      input,
-    );
-  }
-});
+}
+
+void test.each(
+  [
+    { name: 'an HTML page', input: '/' },
+    { name: 'a Link header', input: '/headers' },
+  ],
+  ({ name, input }) =>
+    test(`the JSON alternates that ${name} declares are validated, and the JSON Feed and the RSS feed among them are read`, async (t) => {
+      await using upstream = await jsonAlternates();
+      assert.deepEqual(
+        (await crawl(listings(), `${upstream.origin}${input}`, t.signal))
+          .map(location)
+          .toSorted((a, b) => a.url.localeCompare(b.url)),
+        [
+          {
+            url: `${upstream.origin}/json-story`,
+            lastModified: null,
+            listingUrl: `${upstream.origin}/feed.json`,
+          },
+          {
+            url: `${upstream.origin}/rss-story`,
+            lastModified: null,
+            listingUrl: `${upstream.origin}/rss.xml`,
+          },
+        ],
+        input,
+      );
+    }),
+);
+
+void test.each(
+  [
+    { name: 'a JSON record started from directly', input: '/api' },
+    { name: 'a JSON record declared as a JSON Feed', input: '/explicit' },
+  ],
+  ({ name, input }) =>
+    test(`${name} is handed out as a listing error, not hidden`, async (t) => {
+      await using upstream = await jsonAlternates();
+      const entries = await crawl(
+        listings(),
+        `${upstream.origin}${input}`,
+        t.signal,
+      );
+      assert.deepEqual(pages(entries), [], input);
+      assert.deepEqual(
+        failures(entries).map((failure) => [failure.url, failure.error.url]),
+        [[`${upstream.origin}/api`, `${upstream.origin}/api`]],
+        input,
+      );
+    }),
+);
 
 test('labeled feed anchors discover pages without accepting ordinary navigation', async (t) => {
   await using upstream = await new HttpServer().start((request, response) => {
@@ -432,73 +459,102 @@ test('labeled feed anchors discover pages without accepting ordinary navigation'
   );
 });
 
-test('failures name the upstream while the rest of the listing still arrives', async (t) => {
-  const index = 'https://publisher.example/index.xml';
-  const broken = 'https://publisher.example/broken.xml';
-  const story = {
-    url: 'https://publisher.example/story',
-    lastModified: null,
-    listingUrl: 'https://publisher.example/good.xml',
-  };
-  for (const failure of [
-    { url: index, reply: () => new Response('unavailable', { status: 503 }) },
-    { url: index, reply: () => Response.error() },
-    { url: broken, reply: () => new Response('unavailable', { status: 503 }) },
-    { url: broken, reply: () => new Response('<urlset><url>') },
-    { url: broken, reply: () => new Response('<urlset><url/></urlset>') },
+const publisherIndex = 'https://publisher.example/index.xml';
+const publisherBroken = 'https://publisher.example/broken.xml';
+
+void test.each(
+  [
     {
-      url: broken,
+      name: 'the index answers 503',
+      url: publisherIndex,
+      reply: () => new Response('unavailable', { status: 503 }),
+    },
+    {
+      name: 'the index request fails',
+      url: publisherIndex,
+      reply: () => Response.error(),
+    },
+    {
+      name: 'a child sitemap answers 503',
+      url: publisherBroken,
+      reply: () => new Response('unavailable', { status: 503 }),
+    },
+    {
+      name: 'a child sitemap is cut short',
+      url: publisherBroken,
+      reply: () => new Response('<urlset><url>'),
+    },
+    {
+      name: 'a child sitemap has an entry with no location',
+      url: publisherBroken,
+      reply: () => new Response('<urlset><url/></urlset>'),
+    },
+    {
+      name: 'a child sitemap is an HTML login page',
+      url: publisherBroken,
       reply: () =>
         new Response('<html>Login</html>', {
           headers: { 'content-type': 'text/html' },
         }),
     },
     {
-      url: broken,
+      name: 'a child JSON Feed is cut short',
+      url: publisherBroken,
       reply: () =>
         new Response('{"version":"https://jsonfeed.org/version/1.1","items":['),
     },
     {
-      url: broken,
+      name: 'a child RDF feed is cut short',
+      url: publisherBroken,
       reply: () =>
         new Response(
           '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#"><item><link>https://publisher.example/partial</link></item>',
         ),
     },
-  ]) {
-    await using upstream = site(
-      http.get(failure.url, failure.reply),
-      http.get(
-        index,
-        () =>
-          new Response(
-            `<sitemapindex><sitemap><loc>https://publisher.example/good.xml</loc></sitemap><sitemap><loc>${broken}</loc></sitemap></sitemapindex>`,
-          ),
-      ),
-      http.get(
-        'https://publisher.example/good.xml',
-        () =>
-          new Response(
-            '<urlset><url><loc>https://publisher.example/story</loc></url></urlset>',
-          ),
-      ),
-      http.get(story.url, () => HttpResponse.html(article)),
-    );
-    const entries = await crawl(listings(), index, t.signal);
-    const [error, ...others] = failures(entries);
-    assert.equal(others.length, 0);
-    assert.equal(error?.url, failure.url);
-    assert.ok(error.error instanceof CrawlError);
-    assert.equal(error.error.url, failure.url);
-    assert.ok(error.error.cause);
-    assert.deepEqual(pages(entries), failure.url === index ? [] : [story]);
-  }
-});
+  ],
+  (failure) =>
+    test(`when ${failure.name}, the failure names the upstream while the rest of the listing still arrives`, async (t) => {
+      const story = {
+        url: 'https://publisher.example/story',
+        lastModified: null,
+        listingUrl: 'https://publisher.example/good.xml',
+      };
+      await using upstream = site(
+        http.get(failure.url, failure.reply),
+        http.get(
+          publisherIndex,
+          () =>
+            new Response(
+              `<sitemapindex><sitemap><loc>https://publisher.example/good.xml</loc></sitemap><sitemap><loc>${publisherBroken}</loc></sitemap></sitemapindex>`,
+            ),
+        ),
+        http.get(
+          'https://publisher.example/good.xml',
+          () =>
+            new Response(
+              '<urlset><url><loc>https://publisher.example/story</loc></url></urlset>',
+            ),
+        ),
+        http.get(story.url, () => HttpResponse.html(article)),
+      );
+      const entries = await crawl(listings(), publisherIndex, t.signal);
+      const [error, ...others] = failures(entries);
+      assert.equal(others.length, 0);
+      assert.equal(error?.url, failure.url);
+      assert.ok(error.error instanceof CrawlError);
+      assert.equal(error.error.url, failure.url);
+      assert.ok(error.error.cause);
+      assert.deepEqual(
+        pages(entries),
+        failure.url === publisherIndex ? [] : [story],
+      );
+    }),
+);
 
-test('cancellation stops requests and preserves the caller reason', async () => {
-  const index = 'https://cancel.example/index.xml';
-  const child = 'https://cancel.example/child.xml';
-  for (const stage of ['before', 'input', 'child']) {
+void test.each(['before', 'input', 'child'], (stage) =>
+  test(`cancellation at the ${stage} stage stops requests and preserves the caller reason`, async () => {
+    const index = 'https://cancel.example/index.xml';
+    const child = 'https://cancel.example/child.xml';
     const controller = new AbortController();
     const reason = new Error('caller stopped discovery');
     const requests: string[] = [];
@@ -527,11 +583,11 @@ test('cancellation stops requests and preserves the caller reason', async () => 
       requests,
       stage === 'before' ? [] : stage === 'input' ? [index] : [index, child],
     );
-  }
-});
+  }),
+);
 
-test('arbitrary sites retain every candidate path, URL identity and raw hints', async (t) => {
-  for (const origin of ['https://biology.example', 'https://city.example']) {
+void test.each(['https://biology.example', 'https://city.example'], (origin) =>
+  test(`the arbitrary site ${origin} retains every candidate path, URL identity and raw hints`, async (t) => {
     const listingUrl = `${origin}/maps/current.xml`;
     const requests: string[] = [];
     await using upstream = site(
@@ -597,46 +653,73 @@ test('arbitrary sites retain every candidate path, URL identity and raw hints', 
       ],
     );
     assert.deepEqual(requests, []);
-  }
-});
+  }),
+);
 
-test('direct listings support sitemap, text, RSS, Atom, RDF and JSON Feed with provenance', async (t) => {
-  for (const document of [
-    '<urlset><url><loc>https://feeds.example/paper</loc></url></urlset>',
-    'https://feeds.example/paper\n',
-    '<rss version="2.0"><channel><item><link>../paper</link><pubDate>Tue, 20 Oct 2026 00:00:00 GMT</pubDate></item><item><title>No link</title></item></channel></rss>',
-    '<feed xmlns="http://www.w3.org/2005/Atom"><entry><link href="../paper"/><link rel="self" href="/entry.xml"/><published>2026-10-20</published></entry></feed>',
-    '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://feeds.example/"><title>Science</title><link>https://feeds.example/</link></channel><item rdf:about="https://feeds.example/paper"><title>Paper</title><link>../paper</link></item></rdf:RDF>',
-    '{"version":"https://jsonfeed.org/version/1.1","title":"Science","items":[{"id":"1","url":"../paper","date_published":"2026-10-20T00:00:00Z"},{"id":"2","content_text":"No URL"}]}',
-  ]) {
-    await using upstream = site(
-      http.get('https://feeds.example/start', () =>
-        Response.redirect('https://feeds.example/archive/feed'),
-      ),
-      http.get(
-        'https://feeds.example/archive/feed',
-        () => new Response(document),
-      ),
-      http.get('https://feeds.example/paper', () => HttpResponse.html(article)),
-    );
-    assert.deepEqual(
-      (await crawl(listings(), 'https://feeds.example/start', t.signal)).map(
-        location,
-      ),
-      [
-        {
-          url: 'https://feeds.example/paper',
-          lastModified: null,
-          listingUrl: 'https://feeds.example/archive/feed',
-        },
-      ],
-      document,
-    );
-  }
-});
+void test.each(
+  [
+    {
+      name: 'sitemap',
+      document:
+        '<urlset><url><loc>https://feeds.example/paper</loc></url></urlset>',
+    },
+    {
+      name: 'text',
+      document: 'https://feeds.example/paper\n',
+    },
+    {
+      name: 'RSS',
+      document:
+        '<rss version="2.0"><channel><item><link>../paper</link><pubDate>Tue, 20 Oct 2026 00:00:00 GMT</pubDate></item><item><title>No link</title></item></channel></rss>',
+    },
+    {
+      name: 'Atom',
+      document:
+        '<feed xmlns="http://www.w3.org/2005/Atom"><entry><link href="../paper"/><link rel="self" href="/entry.xml"/><published>2026-10-20</published></entry></feed>',
+    },
+    {
+      name: 'RDF',
+      document:
+        '<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><channel rdf:about="https://feeds.example/"><title>Science</title><link>https://feeds.example/</link></channel><item rdf:about="https://feeds.example/paper"><title>Paper</title><link>../paper</link></item></rdf:RDF>',
+    },
+    {
+      name: 'JSON Feed',
+      document:
+        '{"version":"https://jsonfeed.org/version/1.1","title":"Science","items":[{"id":"1","url":"../paper","date_published":"2026-10-20T00:00:00Z"},{"id":"2","content_text":"No URL"}]}',
+    },
+  ],
+  ({ document, name }) =>
+    test(`direct listings support ${name} with provenance`, async (t) => {
+      await using upstream = site(
+        http.get('https://feeds.example/start', () =>
+          Response.redirect('https://feeds.example/archive/feed'),
+        ),
+        http.get(
+          'https://feeds.example/archive/feed',
+          () => new Response(document),
+        ),
+        http.get('https://feeds.example/paper', () =>
+          HttpResponse.html(article),
+        ),
+      );
+      assert.deepEqual(
+        (await crawl(listings(), 'https://feeds.example/start', t.signal)).map(
+          location,
+        ),
+        [
+          {
+            url: 'https://feeds.example/paper',
+            lastModified: null,
+            listingUrl: 'https://feeds.example/archive/feed',
+          },
+        ],
+        document,
+      );
+    }),
+);
 
-test('autodiscovery follows HTML base and HTTP feed links despite absent robots, then probes a sitemap', async (t) => {
-  for (const status of [404, 410]) {
+void test.each([404, 410], (status) =>
+  test(`autodiscovery follows HTML base and HTTP feed links despite a robots.txt that answers ${status}`, async (t) => {
     await using upstream = site(
       http.get('https://start.example/blog', () =>
         Response.redirect('https://journal.example/blog/'),
@@ -705,40 +788,54 @@ test('autodiscovery follows HTML base and HTTP feed links despite absent robots,
         },
       ],
     );
-  }
-  for (const mapExists of [true, false]) {
-    await using upstream = site(
-      http.get(
+  }),
+);
+
+void test.each(
+  [
+    { name: 'exists', mapExists: true },
+    { name: 'is missing', mapExists: false },
+  ],
+  ({ name, mapExists }) =>
+    test(`autodiscovery on a site with no declared listing probes a /sitemap.xml that ${name}`, async (t) => {
+      await using upstream = site(
+        http.get(
+          'https://bare.example/',
+          () =>
+            new Response('<html/>', {
+              headers: { 'content-type': 'text/html' },
+            }),
+        ),
+        http.get(
+          'https://bare.example/robots.txt',
+          () => new Response('User-agent: *\nAllow: /'),
+        ),
+        http.get('https://bare.example/sitemap.xml', () =>
+          mapExists
+            ? new Response(
+                '<urlset><url><loc>https://bare.example/page</loc></url></urlset>',
+              )
+            : new Response('absent', { status: 404 }),
+        ),
+        http.get('https://bare.example/page', () => HttpResponse.html(article)),
+      );
+      const entries = await crawl(
+        listings(),
         'https://bare.example/',
-        () =>
-          new Response('<html/>', { headers: { 'content-type': 'text/html' } }),
-      ),
-      http.get(
-        'https://bare.example/robots.txt',
-        () => new Response('User-agent: *\nAllow: /'),
-      ),
-      http.get('https://bare.example/sitemap.xml', () =>
-        mapExists
-          ? new Response(
-              '<urlset><url><loc>https://bare.example/page</loc></url></urlset>',
-            )
-          : new Response('absent', { status: 404 }),
-      ),
-      http.get('https://bare.example/page', () => HttpResponse.html(article)),
-    );
-    const entries = await crawl(listings(), 'https://bare.example/', t.signal);
-    if (mapExists)
-      assert.deepEqual(entries.map(location), [
-        {
-          url: 'https://bare.example/page',
-          lastModified: null,
-          listingUrl: 'https://bare.example/sitemap.xml',
-        },
-      ]);
-    // A missing guess is an ordinary answer, so a site with nothing to list yields an empty crawl.
-    else assert.deepEqual(entries, []);
-  }
-});
+        t.signal,
+      );
+      if (mapExists)
+        assert.deepEqual(entries.map(location), [
+          {
+            url: 'https://bare.example/page',
+            lastModified: null,
+            listingUrl: 'https://bare.example/sitemap.xml',
+          },
+        ]);
+      // A missing guess is an ordinary answer, so a site with nothing to list yields an empty crawl.
+      else assert.deepEqual(entries, []);
+    }),
+);
 
 test('an unreadable /sitemap.xml guess, such as a soft 404 page, is ignored', async (t) => {
   await using server = site(
@@ -1279,9 +1376,9 @@ test('a feed on a crawled page keeps the caller reason on cancellation', async (
   }
 });
 
-test('declared sitemap failures and malformed listings are handed out with their URL while pages continue', async (t) => {
-  const bytes = new Uint8Array([0, 255, 1, 128]);
-  for (const listing of ['missing', 'malformed']) {
+void test.each(['missing', 'malformed'], (listing) =>
+  test(`a ${listing} declared sitemap is handed out with its URL while pages continue`, async (t) => {
+    const bytes = new Uint8Array([0, 255, 1, 128]);
     const requests: string[] = [];
     await using server = site(
       http.get('https://site.test/*', ({ request }) => {
@@ -1321,5 +1418,5 @@ test('declared sitemap failures and malformed listings are handed out with their
     assert.deepEqual(binary.response.rawBody, bytes);
     // A declared sitemap, even a failing one, means no /sitemap.xml guess.
     assert.ok(!requests.includes('/sitemap.xml'));
-  }
-});
+  }),
+);

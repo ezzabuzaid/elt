@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import { test } from '@zukhruf/parameterized-test';
 import { open } from '@zukhruf/sqlite-open';
 
 import {
@@ -412,7 +412,7 @@ test('a removed input removes its output row and its parts, and a reading before
   );
 });
 
-for (const column of ['tokens', 'start'] as const)
+void test.each(['tokens', 'start'] as const, (column) =>
   test(`a value of a part that does not fit its column, here ${column}, fails its input with the part and the column named, and the input keeps no part`, async () => {
     await using scratch = await new TemporaryFiles().directory('elt-parts-');
     const rule = new Pieces();
@@ -438,7 +438,8 @@ for (const column of ['tokens', 'start'] as const)
         parts: [],
       },
     );
-  });
+  }),
+);
 
 test('a rule call that fails rejects the run, and each input of the calls before it keeps its output row with all its parts', async () => {
   await using scratch = await new TemporaryFiles().directory('elt-parts-');
@@ -585,40 +586,43 @@ test('a changed declaration of the parts makes both tables again, and a reading 
   );
 });
 
-for (const [output, place, column, other] of [
-  [['text', 'seq'], ['start'], 'seq', 'seq'],
-  [['text'], ['Part_Hash'], 'Part_Hash', 'part_hash'],
-  [['text'], ['ID'], 'ID', 'id'],
-  [['status'], ['start'], 'status', 'status'],
-  [['text'], ['Committed_In'], 'Committed_In', 'committed_in'],
-  [['text'], ['REPLACED_IN'], 'REPLACED_IN', 'replaced_in'],
-  [['text'], ['TEXT'], 'TEXT', 'text'],
-] as const)
-  test(`a table rule column named ${column} is refused when the dataset is constructed, as the dataset already has ${other}`, () => {
-    const columns = (names: readonly string[]): RuleColumns =>
-      Object.fromEntries(
-        names.map((name) => [name, { type: 'text', description: name }]),
-      );
+void test.each(
+  [
+    [['text', 'seq'], ['start'], 'seq', 'seq'],
+    [['text'], ['Part_Hash'], 'Part_Hash', 'part_hash'],
+    [['text'], ['ID'], 'ID', 'id'],
+    [['status'], ['start'], 'status', 'status'],
+    [['text'], ['Committed_In'], 'Committed_In', 'committed_in'],
+    [['text'], ['REPLACED_IN'], 'REPLACED_IN', 'replaced_in'],
+    [['text'], ['TEXT'], 'TEXT', 'text'],
+  ] as const,
+  ([output, place, column, other]) =>
+    test(`a table rule column named ${column} is refused when the dataset is constructed, as the dataset already has ${other}`, () => {
+      const columns = (names: readonly string[]): RuleColumns =>
+        Object.fromEntries(
+          names.map((name) => [name, { type: 'text', description: name }]),
+        );
 
-    assert.throws(
-      () =>
-        new ComputedDataset({
-          into: new SQLiteDestination({ path: ':memory:' }),
-          name: 'pieces',
-          description: 'The pieces of each note.',
-          from: [],
-          compute: new Pieces({
-            output: columns(output),
-            place: columns(place),
+      assert.throws(
+        () =>
+          new ComputedDataset({
+            into: new SQLiteDestination({ path: ':memory:' }),
+            name: 'pieces',
+            description: 'The pieces of each note.',
+            from: [],
+            compute: new Pieces({
+              output: columns(output),
+              place: columns(place),
+            }),
           }),
-        }),
-      new TypeError(
-        `Computed dataset pieces cannot have the column ${column}: the dataset already has the column ${other}`,
-      ),
-    );
-  });
+        new TypeError(
+          `Computed dataset pieces cannot have the column ${column}: the dataset already has the column ${other}`,
+        ),
+      );
+    }),
+);
 
-for (const name of ['pieces_parts', 'RAW_PIECES_PARTS'])
+void test.each(['pieces_parts', 'RAW_PIECES_PARTS'], (name) =>
   test(`a computed dataset with a table rule refuses a pipeline whose copy makes ${name}`, async () => {
     await using scratch = await new TemporaryFiles().directory('elt-parts-');
     const { source } = notesSource();
@@ -654,7 +658,8 @@ for (const name of ['pieces_parts', 'RAW_PIECES_PARTS'])
         `Computed dataset pieces needs ${name.toLowerCase()}, which a copy of the pipeline makes`,
       ),
     );
-  });
+  }),
+);
 
 test('a table rule gives one part or more for an input: a list of no parts does not compile', () => {
   const results: TableRuleResult<RuleValues<typeof content>>[] = [

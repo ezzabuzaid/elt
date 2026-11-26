@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { inspect } from 'node:util';
 
+import { test } from '@zukhruf/parameterized-test';
 import {
   type Database,
   SQL_SERVER_FULL_IMAGE,
@@ -419,7 +419,7 @@ test(
   },
 );
 
-for (const snapshot of [false, true])
+void test.each([false, true], (snapshot) =>
   test(`changes report each changed key once, as its row now or as a deletion${snapshot ? ', from one snapshot' : ''}`, async () => {
     await using scratch = await sqlServer.database();
     await using clients = new AsyncDisposableStack();
@@ -484,7 +484,8 @@ for (const snapshot of [false, true])
       (await changes(session, lines, set.position)).read.map(described),
       ['upsert [4,1,"7.00",null]'],
     );
-  });
+  }),
+);
 
 test('rowversion reads stop below the oldest open write, so a row still being written is read once it commits, and pages resume after the last version', async () => {
   await using scratch = await sqlServer.database();

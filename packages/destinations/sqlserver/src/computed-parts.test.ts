@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { test } from 'node:test';
 
+import { test } from '@zukhruf/parameterized-test';
 import { SqlServer } from '@zukhruf/testing/sqlserver';
 
 import {
@@ -738,35 +738,38 @@ test(
   },
 );
 
-for (const [output, place, column, taken] of [
-  [['text'], ['SEQ'], 'SEQ', 'seq'],
-  [['text'], ['part_hash'], 'part_hash', 'part_hash'],
-  [['text'], ['_elt_row'], '_elt_row', '_elt_row'],
-  [['_ELT_KEY_HASH'], ['start'], '_ELT_KEY_HASH', '_elt_key_hash'],
-  [['text'], ['Text'], 'Text', 'text'],
-] as const)
-  test(`a table rule column named ${column} is refused when the dataset is constructed, as the dataset already has ${taken} and SQL Server compares names without case`, () => {
-    const columns = (names: readonly string[]): RuleColumns =>
-      Object.fromEntries(
-        names.map((name) => [name, { type: 'text', description: name }]),
-      );
+void test.each(
+  [
+    [['text'], ['SEQ'], 'SEQ', 'seq'],
+    [['text'], ['part_hash'], 'part_hash', 'part_hash'],
+    [['text'], ['_elt_row'], '_elt_row', '_elt_row'],
+    [['_ELT_KEY_HASH'], ['start'], '_ELT_KEY_HASH', '_elt_key_hash'],
+    [['text'], ['Text'], 'Text', 'text'],
+  ] as const,
+  ([output, place, column, taken]) =>
+    test(`a table rule column named ${column} is refused when the dataset is constructed, as the dataset already has ${taken} and SQL Server compares names without case`, () => {
+      const columns = (names: readonly string[]): RuleColumns =>
+        Object.fromEntries(
+          names.map((name) => [name, { type: 'text', description: name }]),
+        );
 
-    assert.throws(
-      () =>
-        new ComputedDataset({
-          into: new SqlServerDestination({
-            login: 'Server=none;Database=none',
+      assert.throws(
+        () =>
+          new ComputedDataset({
+            into: new SqlServerDestination({
+              login: 'Server=none;Database=none',
+            }),
+            name: 'pieces',
+            description: 'The pieces of each note.',
+            from: [],
+            compute: new Pieces({
+              output: columns(output),
+              place: columns(place),
+            }),
           }),
-          name: 'pieces',
-          description: 'The pieces of each note.',
-          from: [],
-          compute: new Pieces({
-            output: columns(output),
-            place: columns(place),
-          }),
-        }),
-      new TypeError(
-        `Computed dataset pieces cannot have the column ${column}: the dataset already has the column ${taken}`,
-      ),
-    );
-  });
+        new TypeError(
+          `Computed dataset pieces cannot have the column ${column}: the dataset already has the column ${taken}`,
+        ),
+      );
+    }),
+);

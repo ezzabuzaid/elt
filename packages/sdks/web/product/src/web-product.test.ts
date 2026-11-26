@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+
+import { test } from '@zukhruf/parameterized-test';
 
 import { WebProduct } from './index.ts';
 
@@ -170,44 +171,54 @@ test('a product without a name is no product', () => {
   assert.equal(WebProduct.read(page([block]), url, at), null);
 });
 
-test('the offer’s price wins over its price specifications, and a struck price is the regular price only when it is higher', () => {
+// The price of an offer of 20.000 with a specification of 18.000 and a struck
+// price of the given amount and price type.
+const struckPrice = (regular: string, priceType: string) => {
   const url = 'https://shop.example.jo/p/1';
-  const read = (regular: string, priceType: string) =>
-    WebProduct.read(
-      page([
-        JSON.stringify({
-          '@type': 'Product',
-          name: 'Kettle',
-          url,
-          offers: {
-            '@type': 'Offer',
-            price: '20.000',
-            priceCurrency: 'JOD',
-            priceSpecification: [
-              { '@type': 'UnitPriceSpecification', price: '18.000' },
-              { '@type': 'UnitPriceSpecification', price: regular, priceType },
-            ],
-          },
-        }),
-      ]),
-      url,
-      at,
-    )?.price;
-  // WooCommerce marks its regular price ListPrice, WPSSO StrikethroughPrice.
-  for (const priceType of [
+  return WebProduct.read(
+    page([
+      JSON.stringify({
+        '@type': 'Product',
+        name: 'Kettle',
+        url,
+        offers: {
+          '@type': 'Offer',
+          price: '20.000',
+          priceCurrency: 'JOD',
+          priceSpecification: [
+            { '@type': 'UnitPriceSpecification', price: '18.000' },
+            { '@type': 'UnitPriceSpecification', price: regular, priceType },
+          ],
+        },
+      }),
+    ]),
+    url,
+    at,
+  )?.price;
+};
+
+// WooCommerce marks its regular price ListPrice, WPSSO StrikethroughPrice.
+void test.each(
+  [
     'https://schema.org/StrikethroughPrice',
     'https://schema.org/ListPrice',
     'https://schema.org/RegularPrice',
     'https://schema.org/MSRP',
     'https://schema.org/SRP',
-  ])
-    assert.deepEqual(
-      read('25.000', priceType),
-      { ...price('20'), regular: '25' },
-      priceType,
-    );
+  ],
+  (priceType) =>
+    test(`the offer’s price wins over its price specifications, and a struck price higher than it is the regular price: ${priceType}`, () => {
+      assert.deepEqual(
+        struckPrice('25.000', priceType),
+        { ...price('20'), regular: '25' },
+        priceType,
+      );
+    }),
+);
+
+test('a struck price lower than the offer’s price is not the regular price', () => {
   assert.deepEqual(
-    read('15.000', 'https://schema.org/ListPrice'),
+    struckPrice('15.000', 'https://schema.org/ListPrice'),
     price('20'),
     'a lower struck price',
   );
