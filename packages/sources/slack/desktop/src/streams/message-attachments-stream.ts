@@ -6,7 +6,8 @@ import type { SlackAttachment } from '@eltjs/sdk-slack-desktop';
 import type { SlackDesktopScan } from '../slack-desktop-scan.ts';
 import { SlackDesktopStream, slackFields } from '../slack-desktop-stream.ts';
 
-const { id, ts, ordinal, nullableText, nullableBoolean } = slackFields;
+const { id, ts, ordinal, nullableText, nullableBoolean, nullableTimestamp } =
+  slackFields;
 
 const properties = {
   workspaceId: { ...id, description: 'The workspace (workspaces.id).' },
@@ -40,6 +41,11 @@ const properties = {
   sharedMessageTs: {
     ...nullableText,
     description: 'For a shared message, its ts there.',
+  },
+  contentAt: {
+    ...nullableTimestamp,
+    description:
+      'For any other attachment, the time of what it shows, which Slack writes in its footer.',
   },
   footer: { ...nullableText, description: 'Its footer.' },
   color: { ...nullableText, description: 'The color of its side bar.' },
@@ -123,6 +129,7 @@ export class MessageAttachmentsStream extends SlackDesktopStream<
         authorLink: attachment.authorLink,
         sharedChannelId: attachment.channelId,
         sharedMessageTs: attachment.messageTs,
+        contentAt: attachment.contentAt,
         footer: attachment.footer,
         color: attachment.color,
         appId: attachment.appId,

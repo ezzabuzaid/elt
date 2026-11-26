@@ -274,7 +274,11 @@ function reaction(fields: Fields): SlackReaction {
   };
 }
 
+// An unfurl's ts is the ts of the message it shares. Any other attachment's
+// ts is an integer Unix time of what it shows, which Slack writes in its
+// footer (Slack's legacy secondary attachments reference).
 function attachment(fields: Fields): SlackAttachment {
+  const unfurl = fields.boolean('is_msg_unfurl') === true;
   return {
     id: fields.string('id'),
     fallback: fields.string('fallback'),
@@ -285,7 +289,8 @@ function attachment(fields: Fields): SlackAttachment {
     authorName: fields.string('author_name'),
     authorLink: fields.string('author_link'),
     channelId: fields.string('channel_id'),
-    messageTs: fields.string('ts'),
+    messageTs: unfurl ? fields.string('ts') : null,
+    contentAt: unfurl ? null : seconds(fields.number('ts')),
     footer: fields.string('footer'),
     color: fields.string('color'),
     appId: fields.string('app_id'),

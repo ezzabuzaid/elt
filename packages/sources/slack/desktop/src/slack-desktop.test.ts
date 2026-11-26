@@ -1288,6 +1288,74 @@ test('every stream loads what the Slack app keeps, ts exact and sent times to th
   );
 });
 
+test('an attachment’s ts is the shared message’s ts for a message unfurl, and otherwise the time of what it shows', async () => {
+  // Arrange: the two shapes this Mac's Slack keeps. A link preview's ts is
+  // an integer Unix time (Slack's legacy attachments reference); an unfurl's
+  // is the ts of the message it shares.
+  const { dir, store, out } = await scratch();
+  await using _ = dir;
+  await store.save([
+    januaryClient({
+      messages: {
+        C1: [
+          {
+            ts: '1790000000.000100',
+            text: 'two links',
+            attachments: [
+              {
+                id: '1',
+                from_url: 'https://example.com/post',
+                original_url: 'https://example.com/post',
+                service_name: 'Example',
+                ts: 1789976400,
+              },
+              {
+                id: '2',
+                from_url:
+                  'https://acme.slack.com/archives/C2/p1789990000000100',
+                is_msg_unfurl: true,
+                channel_id: 'C2',
+                ts: '1789990000.000100',
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  ]);
+
+  // Act
+  await (
+    await pipeline(
+      new SlackDesktopSource({ directory: store.directory }),
+      dir.path,
+      globalThis,
+    )
+  ).run();
+
+  // Assert
+  assert.deepEqual(
+    rows(
+      out,
+      'SELECT position, sharedChannelId, sharedMessageTs, contentAt FROM messageAttachments ORDER BY position',
+    ),
+    [
+      {
+        position: 0,
+        sharedChannelId: null,
+        sharedMessageTs: null,
+        contentAt: '2026-09-21T07:40:00.000Z',
+      },
+      {
+        position: 1,
+        sharedChannelId: 'C2',
+        sharedMessageTs: '1789990000.000100',
+        contentAt: null,
+      },
+    ],
+  );
+});
+
 test('a member that a conversation’s member list repeats loads once for each place in the list', async () => {
   const { dir, store, out } = await scratch();
   await using _ = dir;

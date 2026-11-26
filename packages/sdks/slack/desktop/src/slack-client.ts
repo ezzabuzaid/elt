@@ -119,7 +119,10 @@ export type SlackAttachment = {
   readonly authorName: string | null;
   readonly authorLink: string | null;
   readonly channelId: string | null;
+  // For a shared message, its ts there.
   readonly messageTs: string | null;
+  // For any other attachment, the time of what it shows.
+  readonly contentAt: string | null;
   readonly footer: string | null;
   readonly color: string | null;
   readonly appId: string | null;
