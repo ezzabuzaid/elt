@@ -92,7 +92,7 @@ All eight streams are [snapshot streams](../../../elt/README.md#snapshot-streams
 
 The source needs macOS 27, because the helper is built for it. Give **full Reminders access** to the process that runs the pipeline, in **System Settings > Privacy & Security > Reminders**. Calendar access and Automation access do not replace it. Full Disk Access is not necessary. A sandbox can block access also when macOS gives the permission.
 
-Construction, discovery and validation do no native read and ask for no permission. The first read asks for access if the user did not decide yet, and waits up to 30 seconds. If access is denied, restricted, pending or revoked, the read fails with `RemindersUnavailableError`, which keeps the error of the process as its `cause`.
+Construction, discovery and validation do no native read and ask for no permission. The first read asks for access through `@zukhruf/tcc` if the user did not decide yet. It waits for the answer until its signal stops it. If access is denied, restricted, pending or revoked, the read fails with `RemindersUnavailableError`, which keeps the error of the process as its `cause`.
 
 A fetch waits up to 60 seconds, and then the helper cancels the request. A nil fetch result is an error. Only a successful empty array can clear a target. A failed read keeps the last contents of the target.
 

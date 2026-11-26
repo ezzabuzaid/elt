@@ -32,40 +32,11 @@ func requireAccess(_ entity: Entity, message: String) throws {
   }
 }
 
-// Asks for full access when it was never decided or only write access was granted.
+// The helper only reads: when access is missing, the status in its error tells
+// the Node store whether macOS can still ask (@zukhruf/tcc's request).
 func openStore(_ entity: Entity) throws -> EKEventStore {
-  if [.notDetermined, .writeOnly].contains(authorization(entity)) {
-    try requestThroughOsascript(entity)
-  }
   try requireAccess(entity, message: "full access is required")
   return EKEventStore()
-}
-
-// macOS answers this helper's own access request with "not granted" and shows
-// no prompt: only binaries with Apple's private
-// com.apple.private.tcc.allow-prompting entitlement may prompt, and osascript
-// carries it. Run under the same terminal or app, osascript prompts, and the
-// grant belongs to that terminal or app, which this helper inherits. The script
-// waits up to 30 seconds for the answer.
-private func requestThroughOsascript(_ entity: Entity) throws {
-  let request =
-    entity == .events
-    ? "requestFullAccessToEventsWithCompletion" : "requestFullAccessToRemindersWithCompletion"
-  let type = entity == .events ? 0 : 1
-  let script = """
-    ObjC.import('EventKit');
-    const status = () => Number($.EKEventStore.authorizationStatusForEntityType(\(type)));
-    $.EKEventStore.alloc.init.\(request)(() => {});
-    const deadline = Date.now() + 30000;
-    while ((status() === 0 || status() === 4) && Date.now() < deadline)
-      $.NSRunLoop.currentRunLoop.runUntilDate($.NSDate.dateWithTimeIntervalSinceNow(0.05));
-    """
-  let osascript = Process()
-  osascript.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-  osascript.arguments = ["-l", "JavaScript", "-e", script]
-  osascript.standardOutput = FileHandle.nullDevice
-  try osascript.run()
-  osascript.waitUntilExit()
 }
 
 struct ReadRequest: Decodable {

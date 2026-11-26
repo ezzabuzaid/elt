@@ -12,6 +12,12 @@
     },
     "build": {
       "dependsOn": ["...", "helper"]
+    },
+    "test-prompt": {
+      "command": "node --test --no-warnings --test-timeout=600000 --test-concurrency=1 \"src/**/*.prompt.spec.ts\"",
+      "options": { "cwd": "{projectRoot}" },
+      "dependsOn": ["build"],
+      "cache": false
     }
   }
 }

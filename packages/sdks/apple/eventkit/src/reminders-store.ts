@@ -1,3 +1,5 @@
+import { Reminders } from '@zukhruf/tcc';
+
 import type { EventKitDocument, ReminderDocument } from './documents.ts';
 import { RemindersUnavailableError } from './errors.ts';
 import {
@@ -17,6 +19,7 @@ export class RemindersStore extends EventKitStore<
 > {
   protected readonly entity = 'reminders';
   protected readonly accessMarker = 'REMINDERS_UNAVAILABLE';
+  protected readonly service = new Reminders();
 
   protected request() {
     return {};

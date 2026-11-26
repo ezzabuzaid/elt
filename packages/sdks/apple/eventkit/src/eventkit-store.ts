@@ -1,3 +1,5 @@
+import type { Calendars, Reminders } from '@zukhruf/tcc';
+
 import type {
   AccountDocument,
   CalendarDocument,
@@ -30,6 +32,8 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
   protected abstract readonly entity: 'events' | 'reminders';
   // What the helper writes to stderr when access to the entity is missing.
   protected abstract readonly accessMarker: string;
+  // The privacy service of macOS that grants the entity.
+  protected abstract readonly service: Calendars | Reminders;
   // The compiled helper (helper/*.swift). Its host decides where it lives:
   // beside this package's dist, or beside a bundled server.
   readonly #helper: string;
@@ -78,12 +82,7 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
   // Yields once the subscription is confirmed, then once per store change.
   async *watch(signal: AbortSignal): AsyncGenerator<void> {
     try {
-      for await (const message of nativeProcess.lines(
-        this.#helper,
-        ['watch', this.entity],
-        this.#environment,
-        signal,
-      )) {
+      for await (const message of this.#lines(['watch', this.entity], signal)) {
         if (message !== 'changed')
           throw new TypeError(
             'EventKit watcher returned an invalid notification',
@@ -133,8 +132,7 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
     signal: AbortSignal | undefined,
   ): Promise<EventKitDocument[]> {
     const documents = await Array.fromAsync(
-      nativeProcess.lines(
-        this.#helper,
+      this.#lines(
         [
           'read',
           JSON.stringify({
@@ -144,7 +142,6 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
             collectionIds: query.calendarIds,
           } satisfies HelperRequest),
         ],
-        this.#environment,
         signal,
       ),
       (line) => inContentOrder(JSON.parse(line)),
@@ -156,7 +153,33 @@ export abstract class EventKitStore<Query extends EventKitQuery, Contents> {
     signal?.throwIfAborted();
     return documents;
   }
+
+  // The helper's lines. A helper that finds the entity not decided, or granted
+  // for writing only, fails without asking, since macOS shows its prompt only
+  // to a program that may prompt: the store asks through tcc, and the helper
+  // runs again with whatever the user answered.
+  async *#lines(
+    args: readonly string[],
+    signal: AbortSignal | undefined,
+  ): AsyncGenerator<string> {
+    try {
+      yield* nativeProcess.lines(this.#helper, args, this.#environment, signal);
+    } catch (error) {
+      const stderr = helperStderr(error);
+      if (!stderr.includes(this.accessMarker) || !askable.test(stderr))
+        throw error;
+      // A read with no signal waits for the user's answer.
+      await this.service.request({
+        signal: signal ?? new AbortController().signal,
+      });
+      yield* nativeProcess.lines(this.#helper, args, this.#environment, signal);
+    }
+  }
 }
+
+// The statuses macOS still shows its prompt for: EKAuthorizationStatus
+// notDetermined (0) and writeOnly (4), as the helper writes them.
+const askable = /status=[04]$/m;
 
 export function helperStderr(error: unknown): string {
   return Error.isError(error) &&

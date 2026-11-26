@@ -66,7 +66,7 @@ The `calendars` stream reads `description` from the private `notes` property of 
 
 The source needs macOS 27 and full Calendar access for the process that runs the export. macOS gives access to the app that is responsible for the process, for example the terminal.
 
-The first read asks for access if the user did not decide yet or gave write-only access. It asks through `osascript`, because macOS shows no prompt for the request of the helper itself. It waits up to 30 seconds. The grant goes to the terminal or app that runs the export. If access is denied, restricted or still pending, the helper writes `CALENDAR_UNAVAILABLE`, and the read fails with `CalendarUnavailableError`. This error keeps the native error as its `cause` and tells how to give access. A sandbox can block access also when macOS gives the permission. A permission failure never becomes an empty export.
+The first read asks for access if the user did not decide yet or gave write-only access. The helper fails with the status, and the store asks through `new Calendars().request()` of `@zukhruf/tcc`. That request runs in `osascript`, because macOS shows no prompt for the request of the helper itself. The read waits for the answer until its signal stops it, then reads again. The grant goes to the terminal or app that runs the export. If access is denied, restricted or still pending, the helper writes `CALENDAR_UNAVAILABLE`, and the read fails with `CalendarUnavailableError`. This error keeps the native error as its `cause` and tells how to give access. A sandbox can block access also when macOS gives the permission. A permission failure never becomes an empty export.
 
 ## The ICS streams
 

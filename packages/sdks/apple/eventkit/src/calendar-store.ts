@@ -1,3 +1,5 @@
+import { Calendars } from '@zukhruf/tcc';
+
 import type {
   EventKitDocument,
   IcsDocument,
@@ -35,6 +37,7 @@ export class CalendarStore extends EventKitStore<
 > {
   protected readonly entity = 'events';
   protected readonly accessMarker = 'CALENDAR_UNAVAILABLE';
+  protected readonly service = new Calendars();
 
   protected request({ startAt, endAt, ics }: CalendarQuery) {
     return { startAt, endAt, ics };

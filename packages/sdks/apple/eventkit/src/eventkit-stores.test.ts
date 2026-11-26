@@ -522,6 +522,31 @@ test('missing access fails reads and watches with the entity’s own error', asy
   );
 });
 
+test('access that macOS has decided against fails at once, with no request and no second read', async () => {
+  // Arrange
+  const read = { entity: 'events', ...january, ics: false } as const;
+  await using denied = await StubEventKitHelper.create();
+  await using restricted = await StubEventKitHelper.create();
+  denied.answer(read, {
+    stderr: 'CALENDAR_UNAVAILABLE: full access is required; status=2\n',
+  });
+  restricted.answer(read, {
+    stderr: 'CALENDAR_UNAVAILABLE: full access is required; status=1\n',
+  });
+
+  for (const stub of [denied, restricted]) {
+    // Act
+    const reading = new CalendarStore(stub.path, { env: process.env }).read(
+      { ...january, ics: false },
+      undefined,
+    );
+
+    // Assert
+    await assert.rejects(reading, CalendarUnavailableError);
+    assert.equal(stub.reads(read), 1);
+  }
+});
+
 test('missing access names the client that macOS charges and the pane that grants it', async () => {
   const denied = (marker: string) =>
     `${marker}: full access is required; status=2\n`;

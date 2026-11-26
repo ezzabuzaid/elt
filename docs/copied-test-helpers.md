@@ -121,3 +121,16 @@ The recipes of `packages/chunking` and `packages/destinations/sqlserver` have th
 | `packages/vectorizer` | `src/postgresql.test.ts` | Nothing; the test that uses them builds its `PostgresDestination` pipeline inline (#5685) |
 
 A third place in the package moves both into `src/testing/`. Until then, mirror each fix in both files and name both in the commit.
+
+## App bundle of a Node clone
+
+`app(folder)` writes an app bundle whose main executable is a clone of the test's Node binary. LaunchServices opens it as its own client, so macOS decides a privacy grant for that app and not for the terminal. A copy of an Apple binary such as `/bin/sleep` does not run outside its path (launch constraints, macOS 13), so the clone is of Node.
+
+### Copied, two places in two repositories (strike 2)
+
+| Repository | File                                                              | What differs                                                                                                                                                       |
+| ---------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| zukhruf    | `packages/macos/tcc/src/client.test.ts`                           | The source. Bundle `com.zukhruf.tcc.probe`, named Probe; it returns the executable's path                                                                          |
+| elt        | `packages/sdks/apple/eventkit/src/eventkit-access.prompt.spec.ts` | Bundle `com.eltjs.eventkit.prompt`, named EventKit Prompt; it signs the bundle ad hoc, since macOS records a grant against the code signature, and returns nothing |
+
+A package exports no test support. A third place decides where the helper goes. Until then, mirror each fix in both files and name both in the commit.
