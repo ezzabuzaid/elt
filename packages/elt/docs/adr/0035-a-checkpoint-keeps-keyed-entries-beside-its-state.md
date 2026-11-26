@@ -61,3 +61,15 @@ The established tools keep keyed state as one record for each key. Flink keeps a
 - A save writes what changed since the last save: one page's known URL and its diff group, not every page before it. No black-box test shows this, since a save that wrote every entry again gives the same reads; step 5 of #4468 shows it by measuring the checkpoint bytes of a real crawl.
 - A source that keeps all its state in `state` changes nothing.
 - Each checkpoint store gains a table and a transaction around each save. The stores treat old checkpoints as disposable, so no migration exists.
+
+## Confirmation
+
+Measured on 2026-11-26 by the session mutex-7e (step 5 of #4468) on a live crawl of City Center's sitemap (`https://citycenter.jo/sitemap.xml`, 10,913 URLs), at elt 0dbe6078, with `ListingReader`, `ProductExtractor` and `SQLiteCheckpointStore`, stopped after the first 150 page saves (152 seconds). A subclass of the store recorded each save's state and entry changes, in UTF-8 bytes of space, key and value. The bytes that one save wrote before this decision are the checkpoint's whole content at that save: the state and every entry, which the old save wrote as one value.
+
+| Save                                                         | Written now                          | Written before (one value)                                      |
+| ------------------------------------------------------------ | ------------------------------------ | --------------------------------------------------------------- |
+| The first save: the sitemap's 10,913 URLs enter the frontier | 6,852,679 bytes                      | 6,852,679 bytes                                                 |
+| Each later save                                              | 1,507 bytes (median; 1,335 to 1,991) | 6,853,721 bytes at the second save, 745 bytes more at each page |
+| All 150 saves                                                | 7,084,272 bytes                      | 1,036,179,781 bytes (146 times more)                            |
+
+A later save writes the three changes of one page: its group in `diff` (about 420 bytes), its key in `diff:listed` (about 150 bytes) and its URL record in `crawl` (about 710 bytes). The calculation in the context above assumed that the checkpoint grows from nothing. The measurement shows that the sitemap puts all its URLs in the frontier at the first save, so before this decision each save of that crawl wrote at least 6.85 MB. From the measured rates, one full crawl of the 10,913 pages writes about 23 MB now and wrote about 119 GB before; this total is a projection, not a measurement.
