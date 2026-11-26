@@ -37,12 +37,20 @@ export function readScan(
   extra: Record<string, unknown>;
 } {
   if (state === null) return { lanes: {}, diff: null, extra: {} };
-  if (
-    !isPlainObject(state) ||
-    !isPlainObject(state.lanes) ||
-    !('diff' in state)
-  )
+  if (!isPlainObject(state) || !('diff' in state)) throw foreign(stream);
+  const { diff, ...rest } = state;
+  return { ...readLanes(stream, rest), diff };
+}
+
+// The state of a scanned stream whose snapshot is in its entries: where each
+// list's scan stands.
+export function readLanes(
+  stream: string,
+  state: unknown,
+): { lanes: Record<string, unknown>; extra: Record<string, unknown> } {
+  if (state === null) return { lanes: {}, extra: {} };
+  if (!isPlainObject(state) || !isPlainObject(state.lanes))
     throw foreign(stream);
-  const { lanes, diff, ...extra } = state;
-  return { lanes, diff, extra };
+  const { lanes, ...extra } = state;
+  return { lanes, extra };
 }

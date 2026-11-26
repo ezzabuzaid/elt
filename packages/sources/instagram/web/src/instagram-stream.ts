@@ -4,6 +4,7 @@ import {
   type CopyConfiguration,
   type Properties,
   type RecordDraft,
+  type SavedEntries,
   type SchemaRecord,
   type SourceMessage,
   Stream,
@@ -40,6 +41,8 @@ export type ReadContext = {
   readonly range: DateRange;
   // The copy the read is for.
   readonly configuration: CopyConfiguration;
+  // The saved entries of the stream, or of the profile's partition.
+  readonly entries: SavedEntries;
   // The copy reads each record's file.
   readonly files: boolean;
   readonly signal: AbortSignal | undefined;

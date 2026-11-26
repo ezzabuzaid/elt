@@ -16,6 +16,7 @@ import {
 import {
   SqliteBM25Retriever,
   SqliteEmbeddingRetriever,
+  type SqliteMatching,
   SqlitePassageStore,
 } from '@zukhruf/retrieval/sqlite';
 import { open } from '@zukhruf/sqlite-open';
@@ -177,6 +178,7 @@ function retrieval(path: string, vectorizer: Vectorizer, model: LetterModel) {
   const store = new SqlitePassageStore({
     database,
     passages: vectorizer.contract.passages,
+    metadata: (columns) => columns,
   });
   return {
     database,
@@ -186,11 +188,11 @@ function retrieval(path: string, vectorizer: Vectorizer, model: LetterModel) {
       vectors: vectorizer.contract.vectors,
       model,
     }),
-    keywords: (operator?: 'AND' | 'OR') =>
+    keywords: (matching: SqliteMatching = { operator: 'AND' }) =>
       new SqliteBM25Retriever({
         store,
         index: vectorizer.contract.index,
-        operator,
+        matching,
       }),
     [Symbol.dispose]: () => database.close(),
   };
@@ -303,7 +305,7 @@ test('a member that the store refuses fails only the vectorizer: the run rejects
   await tasks.pipeline.run();
   using search = retrieval(tasks.path, tasks.vectorizer, model);
   assert.deepEqual(
-    (await search.keywords().retrieve('branches')).map(
+    (await search.keywords().retrieve('branches')).passages.map(
       ({ passage }) => passage.id,
     ),
     ['a:0'],
@@ -381,7 +383,9 @@ test('a vector search through the contract gives the passage with its id, source
   await tasks.pipeline.run();
 
   using search = retrieval(tasks.path, tasks.vectorizer, model);
-  const [best] = await search.embedding.retrieve('red car drives fast', {
+  const {
+    passages: [best],
+  } = await search.embedding.retrieve('red car drives fast', {
     topK: 1,
   });
   assert.deepEqual(best?.passage, {
@@ -427,13 +431,15 @@ test('a keyword search finds the passages that hold every word, and with OR the 
 
   using search = retrieval(tasks.path, tasks.vectorizer, model);
   assert.deepEqual(
-    (await search.keywords().retrieve('git history')).map(
+    (await search.keywords().retrieve('git history')).passages.map(
       ({ passage }) => passage.id,
     ),
     ['b:0'],
   );
   assert.deepEqual(
-    (await search.keywords('OR').retrieve('history fence'))
+    (
+      await search.keywords({ operator: 'OR' }).retrieve('history fence')
+    ).passages
       .map(({ passage }) => passage.id)
       .toSorted(),
     ['b:0', 'c:0'],
@@ -461,13 +467,16 @@ test('a fusion of the vector and keyword searches ranks first the passage that b
 
   using search = retrieval(tasks.path, tasks.vectorizer, model);
   const first = async (retriever: Retriever) =>
-    (await retriever.retrieve('zebra zone'))[0]?.passage.id;
+    (await retriever.retrieve('zebra zone')).passages[0]?.passage.id;
   assert.equal(await first(search.embedding), 'c:0');
   assert.equal(await first(search.keywords()), 'a:0');
   assert.equal(
     await first(
       new FusionRetriever({
-        retrievers: [search.embedding, search.keywords()],
+        retrievers: {
+          meaning: { retriever: search.embedding },
+          keywords: { retriever: search.keywords() },
+        },
       }),
     ),
     'b:0',
@@ -491,13 +500,13 @@ test('a passage whose vector the model failed never reaches a vector search, and
 
   using search = retrieval(tasks.path, tasks.vectorizer, model);
   assert.deepEqual(
-    (await search.embedding.retrieve('brown fox')).map(
+    (await search.embedding.retrieve('brown fox')).passages.map(
       ({ passage }) => passage.id,
     ),
     ['b:0'],
   );
   assert.deepEqual(
-    (await search.keywords().retrieve('broken')).map(
+    (await search.keywords().retrieve('broken')).passages.map(
       ({ passage }) => passage.id,
     ),
     ['a:0'],
@@ -614,7 +623,7 @@ test('the context window of a passage of a source cut into many chunks gives the
   const [widened] = await new ContextWindow({
     store: search.store,
     windowSize: 99,
-  }).postprocess(found, 'needle');
+  }).postprocess(found.passages, 'needle');
   const text = `Cold store\n${body}`;
   assert.ok(
     Number(
@@ -873,7 +882,7 @@ test('after a remake of the keyword index its FTS5 index checks and a keyword se
   );
   using search = retrieval(tasks.path, tasks.vectorizer, model);
   assert.deepEqual(
-    (await search.keywords().retrieve('fence')).map(
+    (await search.keywords().retrieve('fence')).passages.map(
       ({ passage }) => passage.id,
     ),
     ['b:0'],
@@ -936,13 +945,15 @@ test('another model embeds the passages again in place: while it embeds, the sta
     {
       using search = retrieval(tasks.path, tasks.vectorizer, after);
       assert.equal(
-        (await search.embedding.retrieve('task number', { topK: 70 })).length,
+        (await search.embedding.retrieve('task number', { topK: 70 })).passages
+          .length,
         64,
       );
     }
     using search = retrieval(tasks.path, tasks.vectorizer, before);
     assert.equal(
-      (await search.embedding.retrieve('task number', { topK: 70 })).length,
+      (await search.embedding.retrieve('task number', { topK: 70 })).passages
+        .length,
       6,
     );
   } finally {
@@ -995,7 +1006,7 @@ test('a string model id and the provider model write one model identity, which a
     );
     using search = retrieval(tasks.path, tasks.vectorizer, model);
     assert.deepEqual(
-      (await search.embedding.retrieve('string model')).map(
+      (await search.embedding.retrieve('string model')).passages.map(
         ({ passage }) => passage.id,
       ),
       ['a:0'],

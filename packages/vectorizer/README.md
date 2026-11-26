@@ -156,6 +156,7 @@ install(database);
 const store = new SqlitePassageStore({
   database,
   passages: vectorizer.contract.passages,
+  metadata: (columns) => columns,
 });
 const meaning = new SqliteEmbeddingRetriever({
   store,
@@ -165,15 +166,18 @@ const meaning = new SqliteEmbeddingRetriever({
 const words = new SqliteBM25Retriever({
   store,
   index: vectorizer.contract.index,
+  matching: { operator: 'AND' },
 });
-const search = new FusionRetriever({ retrievers: [meaning, words] });
+const search = new FusionRetriever({
+  retrievers: { meaning: { retriever: meaning }, words: { retriever: words } },
+});
 
-const found = await search.retrieve('deploy git branches', { topK: 3 });
-for (const { passage, score } of found)
+const { passages } = await search.retrieve('deploy git branches', { topK: 3 });
+for (const { passage, score } of passages)
   console.log(passage.id, passage.metadata.category, score.toFixed(4));
 
 const [widened] = await new ContextWindow({ store, windowSize: 5 }).postprocess(
-  found,
+  passages,
   'deploy git branches',
 );
 console.log(JSON.stringify(widened?.passage.text));
@@ -190,7 +194,7 @@ fix-git:2 software-engineering 0.0159
 "Deploy two git branches\nSet up a git server where a push to main or dev deploys that branch to its own web folder."
 {
   state: 'current',
-  as_of: '2026-11-25T17:29:12.026Z',
+  as_of: '2026-11-26T09:00:10.970Z',
   pending_sources: 0,
   pending_vectors: 0,
   failed_sources: 0,
@@ -207,6 +211,8 @@ fix-git:2 software-engineering 0.0159
 - `embedding` gives the options of [`@eltjs/embedding`](../embedding/README.md) without `key` and `fields`: the AI SDK embedding model, its `dimensions` and the `clock` of its calls.
 - `metadata` lists the columns of the source row that each passage gives beside its text. With no `metadata`, a passage has none.
 - `vectorizer.contract` gives the names that the store and the retrievers take: `{ passages, vectors, index }`.
+- The store's `metadata` reads the metadata of each passage from the other columns of its row. `(columns) => columns` keeps each metadata column, untyped; a zod schema's `parse` types them ([`@zukhruf/retrieval`](https://github.com/JanuaryLabs/zukhruf/tree/main/packages/retrieval#use-it)).
+- `matching: { operator: 'AND' }` finds only the passages that hold every word of the query. With no `matching`, it is `{ operator: 'OR', cutoffFrequency: 20_000 }`: the passages that hold any word, ranked by bm25 (zukhruf retrieval ADR 0018).
 
 ## Search the text of stored files
 
@@ -382,12 +388,15 @@ using database = open(destination.path, { readOnly: true });
 const store = new SqlitePassageStore({
   database,
   passages: vectorizer.contract.passages,
+  metadata: (columns) => columns,
 });
 const words = new SqliteBM25Retriever({
   store,
   index: vectorizer.contract.index,
+  matching: { operator: 'AND' },
 });
-for (const { passage } of await words.retrieve('cold store'))
+const { passages } = await words.retrieve('cold store');
+for (const { passage } of passages)
   console.log(
     passage.id,
     JSON.stringify(passage.text),
@@ -562,6 +571,7 @@ try {
     session,
     schema: vectorizer.contract.schema,
     passages: vectorizer.contract.passages,
+    metadata: (columns) => columns,
   });
   const meaning = new PgvectorEmbeddingRetriever({
     store,
@@ -571,17 +581,25 @@ try {
   const words = new PgvectorKeywordRetriever({
     store,
     index: vectorizer.contract.index,
+    matching: { strategy: 'all' },
   });
-  const search = new FusionRetriever({ retrievers: [meaning, words] });
+  const search = new FusionRetriever({
+    retrievers: {
+      meaning: { retriever: meaning },
+      words: { retriever: words },
+    },
+  });
 
-  const found = await search.retrieve('deploy git branches', { topK: 3 });
-  for (const { passage, score } of found)
+  const { passages } = await search.retrieve('deploy git branches', {
+    topK: 3,
+  });
+  for (const { passage, score } of passages)
     console.log(passage.id, passage.metadata['category'], score.toFixed(4));
 
   const [widened] = await new ContextWindow({
     store,
     windowSize: 5,
-  }).postprocess(found, 'deploy git branches');
+  }).postprocess(passages, 'deploy git branches');
   console.log(JSON.stringify(widened?.passage.text));
 
   console.log({ ...(await sql`SELECT * FROM marts.docs_status`)[0] });
@@ -599,7 +617,7 @@ fix-git:2 software-engineering 0.0159
 "Deploy two git branches\nSet up a git server where a push to main or dev deploys that branch to its own web folder."
 {
   state: 'current',
-  as_of: 2026-11-25T17:57:25.931Z,
+  as_of: 2026-11-26T09:00:40.093Z,
   pending_sources: '0',
   pending_vectors: '0',
   failed_sources: '0',
@@ -610,6 +628,7 @@ fix-git:2 software-engineering 0.0159
 ```
 
 - `vectorizer.contract` is `{ schema: 'marts', passages, vectors, index: { column, configuration } }`, the options of `PostgresPassageStore`, `PgvectorEmbeddingRetriever` and `PgvectorKeywordRetriever`. The retrievers send their SQL through a `PostgresSession`, which the host writes over its own driver.
+- `matching: { strategy: 'all' }` finds only the passages that hold every word of the query, ranked by `ts_rank_cd`. With no `matching`, it is `{ strategy: 'frequency', dropTokensThreshold: 10 }`: while fewer than 10 passages hold every word, the search drops the most frequent word and tries again. Postgres has no OR (zukhruf retrieval ADR 0018).
 - Every relation of the contract is a view in `marts`, so a reader with `SELECT` on the views of `marts` searches. The views read the raw tables in `_warehouse` with the rights of their owner, and the reader may not read `_warehouse` itself.
 - The keyword index is the table `_warehouse.raw_docs_keywords`: `id text COLLATE "C"` (its primary key), `source`, `seq`, `text`, and `keywords`, a `tsvector` that Postgres generates from the text with the text search configuration `keywords.configuration`, `'english'` when absent. A GIN index indexes `keywords`. The passages view gives `keywords`, and the retrievers leave it out of the metadata. A change of the configuration makes the table again at the next refresh. See [ADR 0002](./docs/adr/0002-the-keyword-index-is-a-member-that-keeps-a-keywords-table-and-its-full-text-index-in-step.md).
 - `indexing: { vectors }` declares the index of the vectors: `hnsw({ m?, efConstruction? })` of elt-postgresql, an HNSW index with `vector_cosine_ops`, when absent, or `'none'`, which compares every vector.
@@ -733,18 +752,28 @@ const store = new SqlServerPassageStore({
   session,
   schema: vectorizer.contract.schema,
   passages: vectorizer.contract.passages,
+  metadata: (columns) => columns,
 });
 const search = new FusionRetriever({
-  retrievers: [
-    new SqlServerEmbeddingRetriever({
-      store,
-      vectors: vectorizer.contract.vectors,
-      model,
-    }),
-    new SqlServerKeywordRetriever({ store, index: vectorizer.contract.index }),
-  ],
+  retrievers: {
+    meaning: {
+      retriever: new SqlServerEmbeddingRetriever({
+        store,
+        vectors: vectorizer.contract.vectors,
+        model,
+      }),
+    },
+    words: {
+      retriever: new SqlServerKeywordRetriever({
+        store,
+        index: vectorizer.contract.index,
+        matching: { predicate: 'CONTAINS', operator: 'AND' },
+      }),
+    },
+  },
 });
-for (const { passage, score } of await search.retrieve('deploy git branches'))
+const { passages } = await search.retrieve('deploy git branches');
+for (const { passage, score } of passages)
   console.log(passage.id, passage.metadata.category, score.toFixed(4));
 await pool.close();
 ```
@@ -752,6 +781,7 @@ await pool.close();
 This program did not run when this section was written, so no output is pasted here. SQL Server 2025 runs only where Docker runs amd64 natively, and on the Mac of the build Docker emulates amd64, which Microsoft does not support (the tests skip there, #5469). `src/sqlserver.test.ts` makes the same calls with SQL Server 2025 and Full-Text Search, and CI runs it on amd64. This follows elt-sqlserver, whose recipe of a vector index ran on Azure SQL Database because the container could not run it.
 
 - `vectorizer.contract` is `{ schema: 'marts', passages, vectors, index: { table } }`, the options of `SqlServerPassageStore`, `SqlServerEmbeddingRetriever` and `SqlServerKeywordRetriever`.
+- `matching: { predicate: 'CONTAINS', operator: 'AND' }` finds only the passages that hold every word of the query, through `CONTAINSTABLE`. With no `matching`, it is `{ predicate: 'FREETEXT' }`: `FREETEXTTABLE` takes the text whole, adds the inflections of its words and ranks with BM25 (zukhruf retrieval ADR 0018).
 - Every relation of the contract is in `marts`, so a reader with `GRANT SELECT ON SCHEMA::marts` searches. The views read the raw tables in `_warehouse` through the ownership chain, and the reader may not read `_warehouse` itself.
 - The keyword index is the base table `marts.docs_keywords`: `id NVARCHAR(450) COLLATE Latin1_General_100_BIN2` (its primary key, the full-text key), `source`, `seq` and `text NVARCHAR(MAX)`. A full-text index on `text` has `STOPLIST = OFF`, `CHANGE_TRACKING AUTO` and the language of `keywords.language`, an LCID: 1033 (English) when absent. `CONTAINSTABLE` reads this table, not a view. See [ADR 0002](./docs/adr/0002-the-keyword-index-is-a-member-that-keeps-a-keywords-table-and-its-full-text-index-in-step.md).
 - A run ends only when the full-text index holds its passages: the keyword index is `current` only when SQL Server shows no population that runs and no change that waits. So a search after `run()` finds each passage.

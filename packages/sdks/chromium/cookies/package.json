@@ -16,9 +16,9 @@
   "dependencies": {
     "@eltjs/codec-chromium-time": "0.0.1",
     "@eltjs/sdk-chromium-browser": "0.0.1",
-    "@zukhruf/sqlite-open": "^0.8.115"
+    "@zukhruf/sqlite-open": "^0.8.137"
   },
   "devDependencies": {
-    "@zukhruf/fs": "^0.8.115"
+    "@zukhruf/fs": "^0.8.137"
   }
 }

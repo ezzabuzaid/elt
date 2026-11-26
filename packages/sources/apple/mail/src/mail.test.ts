@@ -2166,12 +2166,13 @@ test('Mail message streams re-read only messages whose files or index attachment
   // Re-reading an unchanged message would load identical records, so the
   // outcomes cannot show the skip. The saved group fingerprints at least show
   // that an unchanged message's inputs keep the same identity between runs.
+  // Each stream keeps its groups as the entries of its diff space.
   const groups = () =>
     Object.fromEntries(
       rows(
         join(dir.path, 'state.sqlite'),
-        "SELECT id, state FROM checkpoints WHERE id IN ('messageFiles','messageHeaders','messageParts','attachments') ORDER BY id",
-      ).map(({ id, state }) => [id, JSON.parse(String(state)).groups]),
+        "SELECT id, json_group_object(key, json(value)) AS groups FROM checkpoint_entries WHERE id IN ('messageFiles','messageHeaders','messageParts','attachments') AND space = 'diff' GROUP BY id ORDER BY id",
+      ).map(({ id, groups }) => [id, JSON.parse(String(groups))]),
     );
   await run.run();
   const saved = groups();

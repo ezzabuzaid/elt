@@ -22,6 +22,7 @@ import {
   Pipeline,
   PipelineError,
   type SourceReadOptions,
+  type StateMessage,
   type Stream,
   StreamStatus,
   type SyncMode,
@@ -2646,12 +2647,13 @@ test('compact message scans keep unchanged groups across reopened pipelines and 
     );
   // As in Mail's integration test, saved group fingerprints expose reuse:
   // rereading the same payload would otherwise produce identical output.
+  // Each stream keeps its groups as the entries of its diff space.
   const groups = () =>
     Object.fromEntries(
       rows(
         join(dir.path, 'state.sqlite'),
-        'SELECT id, state FROM checkpoints ORDER BY id',
-      ).map(({ id, state }) => [String(id), JSON.parse(String(state)).groups]),
+        "SELECT id, json_group_object(key, json(value)) AS groups FROM checkpoint_entries WHERE space = 'diff' GROUP BY id ORDER BY id",
+      ).map(({ id, groups }) => [String(id), JSON.parse(String(groups))]),
     );
   const first = await open();
   await first.run();
@@ -2982,20 +2984,20 @@ test('compact message scans keep the last checkpoint after a decode failure and 
       ({ name }) => name === 'messageReactions',
     );
   await (await open()).run();
-  const before = rows(
-    join(dir.path, 'state.sqlite'),
-    'SELECT state FROM checkpoints',
-  );
+  // The state and the entries, where the stream keeps its snapshot.
+  const checkpoint = () =>
+    [
+      'SELECT state FROM checkpoints',
+      'SELECT space, key, value FROM checkpoint_entries ORDER BY space, key',
+    ].map((sql) => rows(join(dir.path, 'state.sqlite'), sql));
+  const before = checkpoint();
   const saved = table(out, 'messageReactions', 'reactionStanzaId');
   whatsapp.exec(
     'chatStorage',
     "UPDATE ZWAMESSAGEINFO SET ZRECEIPTINFO = x'0f', Z_OPT = Z_OPT + 1 WHERE Z_PK = 1",
   );
   await assert.rejects((await open()).run(), PipelineError);
-  assert.deepEqual(
-    rows(join(dir.path, 'state.sqlite'), 'SELECT state FROM checkpoints'),
-    before,
-  );
+  assert.deepEqual(checkpoint(), before);
   assert.deepEqual(table(out, 'messageReactions', 'reactionStanzaId'), saved);
   // Keep the failed version: advancing a failed checkpoint would skip this repair.
   whatsapp.exec(
@@ -3768,12 +3770,15 @@ test('message streams reuse one completed metadata scan and refresh file availab
       }),
   );
   const states = new Map<string, unknown>();
-  const fingerprints = (state: unknown) => {
-    const groups = JSON.parse(JSON.stringify(state)).groups;
-    return Object.fromEntries(
-      Object.keys(groups).map((key) => [key, groups[key].fingerprint]),
+  // The fingerprint of each group a STATE puts: a read with no saved
+  // entries puts every group of the scan.
+  const fingerprints = ({ entries }: StateMessage) =>
+    Object.fromEntries(
+      [...(entries?.diff?.put ?? [])].map(([key, group]) => [
+        key,
+        JSON.parse(JSON.stringify(group)).fingerprint,
+      ]),
     );
-  };
   const first: unknown[] = [];
   for await (const message of source.read(catalog, states, {
     clock: globalThis,
@@ -3782,7 +3787,7 @@ test('message streams reuse one completed metadata scan and refresh file availab
     if (message instanceof StreamStatus)
       assert.notEqual(message.status, 'FAILED');
     else if ('type' in message && message.type === 'STATE') {
-      first.push(fingerprints(message.state));
+      first.push(fingerprints(message));
       states.set(message.stream, message.state);
       // SQLite stays pinned, but files can change between streams. Their saved
       // fingerprints reveal a repeated native scan without mocking the SDK.
@@ -3805,7 +3810,7 @@ test('message streams reuse one completed metadata scan and refresh file availab
     if (message instanceof StreamStatus)
       assert.notEqual(message.status, 'FAILED');
     else if ('type' in message && message.type === 'STATE')
-      next.push(fingerprints(message.state));
+      next.push(fingerprints(message));
   }
   assert.equal(next.length, 4);
   for (const snapshot of next) assert.deepEqual(snapshot, next[0]);
@@ -3849,20 +3854,19 @@ test('shared metadata respects combined chat and date scopes, empty scopes and d
       ({ name }) => selected.has(name),
     );
     await run.run();
-    for (const { id, state } of rows(
-      join(dir.path, 'state.sqlite'),
-      'SELECT id, state FROM checkpoints',
-    )) {
-      if (
-        [
-          'messageReceipts',
-          'messageReactions',
-          'messageReactionCounts',
-        ].includes(String(id))
-      ) {
-        assert.deepEqual(Object.keys(JSON.parse(String(state)).groups), ids);
-      }
-    }
+    // Each stream keeps its groups as the entries of its diff space.
+    for (const id of [
+      'messageReceipts',
+      'messageReactions',
+      'messageReactionCounts',
+    ])
+      assert.deepEqual(
+        rows(
+          join(dir.path, 'state.sqlite'),
+          `SELECT key FROM checkpoint_entries WHERE id = '${id}' AND space = 'diff' ORDER BY key`,
+        ).map(({ key }) => key),
+        ids,
+      );
     for (const name of ['messageDataItems', 'messageAssociations'])
       assert.equal(
         rows(out, 'SELECT count(*) AS n FROM "' + name + '"')[0]?.n,
@@ -3928,7 +3932,7 @@ test('cancelling a metadata build or replay publishes no partial checkpoint and 
       else if ('type' in message && message.type === 'STATE')
         recovered.set(
           message.stream,
-          Object.keys(JSON.parse(JSON.stringify(message.state)).groups).length,
+          [...(message.entries?.diff?.put ?? [])].length,
         );
     }
     assert.deepEqual(
@@ -3966,11 +3970,12 @@ test('a failed metadata scan or payload leaves every affected checkpoint intact 
       ({ name }) => selected.has(name),
     );
     await run.run();
+    // The states and the entries, where the streams keep their snapshots.
     const checkpoints = () =>
-      rows(
-        join(dir.path, 'state.sqlite'),
+      [
         'SELECT id, state FROM checkpoints ORDER BY id',
-      );
+        'SELECT id, space, key, value FROM checkpoint_entries ORDER BY id, space, key',
+      ].map((sql) => rows(join(dir.path, 'state.sqlite'), sql));
     const saved = checkpoints();
     const original = table(out, 'messages', 'stanzaId');
     // Fail after a valid prefix; accepting that prefix would delete later groups.

@@ -8,6 +8,7 @@ import {
   type JsonValue,
   type Partition,
   type PipelineClock,
+  type SavedEntries,
   Source,
   type SourceMessage,
   type Stream,
@@ -197,6 +198,7 @@ export class InstagramWebSource extends Source<InstagramRun> {
     partition: Partition | null,
     run: InstagramRun,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): AsyncGenerator<SourceMessage> {
     const reader = readersByName.get(configuration.stream.name);
     if (reader === undefined)
@@ -207,6 +209,7 @@ export class InstagramWebSource extends Source<InstagramRun> {
       profileId: partition === null ? null : String(partition.profileId),
       range: this.range,
       configuration,
+      entries,
       files: configuration.fileReads.length > 0,
       signal,
     });

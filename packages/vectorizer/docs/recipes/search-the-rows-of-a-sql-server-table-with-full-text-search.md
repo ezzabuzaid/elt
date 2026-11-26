@@ -197,6 +197,7 @@ try {
     session,
     schema: vectorizer.contract.schema,
     passages: vectorizer.contract.passages,
+    metadata: (columns) => columns,
   });
   const meaning = new SqlServerEmbeddingRetriever({
     store,
@@ -206,17 +207,25 @@ try {
   const words = new SqlServerKeywordRetriever({
     store,
     index: vectorizer.contract.index,
+    matching: { predicate: 'CONTAINS', operator: 'AND' },
   });
-  const search = new FusionRetriever({ retrievers: [meaning, words] });
+  const search = new FusionRetriever({
+    retrievers: {
+      meaning: { retriever: meaning },
+      words: { retriever: words },
+    },
+  });
 
-  const found = await search.retrieve('deploy git branches', { topK: 3 });
-  for (const { passage, score } of found)
+  const { passages } = await search.retrieve('deploy git branches', {
+    topK: 3,
+  });
+  for (const { passage, score } of passages)
     console.log(passage.id, passage.metadata['category'], score.toFixed(4));
 
   const [widened] = await new ContextWindow({
     store,
     windowSize: 5,
-  }).postprocess(found, 'deploy git branches');
+  }).postprocess(passages, 'deploy git branches');
   console.log(JSON.stringify(widened?.passage.text));
 
   const status = await pool.request().query('SELECT * FROM marts.docs_status');
@@ -226,29 +235,15 @@ try {
 }
 ```
 
-Output on SQL Server 2025 (RTM-CU11, 17.0.5065.9, Express) with Full-Text Search, in Docker on a native amd64 engine (the time of `as_of` changes from run to run):
+This version of the program has not run yet, so no output is pasted here. It takes the API of `@zukhruf/retrieval` 0.8.137, and it type checks against that version. SQL Server 2025 runs only where Docker runs amd64 natively, and on the Mac of the build Docker emulates amd64, which Microsoft does not support (#5469). `src/sqlserver.test.ts` makes the same calls with SQL Server 2025 and Full-Text Search, and CI runs it on amd64.
 
-```
-git-multibranch:0 system-administration 0.0328
-git-multibranch:1 system-administration 0.0161
-fix-git:2 software-engineering 0.0159
-"Deploy two git branches\nSet up a git server where a push to main or dev deploys that branch to its own web folder."
-{
-  state: 'current',
-  as_of: 2026-11-25T08:21:54.407Z,
-  pending_sources: '0',
-  pending_vectors: '0',
-  failed_sources: '0',
-  failed_vectors: '0'
-}
-```
+## Why it works
 
-## What the output shows
-
-- **The passages and the scores are those of SQLite and Postgres.** The SQLite and Postgres programs of the [README](../../README.md) print the same three passages with the same scores. One `Vectorizer` declaration writes one passage contract on each engine ([ADR 0001](../adr/0001-the-vectorizer-writes-the-passage-contract-of-zukhruf-retrieval-one-subpath-per-engine.md)).
+- **The calls are those of SQLite and Postgres.** The SQLite and Postgres programs of the [README](../../README.md) search the same tasks with the same retrievers. One `Vectorizer` declaration writes one passage contract on each engine ([ADR 0001](../adr/0001-the-vectorizer-writes-the-passage-contract-of-zukhruf-retrieval-one-subpath-per-engine.md)).
+- **The keyword search finds only the passages that hold every word**, because the program gives `matching: { predicate: 'CONTAINS', operator: 'AND' }` to `SqlServerKeywordRetriever`. With no `matching`, it is `{ predicate: 'FREETEXT' }`, which takes the text whole, adds the inflections of its words and ranks with BM25 (README, "Search in SQL Server").
 - **The keyword search finds each passage right after `run()`.** A run ends only when the full-text index holds its passages: the keyword index is `current` only when SQL Server shows no population that runs and no change that waits (`TableFulltextPopulateStatus` and `TableFulltextPendingChanges` in `src/sqlserver/keyword-index.ts`).
 - **`ContextWindow` gives the whole text of the source row.** The passages of a source row tile its text, so the two passages of `git-multibranch` merge with no gap.
-- **The status view is `current`, and it waits for nothing.** mssql reads a `bigint` as a string, so the counts of `docs_status` are text, as they are with postgres.js.
+- **The counts of `docs_status` are text.** mssql reads a `bigint` as a string, as postgres.js does.
 
 ## Things to know
 

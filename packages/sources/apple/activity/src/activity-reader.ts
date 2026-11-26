@@ -1,4 +1,9 @@
-import type { CopyConfiguration, SourceMessage, Stream } from '@eltjs/elt';
+import type {
+  CopyConfiguration,
+  SavedEntries,
+  SourceMessage,
+  Stream,
+} from '@eltjs/elt';
 import type { BiomeStream } from '@eltjs/sdk-apple-biome';
 
 import type { ActivityScan } from './activity-scan.ts';
@@ -16,6 +21,7 @@ type Reader = {
     state: unknown,
     scan: ActivityScan,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): AsyncIterable<SourceMessage>;
 };
 

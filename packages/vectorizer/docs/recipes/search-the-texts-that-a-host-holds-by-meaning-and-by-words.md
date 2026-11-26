@@ -155,18 +155,28 @@ async function search(query: string) {
   const store = new SqlitePassageStore({
     database,
     passages: vectorizer.contract.passages,
+    metadata: (columns) => columns,
   });
   const fusion = new FusionRetriever({
-    retrievers: [
-      new SqliteEmbeddingRetriever({
-        store,
-        vectors: vectorizer.contract.vectors,
-        model,
-      }),
-      new SqliteBM25Retriever({ store, index: vectorizer.contract.index }),
-    ],
+    retrievers: {
+      meaning: {
+        retriever: new SqliteEmbeddingRetriever({
+          store,
+          vectors: vectorizer.contract.vectors,
+          model,
+        }),
+      },
+      words: {
+        retriever: new SqliteBM25Retriever({
+          store,
+          index: vectorizer.contract.index,
+          matching: { operator: 'AND' },
+        }),
+      },
+    },
   });
-  for (const { passage, score } of await fusion.retrieve(query, { topK: 2 }))
+  const { passages } = await fusion.retrieve(query, { topK: 2 });
+  for (const { passage, score } of passages)
     console.log('  ', passage.id, passage.metadata.status, score.toFixed(4));
 }
 
@@ -215,7 +225,7 @@ second run, embedded [
    item-2:0 open 0.0161
 {
   state: 'current',
-  as_of: '2026-11-25T17:29:12.354Z',
+  as_of: '2026-11-26T09:00:11.542Z',
   pending_sources: 0,
   pending_vectors: 0,
   failed_sources: 0,
@@ -240,7 +250,7 @@ second run, embedded [
 - **Without `deletions: 'closed-world'`, a row that the host stops giving stays loaded**, and a search still finds its passage. The sync modes of the copy and `deletions` are the cleanup ([elt README](../../../elt/README.md#load-rows-that-the-host-holds)).
 - **An incremental copy with `append_dedup` gives the same passages.** It keeps a snapshot of the rows in the checkpoint store of the connection. `src/sqlite.test.ts` deletes the passages, keywords and vectors of a row that the host stops giving in both sync modes.
 - **`chunking: 'none'` gives one passage for each row**, with `seq` 0. For long texts, give the sizes of `@eltjs/chunking` in place of `'none'`, as [Search the rows of a table](../../README.md#search-the-rows-of-a-table) does.
-- **A keyword search finds only the passages that hold every word of the query.** Give `operator: 'OR'` to `SqliteBM25Retriever` to find the passages that hold any word (`src/sqlite.test.ts`, "a keyword search finds the passages that hold every word").
+- **The keyword search finds only the passages that hold every word of the query**, because the program gives `matching: { operator: 'AND' }` to `SqliteBM25Retriever`. With no `matching`, it is `{ operator: 'OR', cutoffFrequency: 20_000 }`: the passages that hold any word, ranked by bm25 (`src/sqlite.test.ts`, "a keyword search finds the passages that hold every word, and with OR the passages that hold any word").
 - **A watch runs the pipeline when the host's rows change.** Call `source.changed(stream)` after the host changes its rows, and the next check starts a pass ([elt README](../../../elt/README.md#load-rows-that-the-host-holds)).
 - **A change of the model makes each vector again.** See [Embed the passages again with a new model](./embed-the-passages-again-with-a-new-model.md).
 - **The same declaration writes into Postgres and SQL Server**, through `@eltjs/vectorizer/postgresql` and `@eltjs/vectorizer/sqlserver` (#5401). See [Search in Postgres](../../README.md#search-in-postgres).

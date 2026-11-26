@@ -3,8 +3,13 @@ import {
   type SnapshotGroup,
 } from '@zukhruf/snapshot-differential';
 
-import type { CopyConfiguration, RecordDraft, SourceMessage } from '@eltjs/elt';
-import { diffGroupedSnapshot } from '@eltjs/elt';
+import type {
+  CopyConfiguration,
+  RecordDraft,
+  SavedEntries,
+  SourceMessage,
+} from '@eltjs/elt';
+import { diffGroupedSnapshot, resumeGroupedSnapshot } from '@eltjs/elt';
 import type {
   IndexedAttachment,
   MailFile,
@@ -46,17 +51,18 @@ export abstract class MailMessageStream extends AppleMailStream {
     yield* this.unlisted(scan, listed);
   }
 
-  protected override snapshot(
+  protected override async *snapshot(
     configuration: CopyConfiguration,
     scan: MailScan,
     records: MailRecords,
-    state: unknown,
+    _state: unknown,
     signal: AbortSignal | undefined,
-  ): AsyncIterable<SourceMessage> {
-    return diffGroupedSnapshot(
+    entries: SavedEntries,
+  ): AsyncGenerator<SourceMessage> {
+    yield* diffGroupedSnapshot(
       configuration,
       this.#accepted(scan, records),
-      state,
+      await resumeGroupedSnapshot(configuration, entries),
       { policy: new ClosedWorld(), signal },
     );
   }

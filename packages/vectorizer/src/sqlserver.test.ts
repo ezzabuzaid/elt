@@ -9,6 +9,7 @@ import { FusionRetriever } from '@zukhruf/retrieval';
 import {
   SqlServerEmbeddingRetriever,
   SqlServerKeywordRetriever,
+  type SqlServerMatching,
   SqlServerPassageStore,
   type SqlServerSession,
 } from '@zukhruf/retrieval/sqlserver';
@@ -212,6 +213,7 @@ function retrieval(
     session: session(pool),
     schema: vectorizer.contract.schema,
     passages: vectorizer.contract.passages,
+    metadata: (columns) => columns,
   });
   return {
     store,
@@ -220,18 +222,22 @@ function retrieval(
       vectors: vectorizer.contract.vectors,
       model,
     }),
-    words: (operator?: 'AND' | 'OR') =>
+    words: (
+      matching: SqlServerMatching = { predicate: 'CONTAINS', operator: 'AND' },
+    ) =>
       new SqlServerKeywordRetriever({
         store,
         index: vectorizer.contract.index,
-        ...(operator === undefined ? {} : { operator }),
+        matching,
       }),
   };
 }
 
-const ids = (
-  results: readonly { readonly passage: { readonly id: string } }[],
-) => results.map(({ passage }) => passage.id);
+const ids = ({
+  passages,
+}: {
+  readonly passages: readonly { readonly passage: { readonly id: string } }[];
+}) => passages.map(({ passage }) => passage.id);
 
 const deploy = task(
   'a',
@@ -267,15 +273,24 @@ test(
       model,
     );
     const text = 'Deploy git branches\nPush to main deploys the site';
-    const [best] = await meaning.retrieve(text, { topK: 1 });
+    const {
+      passages: [best],
+    } = await meaning.retrieve(text, { topK: 1 });
     const fused = await new FusionRetriever({
-      retrievers: [meaning, words()],
+      retrievers: {
+        meaning: { retriever: meaning },
+        words: { retriever: words() },
+      },
     }).retrieve('git notes tag');
     assert.deepEqual(
       {
         best: best?.passage,
         all: ids(await words().retrieve('git')).toSorted(),
-        any: ids(await words('OR').retrieve('broken release')).toSorted(),
+        any: ids(
+          await words({ predicate: 'CONTAINS', operator: 'OR' }).retrieve(
+            'broken release',
+          ),
+        ).toSorted(),
         first: ids(fused)[0],
         fused: ids(fused).toSorted(),
         metadata: [...(await store.get(['a:0', 'b:0', 'c:0'])).values()]
@@ -341,7 +356,9 @@ test(
 
       const { meaning, words } = retrieval(reader, vectorizer, model);
       const text = 'Write the release notes\nNotes for the git tag';
-      const [best] = await meaning.retrieve(text, { topK: 1 });
+      const {
+        passages: [best],
+      } = await meaning.retrieve(text, { topK: 1 });
       const denied = await reader
         .request()
         .query('SELECT COUNT(*) AS [rows] FROM _warehouse.raw_tasks')
@@ -391,16 +408,16 @@ test(
       model,
     );
     const passages = await store.get(['a:0', 'A:0']);
-    const brief = (
-      results: readonly {
+    const brief = (result: {
+      readonly passages: readonly {
         readonly passage: {
           readonly id: string;
           readonly text: string;
           readonly metadata: Readonly<Record<string, unknown>>;
         };
-      }[],
-    ) =>
-      results.map(({ passage }) => [
+      }[];
+    }) =>
+      result.passages.map(({ passage }) => [
         passage.id,
         passage.text,
         passage.metadata['category'],
@@ -451,7 +468,11 @@ test(
     await pipeline.run();
     const first = {
       state: await state(),
-      found: ids(await words('OR').retrieve('alpha bravo')).toSorted(),
+      found: ids(
+        await words({ predicate: 'CONTAINS', operator: 'OR' }).retrieve(
+          'alpha bravo',
+        ),
+      ).toSorted(),
     };
     rows = [task('a', 'alpha first'), task('b', 'zebra second')];
     await pipeline.run();

@@ -206,21 +206,28 @@ const store = new PostgresPassageStore({
   session: reader.session,
   schema: first.vectorizer.contract.schema,
   passages: first.vectorizer.contract.passages,
+  metadata: (columns) => columns,
 });
 const search = new FusionRetriever({
-  retrievers: [
-    new PgvectorEmbeddingRetriever({
-      store,
-      vectors: first.vectorizer.contract.vectors,
-      model: new HashModel('hash-1'),
-    }),
-    new PgvectorKeywordRetriever({
-      store,
-      index: first.vectorizer.contract.index,
-    }),
-  ],
+  retrievers: {
+    meaning: {
+      retriever: new PgvectorEmbeddingRetriever({
+        store,
+        vectors: first.vectorizer.contract.vectors,
+        model: new HashModel('hash-1'),
+      }),
+    },
+    words: {
+      retriever: new PgvectorKeywordRetriever({
+        store,
+        index: first.vectorizer.contract.index,
+        matching: { strategy: 'all' },
+      }),
+    },
+  },
 });
-for (const { passage, score } of await search.retrieve('task 7', { topK: 3 }))
+const { passages } = await search.retrieve('task 7', { topK: 3 });
+for (const { passage, score } of passages)
   console.log(passage.id, JSON.stringify(passage.text), score.toFixed(4));
 
 // search_reader has no grant on the raw tables in _warehouse.
@@ -235,7 +242,9 @@ console.log(
 const second = tasksPipeline(new HashModel('hash-2', { slow: true }));
 const controller = new AbortController();
 const running = second.pipeline.run({ signal: controller.signal });
-clients.defer(() => running.catch(() => {}));
+clients.defer(async () => {
+  await running.catch(() => {});
+});
 clients.defer(() => controller.abort());
 
 const status = async () =>
@@ -260,12 +269,17 @@ const meaning = new PgvectorEmbeddingRetriever({
     session: planned.session,
     schema: second.vectorizer.contract.schema,
     passages: second.vectorizer.contract.passages,
+    metadata: (columns) => columns,
   }),
   vectors: second.vectorizer.contract.vectors,
   model: new HashModel('hash-2'),
 });
 const found = await meaning.retrieve('a new query', { topK: 10 });
-console.log('hnsw.iterative_scan = strict_order:', found.length, 'passages');
+console.log(
+  'hnsw.iterative_scan = strict_order:',
+  found.passages.length,
+  'passages',
+);
 
 // The same search with no iterative scan: HNSW gives its 40 nearest vectors
 // (hnsw.ef_search), and the filter on the model drops each one of hash-1.
@@ -283,7 +297,7 @@ const [plain] = await planned.sql`
 console.log('hnsw.iterative_scan = off:', plain?.passages, 'passages');
 ```
 
-Output (this run set `POSTGRES_URL` to a server on another port; the last count can change from run to run, because HNSW gives each vector a random level in its graph):
+Output on Postgres 18.7 with pgvector, in the container of the command above (the last count can change from run to run, because HNSW gives each vector a random level in its graph):
 
 ```
 t0007:0 "task 7" 0.0328
@@ -305,6 +319,7 @@ hnsw.iterative_scan = off: 2 passages
 ## Things to know
 
 - **Who may read `marts` stays a grant of the database.** Give it with default privileges before the first run, as step 1 does. Then the views that a refresh makes again keep the grant. The recipe [Read the warehouse as of a position as a reader role](../../../destinations/postgresql/docs/recipes/read-the-warehouse-as-of-a-position-as-a-reader-role.md) of elt-postgresql gives the same grants, and the grants of a reading as of a position.
+- **The keyword search finds only the passages that hold every word**, because the program gives `matching: { strategy: 'all' }` to `PgvectorKeywordRetriever`. With no `matching`, it is `{ strategy: 'frequency', dropTokensThreshold: 10 }`, which drops the most frequent word while fewer than 10 passages match. Postgres has no OR (README, "Search in Postgres").
 - **The retrievers send their SQL through the host's driver.** `PostgresSession` has one method, `query(text, parameters)`. This program writes it over postgres.js. The run-time parameters of the session, such as `enable_seqscan`, are the host's choice.
 - **The program forbids the full read and the sort only to show the index.** On 1000 rows the planner reads the 64 vectors of the new model in full and sorts them, with no index. On a table whose statistics say that the model passes most rows, the planner uses HNSW.
 - **`indexing: { vectors }` declares the index of the vectors.** When it is absent, the index is HNSW with `vector_cosine_ops`. `'none'` compares every vector. See [Search in Postgres](../../README.md#search-in-postgres).

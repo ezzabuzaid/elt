@@ -4,11 +4,13 @@ import {
   type CopyConfiguration,
   type Properties,
   type RecordDraft,
+  type SavedEntries,
   type SchemaRecord,
   type SourceMessage,
   Stream,
   type SyncMode,
   diffGroupedSnapshot,
+  resumeGroupedSnapshot,
   validateRecords,
 } from '@eltjs/elt';
 import type { BiomeSegment, BiomeStream } from '@eltjs/sdk-apple-biome';
@@ -101,9 +103,10 @@ export abstract class BiomeActivityStream<P extends Properties, E> {
   // keep the rows of records macOS expired.
   async *messages(
     configuration: CopyConfiguration,
-    state: unknown,
+    _state: unknown,
     scan: ActivityScan,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): AsyncGenerator<SourceMessage> {
     const found = await scan.biome.segments(this.biome);
     const groups = await Promise.all(
@@ -113,10 +116,17 @@ export abstract class BiomeActivityStream<P extends Properties, E> {
         records: () => this.#read(segment),
       })),
     );
-    yield* diffGroupedSnapshot(configuration, groups, state, {
-      policy: new Retention(retainedSince(scan.startedAt, this.retentionDays)),
-      signal,
-    });
+    yield* diffGroupedSnapshot(
+      configuration,
+      groups,
+      await resumeGroupedSnapshot(configuration, entries),
+      {
+        policy: new Retention(
+          retainedSince(scan.startedAt, this.retentionDays),
+        ),
+        signal,
+      },
+    );
   }
 
   async *#read(segment: BiomeSegment<E>): AsyncGenerator<SchemaRecord<P>> {

@@ -19,7 +19,7 @@ import {
   CopyConfiguration,
   Pipeline,
   PipelineError,
-  type SourceReadOptions,
+  type ReadMessage,
   StreamStatus,
 } from '@eltjs/elt';
 import {
@@ -45,8 +45,47 @@ import { RecordExtractor } from './record-extractor.ts';
 import { WebSource } from './web-source.ts';
 import { WebStream } from './web-stream.ts';
 
-// The saved entries of a read that resumes from no checkpoint.
-const noEntries: SourceReadOptions['entries'] = async () => new Map();
+// Each stream's last state, and the entries that its STATEs saved, as a
+// checkpoint store keeps them, for reads that a test runs as the engine does.
+class Checkpoints {
+  readonly states = new Map<string, unknown>();
+  // By stream, then by space.
+  readonly #entries = new Map<string, Map<string, Map<string, unknown>>>();
+
+  save({
+    stream,
+    state,
+    clear = [],
+    entries = {},
+  }: Extract<ReadMessage, { readonly type: 'STATE' }>) {
+    this.states.set(stream, state);
+    const spaces =
+      this.#entries.get(stream) ?? new Map<string, Map<string, unknown>>();
+    this.#entries.set(stream, spaces);
+    for (const scope of clear)
+      for (const space of [...spaces.keys()])
+        if (space.startsWith(scope)) spaces.delete(space);
+    for (const [space, { put = [], remove = [] }] of Object.entries(entries)) {
+      const saved = spaces.get(space) ?? new Map<string, unknown>();
+      spaces.set(space, saved);
+      for (const key of remove) saved.delete(key);
+      for (const [key, value] of put)
+        saved.set(key, JSON.parse(JSON.stringify(value)));
+    }
+  }
+
+  // The checkpoint of stream is removed, with its entries.
+  remove(stream: string) {
+    this.states.delete(stream);
+    this.#entries.delete(stream);
+  }
+
+  readonly entries = async (
+    stream: string,
+    space: string,
+  ): Promise<ReadonlyMap<string, unknown>> =>
+    new Map(this.#entries.get(stream)?.get(space));
+}
 
 // One record for each page: its path.
 class PathExtractor extends RecordExtractor {
@@ -518,13 +557,14 @@ test('a list read again replaces its routes, and a listing that the run does not
   );
 });
 
-// One read as the engine runs it, which keeps each stream's last state in
-// states. With stop, no commit of the routes stream lands, as a process that
-// stops after the web stream's commits and before the routes stream's. It
-// gives the routes that the read loaded, "listing how url".
+// One read as the engine runs it, which keeps each stream's last state and
+// its entries in checkpoints. With stop, no commit of the routes stream
+// lands, as a process that stops after the web stream's commits and before
+// the routes stream's. It gives the routes that the read loaded, "listing
+// how url".
 async function read(
   source: WebSource,
-  states: Map<string, unknown>,
+  checkpoints: Checkpoints,
   stop: boolean,
 ) {
   const catalog = (await source.discover()).streams.map(
@@ -535,9 +575,9 @@ async function read(
       }),
   );
   const records: string[] = [];
-  for await (const message of source.read(catalog, states, {
+  for await (const message of source.read(catalog, checkpoints.states, {
     clock: globalThis,
-    entries: noEntries,
+    entries: checkpoints.entries,
   })) {
     if (message instanceof StreamStatus) {
       assert.notEqual(message.status, 'FAILED', String(message.error));
@@ -546,7 +586,7 @@ async function read(
         message.type === 'STATE' &&
         !(stop && message.stream === 'programs_routes')
       )
-        states.set(message.stream, message.state);
+        checkpoints.save(message);
     } else if (message.stream === 'programs_routes') {
       const { listingUrl, how, url } = route.parse(message.data);
       records.push(`${listingUrl} ${how} ${url}`);
@@ -581,10 +621,10 @@ test('a run that stops after the web stream commits its crawl and before the rou
       },
     ],
   };
-  const states = new Map<string, unknown>();
-  await read(new WebSource(options), states, true);
+  const checkpoints = new Checkpoints();
+  await read(new WebSource(options), checkpoints, true);
 
-  const records = await read(new WebSource(options), states, false);
+  const records = await read(new WebSource(options), checkpoints, false);
 
   assert.ok(
     records.includes(`${site.origin}/ link ${site.origin}/startups`),
@@ -618,17 +658,17 @@ test('the state of the web stream drops the routes that the routes stream commit
       },
     ],
   };
-  const states = new Map<string, unknown>();
+  const checkpoints = new Checkpoints();
   // The numbers of the groups of routes that the web stream's state holds.
   const held = () =>
     outbox
-      .parse(states.get('programs'))
+      .parse(checkpoints.states.get('programs'))
       .partitions.flatMap(({ state }) => state.outbox.map(({ seq }) => seq));
-  await read(new WebSource(options), states, false);
-  await read(new WebSource(options), states, false);
+  await read(new WebSource(options), checkpoints, false);
+  await read(new WebSource(options), checkpoints, false);
   const second = held();
 
-  await read(new WebSource(options), states, false);
+  await read(new WebSource(options), checkpoints, false);
 
   // Only the groups of the last run, which its routes stream committed but
   // which the next run leaves out.
@@ -664,15 +704,15 @@ test('a web stream whose state starts over numbers its routes after those the ro
       },
     ],
   };
-  const states = new Map<string, unknown>();
-  await read(new WebSource(options), states, false);
+  const checkpoints = new Checkpoints();
+  await read(new WebSource(options), checkpoints, false);
   // The web stream starts over, as after its checkpoint is removed, and the
   // run stops before the routes stream commits.
-  states.delete('programs');
+  checkpoints.remove('programs');
   home = '/other';
-  await read(new WebSource(options), states, true);
+  await read(new WebSource(options), checkpoints, true);
 
-  const records = await read(new WebSource(options), states, false);
+  const records = await read(new WebSource(options), checkpoints, false);
 
   assert.ok(
     records.includes(

@@ -1,6 +1,10 @@
 import { ClosedWorld } from '@zukhruf/snapshot-differential';
 
-import { type SourceMessage, diffGroupedSnapshot } from '@eltjs/elt';
+import {
+  type SourceMessage,
+  diffGroupedSnapshot,
+  resumeGroupedSnapshot,
+} from '@eltjs/elt';
 import type {
   Comment,
   InstagramWeb,
@@ -14,7 +18,7 @@ import {
   within,
 } from '../instagram-stream.ts';
 import { walk } from '../list-walk.ts';
-import { foreign, readLane, readScan } from '../state.ts';
+import { foreign, readLane, readLanes } from '../state.ts';
 
 const { profileId, id, text, nullableText, count, instant: at } = fields;
 
@@ -70,6 +74,7 @@ export class CommentsStream extends InstagramStream<typeof properties> {
     run,
     state,
     configuration,
+    entries,
     profileId: owner,
     range,
     signal,
@@ -77,11 +82,11 @@ export class CommentsStream extends InstagramStream<typeof properties> {
     if (owner === null)
       throw new TypeError('Instagram comments are read by profile');
     const profile = await run.profile(owner, signal);
-    const saved = readScan(this.name, state);
+    const saved = readLanes(this.name, state);
     const scanned = saved.extra.scan ?? 0;
     if (typeof scanned !== 'number') throw foreign(this.name);
     let scan = scanned;
-    let diff = saved.diff;
+    let diff = await resumeGroupedSnapshot(configuration, entries);
     const inRange = (item: TimelineMedia) =>
       within(range, instant(item.taken_at));
     const { startAt } = range;
@@ -111,11 +116,13 @@ export class CommentsStream extends InstagramStream<typeof properties> {
         },
       ))
         if ('type' in message && message.type === 'STATE') {
-          diff = message.state;
+          diff = message.snapshot;
           if (part.ends) scan += 1;
           yield {
-            ...message,
-            state: { lanes: { posts: lane }, diff, scan },
+            type: 'STATE',
+            stream: message.stream,
+            state: { lanes: { posts: lane }, scan },
+            entries: message.entries,
           };
         } else yield message;
     }

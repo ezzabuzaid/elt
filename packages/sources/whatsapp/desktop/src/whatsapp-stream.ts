@@ -4,6 +4,7 @@ import {
   type CopyConfiguration,
   type Properties,
   type RecordDraft,
+  type SavedEntries,
   type SchemaRecord,
   Stream,
   type SyncMode,
@@ -56,6 +57,7 @@ export type WhatsAppReader = {
     scan: WhatsAppScan,
     state: unknown,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): ReturnType<typeof diffSnapshot<Record<string, unknown>>>;
   file(record: Record<string, unknown>, scan: WhatsAppScan): string | null;
 };
@@ -96,6 +98,7 @@ export abstract class WhatsAppStream<P extends Properties, Row> {
     scan: WhatsAppScan,
     state: unknown,
     signal: AbortSignal | undefined,
+    _entries: SavedEntries,
   ): ReturnType<typeof diffSnapshot<SchemaRecord<P>>> {
     const horizon = this.horizon(scan);
     return diffSnapshot(configuration, this.read(scan), state, {

@@ -3,6 +3,7 @@ import { ClosedWorld } from '@zukhruf/snapshot-differential';
 import {
   type CopyConfiguration,
   type FieldSchema,
+  type SavedEntries,
   type SourceMessage,
   Stream,
   type SyncMode,
@@ -69,6 +70,7 @@ export abstract class AppleMailStream {
     state: unknown,
     scan: MailScan,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const { selection } = scan;
@@ -82,7 +84,14 @@ export abstract class AppleMailStream {
         yield* validateRecords(stream, [entry.data], 'Mail');
       }
     };
-    const messages = this.snapshot(configuration, scan, records, state, signal);
+    const messages = this.snapshot(
+      configuration,
+      scan,
+      records,
+      state,
+      signal,
+      entries,
+    );
     for await (const message of messages)
       yield 'type' in message || configuration.fileReads.length === 0
         ? message
@@ -90,13 +99,14 @@ export abstract class AppleMailStream {
   }
 
   // The scan as the copy reads it: in an incremental copy, compared with the
-  // saved snapshot.
+  // saved snapshot, in state or in entries.
   protected snapshot(
     configuration: CopyConfiguration,
     scan: MailScan,
     records: MailRecords,
     state: unknown,
     signal: AbortSignal | undefined,
+    _entries: SavedEntries,
   ): AsyncIterable<SourceMessage> {
     return diffSnapshot(configuration, records(this.entries(scan)), state, {
       policy: new ClosedWorld(),

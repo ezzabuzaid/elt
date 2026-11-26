@@ -13,14 +13,14 @@
     "@eltjs/elt": "*",
     "@eltjs/google-auth": "0.0.1",
     "@eltjs/sdk-google-search-console": "0.0.1",
-    "@zukhruf/async": "^0.8.115",
-    "@zukhruf/mutex": "^0.8.119",
-    "@zukhruf/snapshot-differential": "^0.8.115",
+    "@zukhruf/async": "^0.8.137",
+    "@zukhruf/mutex": "^0.8.137",
+    "@zukhruf/snapshot-differential": "^0.8.137",
     "p-memoize": "^8.0.0"
   },
   "devDependencies": {
     "@eltjs/elt-postgresql": "*",
-    "@zukhruf/testing": "^0.8.115",
+    "@zukhruf/testing": "^0.8.137",
     "msw": "^3.0.3",
     "postgres": "^3.4.9"
   }

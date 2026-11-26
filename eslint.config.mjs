@@ -147,14 +147,4 @@ export default defineConfig(
       ],
     },
   },
-  {
-    // The pre-commit hook script, which no tsconfig includes; typed lint gives
-    // it the default project instead of a parse error.
-    files: ['**/*.ts'],
-    languageOptions: {
-      parserOptions: {
-        projectService: { allowDefaultProject: ['.husky/*.ts'] },
-      },
-    },
-  },
 );

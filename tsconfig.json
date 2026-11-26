@@ -262,6 +262,9 @@
     },
     {
       "path": "./packages/chunking"
+    },
+    {
+      "path": "./tsconfig.scripts.json"
     }
   ]
 }

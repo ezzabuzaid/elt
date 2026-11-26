@@ -15,10 +15,12 @@ import {
   Gauge,
   Pipeline,
   PipelineError,
+  type SavedEntries,
   Source,
   Stream,
   diffGroupedSnapshot,
   diffSnapshot,
+  resumeGroupedSnapshot,
 } from '@eltjs/elt';
 
 import { SQLiteDestination, SQLiteSyncHistory } from './index.ts';
@@ -101,6 +103,10 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
     protected override async *extract(
       configuration: CopyConfiguration,
       state: unknown,
+      _partition: null,
+      _context: AsyncDisposable,
+      _signal: AbortSignal | undefined,
+      entries: SavedEntries,
     ) {
       if (configuration.stream === deleting)
         yield* diffSnapshot(configuration, rows, state, { signal: undefined });
@@ -108,7 +114,7 @@ test('a full refresh checks a snapshot stream’s declaration as an incremental 
         yield* diffGroupedSnapshot(
           configuration,
           [{ key: 'g', fingerprint: '1', records: () => rows }],
-          state,
+          await resumeGroupedSnapshot(configuration, entries),
           { policy: new ClosedWorld(), signal: undefined },
         );
       else
@@ -299,6 +305,10 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
     protected override async *extract(
       configuration: CopyConfiguration,
       state: unknown,
+      _partition: null,
+      _context: AsyncDisposable,
+      _signal: AbortSignal | undefined,
+      entries: SavedEntries,
     ) {
       yield* diffGroupedSnapshot(
         configuration,
@@ -307,7 +317,7 @@ test('a full refresh of a grouped snapshot stream reads every group, also one wh
           fingerprint: 'unchanged',
           records: () => rows,
         })),
-        state,
+        await resumeGroupedSnapshot(configuration, entries),
         { policy: new ClosedWorld(), signal: undefined },
       );
     }

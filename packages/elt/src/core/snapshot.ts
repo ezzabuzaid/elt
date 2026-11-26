@@ -3,6 +3,7 @@ import { setImmediate } from 'node:timers/promises';
 import {
   DeletionPolicy,
   type FailedGroup,
+  type GroupedSnapshot,
   type KeptGroup,
   type SnapshotChange,
   SnapshotDifferential,
@@ -12,7 +13,11 @@ import {
 
 import type { CopyConfiguration } from './copy-configuration.ts';
 import { Deduplication } from './deduplication.ts';
-import type { StateMessage, UnversionedDelete } from './source.ts';
+import type {
+  SavedEntries,
+  StateMessage,
+  UnversionedDelete,
+} from './source.ts';
 import type { Stream } from './stream.ts';
 
 // A group the source lists without reading, because it knows the group did
@@ -35,10 +40,10 @@ export type SnapshotDiffOptions = {
   readonly signal: AbortSignal | undefined;
 };
 
-type SnapshotMessage<Data> =
-  | { readonly stream: string; readonly data: Data }
-  | UnversionedDelete
-  | StateMessage;
+type RowMessage<Data> =
+  { readonly stream: string; readonly data: Data } | UnversionedDelete;
+
+type SnapshotMessage<Data> = RowMessage<Data> | StateMessage;
 
 // Reads for a source without a change feed. An incremental copy compares one
 // complete scan with the previous snapshot, emits new or changed records, a
@@ -76,7 +81,7 @@ export async function* diffVersionedSnapshot<
   const deduplication = deduplicationOf(stream);
   const differential = differentialOf<Data>(
     deduplication,
-    options,
+    policyOf(stream, options.policy),
     options.fingerprint,
   );
   if (syncMode !== 'incremental') {
@@ -88,13 +93,58 @@ export async function* diffVersionedSnapshot<
     state,
     options,
   ))
-    yield messageOf(deduplication, change);
+    yield change.type === 'state'
+      ? { type: 'STATE', stream: stream.name, state: change.state }
+      : messageOf(deduplication, change);
+}
+
+// The STATE of a grouped snapshot diff: what changed in each collection of
+// the snapshot, as the changes of its keyed entries, and the new snapshot,
+// for the next call of the same extract. state is null: the snapshot is in
+// the entries (ADR 0036).
+export type GroupedSnapshotState = StateMessage & {
+  readonly state: null;
+  readonly snapshot: GroupedSnapshot;
+};
+
+type GroupedSnapshotMessage<Data> = RowMessage<Data> | GroupedSnapshotState;
+
+// The spaces of the checkpoint's entries that keep a grouped snapshot, one
+// for each of its keyed collections. elt scopes them to the stream, or to
+// the partition, of the extract (ADR 0035).
+const spaces = {
+  groups: 'diff',
+  unknown: 'diff:unknown',
+  listed: 'diff:listed',
+} as const;
+
+// The grouped snapshot that the last STATE of the stream, or of the
+// partition, saved in entries; empty before the first scan. The differential
+// checks each entry as it reads it back.
+export async function resumeGroupedSnapshot(
+  { stream }: CopyConfiguration,
+  entries: SavedEntries,
+): Promise<GroupedSnapshot> {
+  const [groups, unknown, listed] = await Promise.all([
+    entries.space(spaces.groups),
+    entries.space(spaces.unknown),
+    entries.space(spaces.listed),
+  ]);
+  // savedGroups reads only the name of the differential, so the policy of
+  // the diff is not needed here.
+  return differentialOf(deduplicationOf(stream), new Forgetting()).savedGroups({
+    groups,
+    unknown,
+    listed,
+  });
 }
 
 // diffSnapshot for a scan whose records come from inputs the source can
 // fingerprint cheaply: in an incremental copy, a group whose fingerprint
-// matches the last committed scan, and a kept group, which the source knows
-// did not change, keep their records without reading them.
+// matches snapshot, and a kept group, which the source knows did not
+// change, keep their records without reading them. snapshot is what
+// resumeGroupedSnapshot gives, or the snapshot of the last STATE of this
+// extract; each STATE puts and removes only the entries that changed.
 export async function* diffGroupedSnapshot<
   Data extends Record<string, unknown>,
 >(
@@ -102,11 +152,14 @@ export async function* diffGroupedSnapshot<
   groups:
     | AsyncIterable<SnapshotGroup<Data> | KeptGroup | FailedGroup>
     | Iterable<SnapshotGroup<Data> | KeptGroup | FailedGroup>,
-  state: unknown,
+  snapshot: GroupedSnapshot,
   options: SnapshotDiffOptions,
-): AsyncGenerator<SnapshotMessage<Data>> {
+): AsyncGenerator<GroupedSnapshotMessage<Data>> {
   const deduplication = deduplicationOf(stream);
-  const differential = differentialOf<Data>(deduplication, options);
+  const differential = differentialOf<Data>(
+    deduplication,
+    policyOf(stream, options.policy),
+  );
   if (syncMode !== 'incremental') {
     for await (const group of groups) {
       // A failed group gives no records to replace the target with; its
@@ -124,10 +177,24 @@ export async function* diffGroupedSnapshot<
   }
   for await (const change of differential.diffGroups(
     untilStopped(groups, options.signal),
-    state,
+    snapshot,
     options,
   ))
-    yield messageOf(deduplication, change);
+    if (change.type !== 'state') yield messageOf(deduplication, change);
+    else {
+      const { changes } = change.state;
+      yield {
+        type: 'STATE',
+        stream: stream.name,
+        state: null,
+        entries: {
+          [spaces.groups]: changes.groups,
+          [spaces.unknown]: changes.unknown,
+          [spaces.listed]: changes.listed,
+        },
+        snapshot: change.state.snapshot,
+      };
+    }
 }
 
 // Each item of a scan until signal aborts. A scan that finds nothing changed
@@ -172,7 +239,7 @@ function deduplicationOf(stream: Stream): Deduplication {
 
 function differentialOf<Data extends Record<string, unknown>>(
   deduplication: Deduplication,
-  { policy }: SnapshotDiffOptions,
+  policy: DeletionPolicy,
   fingerprint?: (record: Data) => string,
 ): SnapshotDifferential<Data> {
   const { stream } = deduplication;
@@ -184,7 +251,7 @@ function differentialOf<Data extends Record<string, unknown>>(
         deduplication.value(record, field),
       ),
     expiresBy: stream.expiresBy,
-    policy: policyOf(stream, policy),
+    policy,
     ...(fingerprint === undefined ? {} : { fingerprint }),
   });
 }
@@ -209,25 +276,24 @@ function policyOf(
   return policy;
 }
 
+// The record or the DELETE of a change of the scan.
 function messageOf<Data>(
   deduplication: Deduplication,
-  change: SnapshotChange<Data, unknown>,
-): SnapshotMessage<Data> {
+  change: Exclude<SnapshotChange<Data, unknown>, { readonly type: 'state' }>,
+): RowMessage<Data> {
   const { stream } = deduplication;
-  if (change.type === 'insert' || change.type === 'update')
+  if (change.type !== 'delete')
     return { stream: stream.name, data: change.record };
-  if (change.type === 'delete')
-    return {
-      type: 'DELETE',
-      stream: stream.name,
-      // The differential can keep bytes in a key; a stream's key fields are
-      // scalars, so the deleted key passes the same check its record did.
-      key: Object.fromEntries(
-        deduplication.primaryKey.map((field) => [
-          field,
-          deduplication.value(change.key, field),
-        ]),
-      ),
-    };
-  return { type: 'STATE', stream: stream.name, state: change.state };
+  return {
+    type: 'DELETE',
+    stream: stream.name,
+    // The differential can keep bytes in a key; a stream's key fields are
+    // scalars, so the deleted key passes the same check its record did.
+    key: Object.fromEntries(
+      deduplication.primaryKey.map((field) => [
+        field,
+        deduplication.value(change.key, field),
+      ]),
+    ),
+  };
 }

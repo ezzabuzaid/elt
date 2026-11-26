@@ -12,7 +12,7 @@
   "dependencies": {
     "@eltjs/codec-apple-reference-date": "0.0.1",
     "@eltjs/sdk-macos-app-database": "0.0.1",
-    "@zukhruf/sqlite-snapshot": "^0.8.115",
-    "@zukhruf/tcc": "^0.8.128"
+    "@zukhruf/sqlite-snapshot": "^0.8.137",
+    "@zukhruf/tcc": "^0.8.137"
   }
 }

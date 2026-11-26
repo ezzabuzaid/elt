@@ -6,8 +6,11 @@ import {
 import {
   type CopyConfiguration,
   type Properties,
+  type SavedEntries,
   type SchemaRecord,
   diffGroupedSnapshot,
+  type diffSnapshot,
+  resumeGroupedSnapshot,
 } from '@eltjs/elt';
 import type { Message } from '@eltjs/sdk-whatsapp-desktop';
 
@@ -22,19 +25,21 @@ export abstract class WhatsAppMessageStream<
 > extends WhatsAppStream<P, Row> {
   readonly store = 'chatStorage';
 
-  override changes(
+  override async *changes(
     configuration: CopyConfiguration,
     scan: WhatsAppScan,
-    state: unknown,
+    _state: unknown,
     signal: AbortSignal | undefined,
-  ): ReturnType<typeof diffGroupedSnapshot<SchemaRecord<P>>> {
-    return diffGroupedSnapshot(
+    entries: SavedEntries,
+  ): ReturnType<typeof diffSnapshot<SchemaRecord<P>>> {
+    const snapshot = await resumeGroupedSnapshot(configuration, entries);
+    yield* diffGroupedSnapshot(
       configuration,
       this.#groups(
         scan,
-        state === null || configuration.syncMode !== 'incremental',
+        snapshot.groups.size === 0 || configuration.syncMode !== 'incremental',
       ),
-      state,
+      snapshot,
       {
         policy: new ClosedWorld(),
         signal,

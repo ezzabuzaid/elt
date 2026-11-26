@@ -2,6 +2,7 @@ import type {
   ChangeSignal,
   CopyConfiguration,
   ExtractionCoverage,
+  SavedEntries,
   SourceMessage,
   Stream,
 } from '@eltjs/elt';
@@ -223,12 +224,13 @@ export class AppleMailSource extends Source<MailScan> {
     _partition: null,
     scan: MailScan,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): AsyncGenerator<SourceMessage> {
     const { name } = configuration.stream;
     const reader = readersByName.get(name);
     if (reader === undefined)
       throw new TypeError(`Unknown Mail stream ${name}`);
-    yield* reader.extract(configuration, state, scan, signal);
+    yield* reader.extract(configuration, state, scan, signal, entries);
   }
 
   // Full Disk Access opens both stores Mail reads: its own and the system's

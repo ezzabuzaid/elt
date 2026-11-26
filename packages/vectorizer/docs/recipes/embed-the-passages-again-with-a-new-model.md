@@ -156,13 +156,15 @@ async function found(vectorizer: Vectorizer, model: LetterModel) {
   const store = new SqlitePassageStore({
     database,
     passages: vectorizer.contract.passages,
+    metadata: (columns) => columns,
   });
   const retriever = new SqliteEmbeddingRetriever({
     store,
     vectors: vectorizer.contract.vectors,
     model,
   });
-  return (await retriever.retrieve('task number', { topK: 70 })).length;
+  const { passages } = await retriever.retrieve('task number', { topK: 70 });
+  return passages.length;
 }
 
 const first = new LetterModel('letters-1');

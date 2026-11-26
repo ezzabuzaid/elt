@@ -15,12 +15,12 @@
     "@eltjs/codec-protobuf": "0.0.1",
     "@eltjs/sdk-apple-launch-services": "0.0.1",
     "@eltjs/sdk-macos-app-database": "0.0.1",
-    "@zukhruf/sqlite-snapshot": "^0.8.115",
-    "@zukhruf/tcc": "^0.8.128"
+    "@zukhruf/sqlite-snapshot": "^0.8.137",
+    "@zukhruf/tcc": "^0.8.137"
   },
   "devDependencies": {
-    "@zukhruf/fs": "^0.8.115",
-    "@zukhruf/sqlite-open": "^0.8.115",
-    "@zukhruf/testing": "^0.8.115"
+    "@zukhruf/fs": "^0.8.137",
+    "@zukhruf/sqlite-open": "^0.8.137",
+    "@zukhruf/testing": "^0.8.137"
   }
 }

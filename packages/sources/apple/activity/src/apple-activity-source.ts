@@ -4,6 +4,7 @@ import type {
   CopyConfiguration,
   ExtractionCoverage,
   PipelineClock,
+  SavedEntries,
   SourceMessage,
   Stream,
 } from '@eltjs/elt';
@@ -218,12 +219,14 @@ export class AppleActivitySource extends Source<ActivityScan> {
     _partition: null,
     scan: ActivityScan,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): AsyncIterable<SourceMessage> {
     return readerOf(configuration.stream).messages(
       configuration,
       state,
       scan,
       signal,
+      entries,
     );
   }
 }

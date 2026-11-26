@@ -36,6 +36,7 @@ import {
   Pipeline,
   PipelineError,
   type Properties,
+  type SavedEntries,
   Source,
   type SourceMessage,
   type SourceReadOptions,
@@ -48,6 +49,7 @@ import {
   type WatchEvent,
   diffGroupedSnapshot,
   diffSnapshot,
+  resumeGroupedSnapshot,
 } from '@eltjs/elt';
 
 import {
@@ -1886,6 +1888,10 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
     protected override async *extract(
       configuration: CopyConfiguration,
       state: unknown,
+      _partition: null,
+      _context: AsyncDisposable,
+      _signal: AbortSignal | undefined,
+      entries: SavedEntries,
     ) {
       yield* diffGroupedSnapshot(
         configuration,
@@ -1894,7 +1900,7 @@ test('a grouped snapshot stream that emits no deletions keeps the rows of a grou
           fingerprint: null,
           records: () => rows,
         })),
-        state,
+        await resumeGroupedSnapshot(configuration, entries),
         { signal: undefined },
       );
     }
@@ -1989,6 +1995,10 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
     protected override async *extract(
       configuration: CopyConfiguration,
       state: unknown,
+      _partition: null,
+      _context: AsyncDisposable,
+      _signal: AbortSignal | undefined,
+      entries: SavedEntries,
     ) {
       yield* diffGroupedSnapshot(
         configuration,
@@ -2000,7 +2010,7 @@ test('grouped snapshot diffs keep unchanged groups without reading them, and sti
             return rows;
           },
         })),
-        state,
+        await resumeGroupedSnapshot(configuration, entries),
         { policy: new ClosedWorld(), signal: undefined },
       );
     }
@@ -2293,6 +2303,7 @@ test('a grouped pass whose groups are all unchanged, stopped by the host partway
       _partition: null,
       _context: AsyncDisposable,
       signal: AbortSignal | undefined,
+      entries: SavedEntries,
     ) {
       // The same 20,000 files every pass, so a diff reads none of them
       // again. While the scan lists file stopAt the host removes the
@@ -2308,10 +2319,15 @@ test('a grouped pass whose groups are all unchanged, stopped by the host partway
           };
         }
       }
-      yield* diffGroupedSnapshot(configuration, files(), state, {
-        policy: new ClosedWorld(),
-        signal,
-      });
+      yield* diffGroupedSnapshot(
+        configuration,
+        files(),
+        await resumeGroupedSnapshot(configuration, entries),
+        {
+          policy: new ClosedWorld(),
+          signal,
+        },
+      );
     }
   }
 
@@ -2409,6 +2425,10 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
     protected override async *extract(
       configuration: CopyConfiguration,
       state: unknown,
+      _partition: null,
+      _context: AsyncDisposable,
+      _signal: AbortSignal | undefined,
+      entries: SavedEntries,
     ) {
       if (configuration.stream === events)
         yield* diffSnapshot(
@@ -2425,7 +2445,7 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
             fingerprint,
             records: () => rows,
           })),
-          state,
+          await resumeGroupedSnapshot(configuration, entries),
           { policy: new Retention(scan.horizon), signal: undefined },
         );
     }
@@ -2466,15 +2486,20 @@ test('an expiring stream keeps the rows its upstream expired and deletes only wh
   };
   const remembered = () => {
     using database = open(statePath, { readOnly: true });
-    const states = database
-      .prepare('SELECT id, state FROM checkpoints ORDER BY id')
+    const events = database
+      .prepare("SELECT state FROM checkpoints WHERE id = 'events'")
       .all()
       .map(({ state }) => JSON.parse(String(state)));
+    // The grouped stream keeps its groups as entries of its diff space.
+    const groups = database
+      .prepare(
+        "SELECT value FROM checkpoint_entries WHERE id = 'grouped' AND space = 'diff' ORDER BY key",
+      )
+      .all()
+      .map(({ value }) => JSON.parse(String(value)));
     return [
-      Object.keys(states[0].snapshot),
-      Object.values<{ snapshot: object }>(states[1].groups).flatMap(
-        ({ snapshot }) => Object.keys(snapshot),
-      ),
+      events.flatMap(({ snapshot }) => Object.keys(snapshot)),
+      groups.flatMap(({ snapshot }) => Object.keys(snapshot)),
     ];
   };
   const run = async (horizon: string, groups: Group[]) => {
@@ -2626,6 +2651,10 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
     protected override async *extract(
       configuration: CopyConfiguration,
       state: unknown,
+      _partition: null,
+      _context: AsyncDisposable,
+      _signal: AbortSignal | undefined,
+      entries: SavedEntries,
     ) {
       if (configuration.stream === messages)
         yield* diffSnapshot(configuration, scan.rows, state, {
@@ -2642,7 +2671,7 @@ test('a read that covers part of a stream deletes the vanished rows it covers, k
               records: () => scan.rows.filter((row) => row.channel === channel),
             }),
           ),
-          state,
+          await resumeGroupedSnapshot(configuration, entries),
           { policy: coverage, signal: undefined },
         );
     }

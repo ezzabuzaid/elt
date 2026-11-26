@@ -471,13 +471,26 @@ The policy is a `DeletionPolicy`. It is a Strategy that gives each vanished key 
 
 ### Grouped snapshots
 
-Some records come from inputs that the source can fingerprint and not read, such as files whose stat identifies their content. For them, `diffGroupedSnapshot(configuration, groups, state, { policy, signal })` does not read the unchanged inputs.
+Some records come from inputs that the source can fingerprint and not read, such as files whose stat identifies their content. For them, `diffGroupedSnapshot(configuration, groups, snapshot, { policy, signal })` does not read the unchanged inputs:
+
+```ts
+protected override async *extract(configuration, state, partition, context, signal, entries) {
+  yield* diffGroupedSnapshot(
+    configuration,
+    this.files(configuration.stream),
+    await resumeGroupedSnapshot(configuration, entries),
+    { policy: new ClosedWorld(), signal },
+  );
+}
+```
 
 - Each group is `{ key, fingerprint, records() }`: one input, a fingerprint of it, and a function that reads its records.
 - In an incremental copy, a group whose fingerprint is equal to the saved fingerprint of its key keeps its saved rows. The diff does not call its `records()`. The diff reads and compares each other group, and each group whose fingerprint is `null`, record by record.
 - A source that knows that a group did not change can give a kept group, `{ key, kept: true }`, with no fingerprint. The group keeps its saved rows. A kept group that the snapshot does not have fails the diff. A full refresh reads each group, so it refuses a kept group.
 - A source that could not read an input, such as a page that answered 503, can give a failed group, `{ key, failed: true }`. The group keeps its saved rows, so a failure deletes nothing, and a row that another group gives moved out of it. A failed group that the snapshot does not have keeps nothing. A full refresh gives no rows for a failed group: the failure fails the read, so the target keeps its last complete scan.
-- The state is `{ groups: { <group key>: { fingerprint, snapshot } } }`, with `snapshot` as above. It also has `unknown`, the keys that the policy judged unknown, when there is one.
+- **The snapshot is in the keyed entries** ([ADR 0036](./docs/adr/0036-a-grouped-snapshot-is-kept-in-three-spaces-of-keyed-entries.md)). It has three keyed collections, each in its own space of the stream's [keyed entries](#incremental-copies-and-checkpoints), and of the partition's for a partitioned stream: `diff` has `<group key>: { fingerprint, snapshot }`, with `snapshot` as above; `diff:unknown` has `<key>: { saved, holder? }`, the keys that the policy judged unknown and the keys that wait for the last part of a scan in parts, with the group that held them; `diff:listed` has `<group key>: true`, the groups that the earlier parts of an open scan listed. `resumeGroupedSnapshot(configuration, entries)` reads the three spaces and checks each entry. The snapshot is empty on the first run.
+- **A save writes what changed.** The `STATE` of the diff has `state: null`, and its `entries` put and remove only the entries that changed: each group that the diff read and that changed, a group that a record moved out of, the unknown keys that changed, and the groups that a part lists for the first time in its scan. The part that ends a scan removes every listed group. Thus a part that reads one page writes the entry of that page and its listed entry, not the whole snapshot.
+- **A scan in several calls.** The `STATE` also has `snapshot`, the new snapshot. A source that diffs one scan in several calls of one `extract`, as the web source diffs each page of a crawl, gives it to the next call, and yields `{ type: 'STATE', stream, state, entries }` with a `state` of its own. A source that diffs once yields the messages as they are.
 - **Deletions:** the policy judges each key that no group gave in this run, kept or read. With `ClosedWorld`, a vanished input deletes its rows, and a changed input deletes the rows that it does not give now. The groups must still come from a complete list: the source lists each input on each run, and it skips only the read.
 - **Fingerprints:** a fingerprint must change each time that the records of the group can change, also when the parse code of the source changes. A version constant in the fingerprint does this. A fingerprint that misses a change keeps old rows, and no error tells of it.
 - **Moves:** a row that moves to a different group is compared with its earlier fingerprint, wherever it was. Thus it loads only when it changed. The diff refuses a key that comes two times in one run, also from a kept group, and a group key that comes two times in one run.
@@ -1910,14 +1923,20 @@ function diffSnapshot<Data extends Record<string, unknown>>(
     readonly rereads?: (record: Data) => boolean;
   },
 ): AsyncGenerator<RecordMessage | DeleteMessage | StateMessage>;
+function resumeGroupedSnapshot(
+  configuration: CopyConfiguration,
+  entries: SavedEntries,
+): Promise<GroupedSnapshot>; // GroupedSnapshot of @zukhruf/snapshot-differential
 function diffGroupedSnapshot<Data extends Record<string, unknown>>(
   configuration: CopyConfiguration,
   groups:
     | AsyncIterable<SnapshotGroup<Data> | KeptGroup | FailedGroup>
     | Iterable<SnapshotGroup<Data> | KeptGroup | FailedGroup>,
-  state: unknown,
+  snapshot: GroupedSnapshot,
   options: SnapshotDiffOptions,
-): AsyncGenerator<RecordMessage | DeleteMessage | StateMessage>;
+): AsyncGenerator<RecordMessage | DeleteMessage | GroupedSnapshotState>;
+// GroupedSnapshotState: a StateMessage with state null, the entries that
+// changed, and snapshot, the new GroupedSnapshot.
 type SnapshotDiffOptions = {
   readonly policy?: DeletionPolicy; // of @zukhruf/snapshot-differential
   readonly continues?: boolean;
@@ -2414,6 +2433,8 @@ One use case each, with a full program that you can run:
 - [ADR 0032](./docs/adr/0032-a-deletion-older-than-the-stored-row-deletes-nothing.md): a deletion older than the stored row deletes nothing.
 - [ADR 0033](./docs/adr/0033-a-host-loads-the-rows-it-holds-through-an-iterable-source.md): a host loads the rows that it holds through an `IterableSource`.
 - [ADR 0034](./docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md): a composite dataset refreshes its members in order as one dataset.
+- [ADR 0035](./docs/adr/0035-a-checkpoint-keeps-keyed-entries-beside-its-state.md): a checkpoint keeps keyed entries beside its state.
+- [ADR 0036](./docs/adr/0036-a-grouped-snapshot-is-kept-in-three-spaces-of-keyed-entries.md): a grouped snapshot is kept in three spaces of keyed entries.
 
 ## Development
 

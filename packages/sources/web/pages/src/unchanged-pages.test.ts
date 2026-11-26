@@ -3,6 +3,10 @@ import { join } from 'node:path';
 import { test } from 'node:test';
 
 import { TemporaryFiles } from '@zukhruf/fs';
+import {
+  type GroupedSnapshot,
+  SnapshotDifferential,
+} from '@zukhruf/snapshot-differential';
 import { HttpServer } from '@zukhruf/testing/http';
 import { Sqlite } from '@zukhruf/testing/sqlite';
 import got, { type Got } from 'got';
@@ -11,8 +15,11 @@ import {
   Connection,
   Copy,
   CopyConfiguration,
+  type GroupedSnapshotState,
   Pipeline,
+  type SavedEntries,
   diffGroupedSnapshot,
+  resumeGroupedSnapshot,
 } from '@eltjs/elt';
 import {
   SQLiteCheckpointStore,
@@ -83,7 +90,7 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
   });
   const signal = t.signal;
   async function scan(
-    state: unknown,
+    snapshot: GroupedSnapshot,
     configuration = incremental,
     client = http,
   ) {
@@ -91,7 +98,7 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
       upstream.origin,
       signal,
     );
-    let next: unknown = null;
+    let next: GroupedSnapshotState | null = null;
     let records = 0;
     for await (const message of diffGroupedSnapshot(
       configuration,
@@ -111,31 +118,44 @@ test('committed groups skip extraction after 304 and identical 200, but fresh an
           },
         },
       ],
-      state,
+      snapshot,
       // The web stream emits deletions, with the policy its source gives.
       { signal, policy: new ListedPages() },
     )) {
-      if ('type' in message && message.type === 'STATE') next = message.state;
+      if ('type' in message && message.type === 'STATE') next = message;
       if ('data' in message) records++;
     }
-    return { state: next, records };
+    return { state: next, snapshot: next?.snapshot ?? snapshot, records };
   }
-  const first = await scan(null);
+  const first = await scan(SnapshotDifferential.noGroups);
   assert.equal(first.records, 1);
   assert.equal(extractions, 1);
-  const unchanged = await scan(JSON.parse(JSON.stringify(first.state)));
+  assert.ok(first.state !== null);
+  // The first STATE's entries as a store keeps them, as JSON, read back.
+  const saved = new Map(
+    Object.entries(first.state.entries ?? {}).map(([space, { put = [] }]) => [
+      space,
+      new Map(JSON.parse(JSON.stringify([...put]))),
+    ]),
+  );
+  const entries: SavedEntries = {
+    space: async (name) => saved.get(name) ?? new Map(),
+  };
+  const unchanged = await scan(
+    await resumeGroupedSnapshot(incremental, entries),
+  );
   assert.equal(unchanged.records, 0);
   assert.equal(extractions, 1);
   assert.equal(revalidated, 1);
-  assert.equal((await scan(unchanged.state, incremental, got)).records, 0);
+  assert.equal((await scan(unchanged.snapshot, incremental, got)).records, 0);
   assert.equal(extractions, 1);
   revision++;
-  const edited = await scan(unchanged.state);
+  const edited = await scan(unchanged.snapshot);
   assert.equal(edited.records, 1);
   assert.equal(extractions, 2);
-  assert.equal((await scan(null)).records, 1);
+  assert.equal((await scan(SnapshotDifferential.noGroups)).records, 1);
   assert.equal(extractions, 3);
-  assert.equal((await scan(edited.state, full)).records, 1);
+  assert.equal((await scan(edited.snapshot, full)).records, 1);
   assert.equal(extractions, 4);
 });
 

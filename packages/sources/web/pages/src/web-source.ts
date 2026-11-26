@@ -10,11 +10,13 @@ import {
   type KeptGroup,
   type Partition,
   type PipelineClock,
+  type SavedEntries,
   Source,
   type SourceMessage,
   type SourceReadOptions,
   Stream,
   diffGroupedSnapshot,
+  resumeGroupedSnapshot,
   validateRecords,
 } from '@eltjs/elt';
 
@@ -77,7 +79,6 @@ const provenance = {
 } as const;
 
 const saved = z.object({
-  diff: z.unknown(),
   // The crawler's memento: its unfinished crawl and every URL it visited, failed pages too.
   crawl: z.unknown(),
   outbox,
@@ -438,6 +439,7 @@ export class WebSource extends Source<WebRead> {
     partition: Partition | null,
     { scan, client, clock, signal: requestSignal }: WebRead,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): AsyncGenerator<SourceMessage> {
     const inputUrl = z.string().parse(partition?.inputUrl);
     const { stream } = this.#entry(configuration.stream);
@@ -499,10 +501,9 @@ export class WebSource extends Source<WebRead> {
     };
     try {
       const previous =
-        state === null
-          ? { diff: null, crawl: null, outbox: [] }
-          : saved.parse(state);
-      let diff: unknown = previous.diff;
+        state === null ? { crawl: null, outbox: [] } : saved.parse(state);
+      // The snapshot of the pages the scan diffed, as the last STATE left it.
+      let diff = await resumeGroupedSnapshot(configuration, entries);
       // A read without the routes stream keeps the outbox as it is, and adds
       // nothing. A read with it leaves out the groups that the routes stream
       // committed, and numbers new groups after every group it knows, so a
@@ -544,7 +545,7 @@ export class WebSource extends Source<WebRead> {
       let savedAt = clock.performance.now();
       const checkpoint = () => {
         savedAt = clock.performance.now();
-        return { diff, crawl: crawl.snapshot(), outbox: routes };
+        return { crawl: crawl.snapshot(), outbox: routes };
       };
       const policy = new ListedPages();
       // The diff of groups of the scan, as one part of it or as its last
@@ -562,8 +563,13 @@ export class WebSource extends Source<WebRead> {
           { continues: !last, signal, policy },
         ))
           if ('type' in message && message.type === 'STATE') {
-            diff = message.state;
-            yield { ...message, state: checkpoint() };
+            diff = message.snapshot;
+            yield {
+              type: 'STATE',
+              stream: message.stream,
+              state: checkpoint(),
+              entries: message.entries,
+            };
             await committed();
           } else yield message;
       };

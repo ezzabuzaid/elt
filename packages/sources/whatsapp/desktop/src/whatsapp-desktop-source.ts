@@ -4,6 +4,7 @@ import {
   type CopyConfiguration,
   type ExtractionCoverage,
   type PipelineClock,
+  type SavedEntries,
   Source,
   type SourceMessage,
   type Stream,
@@ -216,10 +217,17 @@ export class WhatsAppDesktopSource extends Source<WhatsAppScan> {
     _partition: null,
     scan: WhatsAppScan,
     signal: AbortSignal | undefined,
+    entries: SavedEntries,
   ): AsyncGenerator<SourceMessage> {
     const { stream } = configuration;
     const reader = readerOf(stream);
-    const messages = reader.changes(configuration, scan, state, signal);
+    const messages = reader.changes(
+      configuration,
+      scan,
+      state,
+      signal,
+      entries,
+    );
     for await (const message of messages) {
       if ('type' in message || configuration.fileReads.length === 0)
         yield message;

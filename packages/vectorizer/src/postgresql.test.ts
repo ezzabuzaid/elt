@@ -223,6 +223,7 @@ function retrieval(
     session,
     schema: contract.schema,
     passages: contract.passages,
+    metadata: (columns) => columns,
   });
   return {
     store,
@@ -240,7 +241,6 @@ function retrieval(
     }),
     keywords: (
       options: {
-        readonly operator?: 'AND' | 'OR';
         readonly configuration?: string;
       } = {},
     ) =>
@@ -252,9 +252,8 @@ function retrieval(
             ? {}
             : { configuration: options.configuration }),
         },
-        ...(options.operator === undefined
-          ? {}
-          : { operator: options.operator }),
+        // The passages that hold every word of the query.
+        matching: { strategy: 'all' },
       }),
     [Symbol.asyncDispose]: () => sql.end(),
   };
@@ -269,9 +268,11 @@ async function rowsOf(url: string, query: string) {
   }
 }
 
-const ids = (
-  passages: readonly { readonly passage: { readonly id: string } }[],
-) => passages.map(({ passage }) => passage.id);
+const ids = ({
+  passages,
+}: {
+  readonly passages: readonly { readonly passage: { readonly id: string } }[];
+}) => passages.map(({ passage }) => passage.id);
 
 test('a vector search through the contract gives the passage with its id, source, seq, offsets, text and metadata, and not its keywords, and each member keeps its own derived status', async () => {
   await using database = await databases.database();
@@ -289,7 +290,9 @@ test('a vector search through the contract gives the passage with its id, source
   await tasks.pipeline.run();
 
   await using search = retrieval(url, tasks.vectorizer, model);
-  const [best] = await search.embedding.retrieve('red car drives fast', {
+  const {
+    passages: [best],
+  } = await search.embedding.retrieve('red car drives fast', {
     topK: 1,
   });
   assert.deepEqual(best?.passage, {
@@ -337,7 +340,7 @@ test('a vector search through the contract gives the passage with its id, source
   );
 });
 
-test('a keyword search finds the passages that hold every word, and with OR the passages that hold any word', async () => {
+test('a keyword search finds the passages that hold every word, and refuses an OR of the words', async () => {
   await using database = await databases.database();
   const url = database.connectionString;
   const model = new LetterModel();
@@ -357,11 +360,23 @@ test('a keyword search finds the passages that hold every word, and with OR the 
   assert.deepEqual(ids(await search.keywords().retrieve('git history')), [
     'b:0',
   ]);
-  assert.deepEqual(
-    ids(
-      await search.keywords({ operator: 'OR' }).retrieve('history fence'),
-    ).toSorted(),
-    ['b:0', 'c:0'],
+  // Postgres has no OR, the operator of SQLite and SQL Server: ts_rank has
+  // no IDF and ranks every row that an OR matches (ADR 0018 of
+  // @zukhruf/retrieval). The type refuses it, and the constructor refuses
+  // it from a caller that has no types.
+  assert.throws(
+    () =>
+      new PgvectorKeywordRetriever({
+        store: search.store,
+        index: tasks.vectorizer.contract.index,
+        // @ts-expect-error PostgresMatching has a strategy, 'all' or 'frequency', and no operator.
+        matching: { operator: 'OR' },
+      }),
+    {
+      name: 'RangeError',
+      message:
+        "The strategy of matching is 'all' or 'frequency', not undefined",
+    },
   );
   assert.deepEqual(
     (
@@ -407,7 +422,10 @@ test('a fusion of the vector and keyword searches ranks first the passage that b
   assert.equal(
     await first(
       new FusionRetriever({
-        retrievers: [search.embedding, search.keywords()],
+        retrievers: {
+          meaning: { retriever: search.embedding },
+          keywords: { retriever: search.keywords() },
+        },
       }),
     ),
     'b:0',
@@ -494,7 +512,7 @@ test('while another model embeds the passages again, a search with the model of 
 
     assert.deepEqual(
       {
-        found: found.length,
+        found: found.passages.length,
         hnsw: (await search.plan()).some((line) =>
           /Index Scan using ix_elt_[0-9a-f]{16} on raw_docs_chunk_vectors/.test(
             line,
@@ -867,7 +885,7 @@ test('the context window of a passage of a source cut into many chunks gives the
   const [widened] = await new ContextWindow({
     store: search.store,
     windowSize: 99,
-  }).postprocess(found, 'needle');
+  }).postprocess(found.passages, 'needle');
   const text = `Cold store\n${body}`;
   assert.ok(ids(found)[0] !== 'a:0', ids(found).join());
   assert.deepEqual(
