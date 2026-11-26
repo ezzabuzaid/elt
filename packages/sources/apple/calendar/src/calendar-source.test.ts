@@ -85,8 +85,10 @@ async function readable(entity: 'events' | 'reminders'): Promise<boolean> {
     ]);
     return true;
   } catch (error) {
-    if (/_UNAVAILABLE: /.test(String(Reflect.get(Object(error), 'stderr'))))
-      return false;
+    const stderr = String(Reflect.get(Object(error), 'stderr'));
+    // A read that the store changed under was past the access check.
+    if (stderr.includes('EVENTKIT_CHANGED')) return true;
+    if (stderr.includes('_UNAVAILABLE: ')) return false;
     throw error;
   }
 }
@@ -3291,7 +3293,13 @@ test(
       await helperRunning();
       const pending = watching.next();
       controller.abort();
-      assert.deepEqual(await pending, { value: undefined, done: true });
+      // A change that came just before the abort can still end in one pass,
+      // and the step after it must be the end of the watch.
+      const afterAbort = await pending;
+      assert.deepEqual(afterAbort.done ? afterAbort : await watching.next(), {
+        value: undefined,
+        done: true,
+      });
       await assert.rejects(helperRunning(), { code: 1 });
 
       const started = await stopped.next();
