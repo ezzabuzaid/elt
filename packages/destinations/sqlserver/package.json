@@ -40,13 +40,13 @@
   "dependencies": {
     "@eltjs/elt": "^0.12.0",
     "@eltjs/sdk-microsoft-sql-server": "^0.12.0",
-    "@zukhruf/async": "^0.8.144",
-    "@zukhruf/mutex": "^0.8.144",
-    "@zukhruf/vectors": "^0.8.144"
+    "@zukhruf/async": "^0.8.190",
+    "@zukhruf/mutex": "^0.8.190",
+    "@zukhruf/vectors": "^0.8.190"
   },
   "devDependencies": {
     "@sinonjs/fake-timers": "15.4.0",
-    "@zukhruf/parameterized-test": "^0.8.144",
-    "@zukhruf/testing": "^0.8.144"
+    "@zukhruf/parameterized-test": "^0.8.190",
+    "@zukhruf/testing": "^0.8.190"
   }
 }

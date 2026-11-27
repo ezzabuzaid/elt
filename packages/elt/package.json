@@ -38,13 +38,13 @@
     "access": "public"
   },
   "dependencies": {
-    "@zukhruf/async": "^0.8.144",
-    "@zukhruf/fs": "^0.8.144",
-    "@zukhruf/snapshot-differential": "^0.8.144",
-    "@zukhruf/vectors": "^0.8.144"
+    "@zukhruf/async": "^0.8.190",
+    "@zukhruf/fs": "^0.8.190",
+    "@zukhruf/snapshot-differential": "^0.8.190",
+    "@zukhruf/vectors": "^0.8.190"
   },
   "devDependencies": {
-    "@zukhruf/parameterized-test": "^0.8.144",
-    "@zukhruf/testing": "^0.8.144"
+    "@zukhruf/parameterized-test": "^0.8.190",
+    "@zukhruf/testing": "^0.8.190"
   }
 }

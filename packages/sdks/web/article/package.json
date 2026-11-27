@@ -29,7 +29,7 @@
     "@types/html-to-text": "9.0.4",
     "@types/http-link-header": "1.0.7",
     "@types/jsdom": "^28.0.3",
-    "@zukhruf/parameterized-test": "^0.8.144",
-    "@zukhruf/testing": "^0.8.144"
+    "@zukhruf/parameterized-test": "^0.8.190",
+    "@zukhruf/testing": "^0.8.190"
   }
 }
