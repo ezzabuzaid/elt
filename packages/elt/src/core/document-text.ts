@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 
 import { errorMessage } from '../state/sync-history.ts';
 import type { DocumentParser } from './document-parser.ts';
+import { EscalatedFailure } from './escalated-failure.ts';
 import { type FileStorage, StoredFileMissingError } from './file-storage.ts';
 import {
   type LoadedRow,
@@ -108,6 +109,8 @@ export class DocumentText extends Rule<string, typeof columns> {
           return content === null ? { empty: true } : { value: { content } };
         } catch (failure) {
           if (stopped(failure, signal)) return { gone: true };
+          // An escalated failure is no failure of the file (ADR 0037).
+          if (failure instanceof EscalatedFailure) throw failure;
           return { error: errorMessage(failure) };
         }
       }),

@@ -1,4 +1,5 @@
 import { errorMessage } from '../state/sync-history.ts';
+import { EscalatedFailure } from './escalated-failure.ts';
 import type { FailureType } from './source.ts';
 
 // A side of a replication that names the failure type of what it raised: the
@@ -23,7 +24,8 @@ export class RaisedFailure extends Error {
 
 // Calls into side, and throws what fails as a RaisedFailure of side. A
 // failure that another side raised inside the call, such as a read of the
-// source's file content inside a save of a file storage, stays that side's.
+// source's file content inside a save of a file storage, stays that side's,
+// and an escalated failure stays as it is (ADR 0037).
 export async function raised<T>(
   side: FailureSide,
   call: () => PromiseLike<T>,
@@ -35,8 +37,11 @@ export async function raised<T>(
   }
 }
 
-export function raisedFrom(side: FailureSide, error: unknown): RaisedFailure {
-  return error instanceof RaisedFailure
+export function raisedFrom(
+  side: FailureSide,
+  error: unknown,
+): RaisedFailure | EscalatedFailure {
+  return error instanceof RaisedFailure || error instanceof EscalatedFailure
     ? error
     : new RaisedFailure(error, side.failureType(error));
 }

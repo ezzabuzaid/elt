@@ -38,6 +38,7 @@ export {
 export { type DerivedCounts, DerivedStatus } from './core/derived-status.ts';
 export { type DocumentFile, DocumentParser } from './core/document-parser.ts';
 export { DocumentText } from './core/document-text.ts';
+export { EscalatedFailure } from './core/escalated-failure.ts';
 export {
   type LoadedRow,
   Rule,

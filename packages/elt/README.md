@@ -1024,6 +1024,7 @@ For a different storage, extend the exported `FileStorage`:
 Extend `DocumentParser` with `parse(path, signal?): Promise<string | null>`.
 
 - Return `null` when the file has no text that the parser can show. Throw only when the read failed.
+- Throw an `EscalatedFailure` with the error as its `cause` when the error is the host's to act on, not the file's, for example a pool whose newer revision runs. See [When a failure escalates](#when-a-failure-escalates).
 - Give it a stable identity that includes its version and the configuration that matters. Keep the parser and its configuration immutable, and do not change the file.
 - `identityFor({ name, head })` gives the identity of the format that reads one stored file, or `null` when the parser does not handle it. A composite parser uses it, so that a new audio model does not invalidate the text of other formats. `name` is the file name of the ref, with its extension. `head(length)` reads the first bytes of the file through its storage, and only when the parser calls it. The default gives the identity of the parser and reads no bytes, so `OfficeDocumentParser` reads nothing at a refresh. The type of the argument is `DocumentFile`.
 - `accepts(fileName)` tells a source, before it downloads a file, whether the parser can read a file of that name. It returns `true` by default: the parser then decides from the content, as `MacOSDocumentParser` does for a file with no extension.
@@ -1573,6 +1574,29 @@ The recipe [Write a kind of derived dataset whose output is not one row for each
   - A refresh that the stop of a run or a watch ended is not a failure.
 - **A copy that failed** keeps its last committed rows. The derived data of those rows stays as it was.
 
+## When a failure escalates
+
+Some failures are the host's to act on, not a failure of a file, a dataset or a copy. For example, `Pool.run` of `@zukhruf/pool` rejects with `DeprecatedRevisionError` once a newer host started on its store, and the host must start again on the newer code. The side that raised such an error throws an `EscalatedFailure` with the error as its `cause`, as Akka's supervisor escalates a failure to its own supervisor. `MacOSDocumentParser` does this for the `DeprecatedRevisionError` of its OCR pool and of its speech model. No bulkhead of the pipeline holds an escalated failure:
+
+- **A rule** makes no row of it, and the dataset records no `failed` status. The refresh stops, and no refresh starts after it.
+- **A file-read parser** of a copy fails no stream. The read stops, and each copy that is still open is cancelled. The sync history records the pass `cancelled`, so no copy is `failed`.
+- **`run()`** rejects with the escalated failure itself once every pass ended, not with a `DerivedDatasetError` or a `PipelineError`.
+- **`watch()`** stops every connection and then rejects with the escalated failure itself. It yields no `DatasetFailure` for it.
+
+elt never wraps an escalated failure, so a host knows it by `instanceof EscalatedFailure`:
+
+```ts
+try {
+  for await (const event of pipeline.watch({ signal })) report(event);
+} catch (error) {
+  // The process exits, and its supervisor starts it again on the new code.
+  if (error instanceof EscalatedFailure) throw error;
+  saveFailure(error);
+}
+```
+
+See [ADR 0037](./docs/adr/0037-an-escalated-failure-passes-every-bulkhead-and-the-run-or-the-watch-rejects-with-it.md).
+
 ## Positions of a destination
 
 A destination that numbers its commits gives positions, so a reader can read it as of a commit where no pass is half done. The destination reads its numbering from its own store, and `@eltjs/elt` gives the rules that each destination applies to it:
@@ -1607,6 +1631,7 @@ The `readPassStatus` of a destination reads its sync history and gives a `PassSt
 | `TargetOwnedError`, a `TypeError`           | A copy or a clear of a target that a different writer owns. The copy fails and reads nothing, and `pipeline.clear()` rejects. The message names the two writers. Clear the target with the copy that owns it. See [Target ownership](#target-ownership).                                                                                                                                                                                                                                         |
 | `WatchError`, an `AggregateError`           | `watch()` rejects with it when each connection stopped, or the signal aborted, and connections stopped. Each error has the error that stopped its connection as its `cause`. See [Watch for changes](#watch-for-changes).                                                                                                                                                                                                                                                                        |
 | `DerivedDatasetError`                       | `run()` rejects with it when the last refresh of one derived dataset failed, also when copies failed. `dataset` names the dataset, and `cause` is its own error, such as the error of the store. A watch does not reject: it yields a `DatasetFailure`. See [When a derived dataset fails](#when-a-derived-dataset-fails).                                                                                                                                                                       |
+| `EscalatedFailure`                          | `run()` and `watch()` reject with it as itself when a side, such as a document parser, escalated a failure. `cause` is the error of the side. No row, dataset or copy records it as failed. See [When a failure escalates](#when-a-failure-escalates).                                                                                                                                                                                                                                           |
 | `DerivedDatasetsError`, an `AggregateError` | `run()` rejects with it when the last refresh of more than one derived dataset failed. `errors` holds the `DerivedDatasetError` of each, in the order of the list.                                                                                                                                                                                                                                                                                                                               |
 | `StoredFileMissingError`                    | `open(ref)` or `head(ref, length)` of a file storage, for a ref that the storage does not hold. `DocumentText` makes it a rule failure of its row. The message tells you to reload the copy that stored the file. See [Files in the database](#files-in-the-database).                                                                                                                                                                                                                           |
 | `SuppressedError`                           | `run()` or `watch()` rejects with it when the sync history cannot record a failure. Its `error` is the error of the history, and its `suppressed` is the failure. See [Run and failures](#run-and-failures).                                                                                                                                                                                                                                                                                     |
@@ -1634,20 +1659,21 @@ The `readPassStatus` of a destination reads its sync history and gives a `PassSt
 
 ## The same concepts in other systems
 
-| Here                       | Elsewhere                                                                    |
-| -------------------------- | ---------------------------------------------------------------------------- |
-| Connection                 | A connection of Airbyte                                                      |
-| Checkpoint                 | A state message of Airbyte, which is a commit point                          |
-| Reset that keeps the rows  | A refresh of Airbyte that keeps records                                      |
-| Clear                      | The Clear of Airbyte                                                         |
-| Failure type               | The `failure_type` of Airbyte                                                |
-| Current as of              | A Debezium heartbeat, or a Beam watermark                                    |
-| Derived dataset            | Derived data (Kleppmann); a derivation (Estuary Flow); an asset (Dagster)    |
-| View and computed dataset  | A dbt model that is materialized as a view, or as a table                    |
-| Computed dataset with rule | A pgai vectorizer, which keeps an embedding of each row in step with the row |
-| Rule identity              | The model of a pgai vectorizer: when it changes, pgai embeds the rows again  |
-| Rule failure               | A row of `ai.vectorizer_errors` in pgai                                      |
-| One refresh in the queue   | A build watcher, which keeps one rebuild in its queue while a rebuild runs   |
+| Here                       | Elsewhere                                                                                          |
+| -------------------------- | -------------------------------------------------------------------------------------------------- |
+| Connection                 | A connection of Airbyte                                                                            |
+| Checkpoint                 | A state message of Airbyte, which is a commit point                                                |
+| Reset that keeps the rows  | A refresh of Airbyte that keeps records                                                            |
+| Clear                      | The Clear of Airbyte                                                                               |
+| Failure type               | The `failure_type` of Airbyte                                                                      |
+| Current as of              | A Debezium heartbeat, or a Beam watermark                                                          |
+| Derived dataset            | Derived data (Kleppmann); a derivation (Estuary Flow); an asset (Dagster)                          |
+| View and computed dataset  | A dbt model that is materialized as a view, or as a table                                          |
+| Computed dataset with rule | A pgai vectorizer, which keeps an embedding of each row in step with the row                       |
+| Rule identity              | The model of a pgai vectorizer: when it changes, pgai embeds the rows again                        |
+| Rule failure               | A row of `ai.vectorizer_errors` in pgai                                                            |
+| Escalated failure          | The `Escalate` directive of Akka; an `UnexpectedError` of a Temporal worker, which ends the worker |
+| One refresh in the queue   | A build watcher, which keeps one rebuild in its queue while a rebuild runs                         |
 
 Airbyte has no step after a load. elt has one, because its hosts have no orchestrator.
 
@@ -2252,6 +2278,10 @@ class DerivedDatasetError extends Error {
 class DerivedDatasetsError extends AggregateError {
   readonly errors: DerivedDatasetError[];
 }
+class EscalatedFailure extends Error {
+  readonly cause: unknown;
+  constructor(cause: unknown);
+}
 
 // Rules
 abstract class Rule<Input, Columns extends RuleColumns> {
@@ -2435,6 +2465,7 @@ One use case each, with a full program that you can run:
 - [ADR 0034](./docs/adr/0034-a-composite-dataset-refreshes-its-members-in-order-as-one-dataset.md): a composite dataset refreshes its members in order as one dataset.
 - [ADR 0035](./docs/adr/0035-a-checkpoint-keeps-keyed-entries-beside-its-state.md): a checkpoint keeps keyed entries beside its state.
 - [ADR 0036](./docs/adr/0036-a-grouped-snapshot-is-kept-in-three-spaces-of-keyed-entries.md): a grouped snapshot is kept in three spaces of keyed entries.
+- [ADR 0037](./docs/adr/0037-an-escalated-failure-passes-every-bulkhead-and-the-run-or-the-watch-rejects-with-it.md): an escalated failure passes every bulkhead, and the run or the watch rejects with it.
 
 ## Development
 

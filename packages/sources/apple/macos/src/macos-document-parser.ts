@@ -1,6 +1,12 @@
 import { extname } from 'node:path';
 
-import { type DocumentFile, DocumentParser } from '@eltjs/elt';
+import { DeprecatedRevisionError } from '@zukhruf/pool';
+
+import {
+  type DocumentFile,
+  DocumentParser,
+  EscalatedFailure,
+} from '@eltjs/elt';
 
 import type { DocumentFormat } from './document-formats/document-format.ts';
 import { FileHead } from './document-formats/file-head.ts';
@@ -30,7 +36,10 @@ export class MacOSDocumentParser extends DocumentParser {
 
   // Hosts supply ImageFormat with their OCR pool and AudioFormat with their
   // speech model. Unrecognized files, locked PDFs and files without
-  // recognizable text return null. Unreadable files throw.
+  // recognizable text return null. Unreadable files throw. A pool whose store
+  // holds a newer revision of its kind is deprecated, and the host must start
+  // again on the newer code (pool ADR 0022), so its error escalates: no row
+  // of the file fails (elt ADR 0037).
   override async parse(
     path: string,
     signal?: AbortSignal,
@@ -38,7 +47,13 @@ export class MacOSDocumentParser extends DocumentParser {
     signal?.throwIfAborted();
     const format = await this.#format(path, await FileHead.read(path));
     signal?.throwIfAborted();
-    return format === undefined ? null : format.text(path, signal);
+    try {
+      return format === undefined ? null : await format.text(path, signal);
+    } catch (error) {
+      if (error instanceof DeprecatedRevisionError)
+        throw new EscalatedFailure(error);
+      throw error;
+    }
   }
 
   override async identityFor(file: DocumentFile): Promise<string | null> {

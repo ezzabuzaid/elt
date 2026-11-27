@@ -6,6 +6,7 @@ import type { PipelineClock } from './clock.ts';
 import type { CopyConfiguration } from './copy-configuration.ts';
 import type { DocumentParser } from './document-parser.ts';
 import { plainObject } from './entry-name.ts';
+import { EscalatedFailure } from './escalated-failure.ts';
 import { FileContent } from './file-content.ts';
 import { interleave } from './interleave.ts';
 import {
@@ -357,6 +358,9 @@ export abstract class Source<
             reset = false;
           }
       } catch (error) {
+        // An escalated failure is no failure of the stream: it ends the read
+        // (ADR 0037).
+        if (error instanceof EscalatedFailure) throw error;
         yield new StreamStatus(name, 'FAILED', null, error);
       }
     }
@@ -520,6 +524,8 @@ export abstract class Source<
           yield message;
         }
       } catch (error) {
+        // An escalated failure is no failure of the partition (ADR 0037).
+        if (error instanceof EscalatedFailure) throw error;
         yield new StreamStatus(stream.name, 'FAILED', partition, error);
         // A full refresh commits nothing after a failure; stop reading.
         if (!incremental) return;

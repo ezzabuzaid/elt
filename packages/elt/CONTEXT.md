@@ -232,6 +232,10 @@ _Avoid_: Health, freshness (freshness is how current a stream is)
 A failure of a derived dataset itself, for example SQL that its store refuses. It fails only its dataset: the derived status shows `failed`, the other datasets still refresh, and the refresh after the next pass tries it again. A watch gives it as a `DatasetFailure` when the dataset starts to fail. A run rejects with it at its end, as itself: a `DerivedDatasetError`, or a `DerivedDatasetsError` when more than one dataset failed.
 _Avoid_: Crash, error (a rule failure is also an error)
 
+**Escalated failure**:
+A failure that no bulkhead of the pipeline holds, after the `Escalate` of Akka: the side that raised it, such as a document parser, wraps its error in an `EscalatedFailure`, because the host must act on it, for example start again on newer code. It fails no row, no dataset and no copy. The run or the watch rejects with it as itself.
+_Avoid_: Fatal error, panic, crash
+
 **Rule**:
 The class that turns each input of a computed dataset into its output, for example the text of a file or the vector of a listing. The caller gives the rule.
 _Avoid_: Transform, mapper (a mapper changes records while they load), function. eca's rule is a different word, in a different context

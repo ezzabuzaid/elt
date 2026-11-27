@@ -25,6 +25,7 @@ import {
   DerivedDatasetsError,
 } from './derived-dataset.ts';
 import { DerivedRefreshes } from './derived-refreshes.ts';
+import type { EscalatedFailure } from './escalated-failure.ts';
 import { interleave } from './interleave.ts';
 import {
   PassFailed,
@@ -173,18 +174,24 @@ export class Pipeline<Target extends DestinationTarget> {
   // dataset whose last refresh failed rejects the run as itself, since no
   // sync history recorded it: its DerivedDatasetError, or a
   // DerivedDatasetsError when more than one failed. Else a copy that did not
-  // load completely rejects it with a PipelineError.
+  // load completely rejects it with a PipelineError. An escalated failure
+  // rejects the run as itself once every pass ended, and no refresh runs
+  // after it (ADR 0037).
   async run(options?: {
     readonly signal?: AbortSignal;
   }): Promise<CopyResult<Target>[]> {
     const signal = options?.signal;
     await this.#declare();
-    const refreshes = new DerivedRefreshes(
-      this.#declared,
-      this.connections,
-      this.#clock,
+    let escalated: EscalatedFailure | undefined;
+    const refreshes = new DerivedRefreshes({
+      datasets: this.#declared,
+      connections: this.connections,
+      clock: this.#clock,
       signal,
-    );
+      escalate: (failure) => {
+        escalated = failure;
+      },
+    });
     let passes: PromiseSettledResult<Pass<Target>>[];
     try {
       passes = await Promise.allSettled(
@@ -197,8 +204,10 @@ export class Pipeline<Target extends DestinationTarget> {
     } finally {
       await refreshes.settled();
     }
+    if (escalated !== undefined) throw escalated;
     // A pass rejects only with an error no history recorded, such as the
-    // history's own; the run rejects with it once every other pass ended.
+    // history's own, or with an escalated failure; the run rejects with it
+    // once every other pass ended.
     const unrecorded = passes.find(
       (pass): pass is PromiseRejectedResult => pass.status === 'rejected',
     );
@@ -227,7 +236,9 @@ export class Pipeline<Target extends DestinationTarget> {
   // could not record stops every connection and rejects as itself. A dataset
   // failure stops nothing: the watch gives it beside the passes once, when
   // the dataset starts to fail, the other datasets still refresh, and the
-  // refresh after the next pass tries it again (ADR 0031).
+  // refresh after the next pass tries it again (ADR 0031). An escalated
+  // failure stops every connection, and the watch rejects with it as itself
+  // once they stopped (ADR 0037).
   async *watch({
     signal,
   }: {
@@ -238,12 +249,20 @@ export class Pipeline<Target extends DestinationTarget> {
     const controller = new AbortController();
     const watching = AbortSignal.any([signal, controller.signal]);
     const stopped: unknown[] = [];
-    const refreshes = new DerivedRefreshes(
-      this.#declared,
-      this.connections,
-      this.#clock,
-      watching,
-    );
+    // An escalated failure of a refresh aborts the watch before the watch
+    // throws it: the merged loops below end only on that abort, so a throw
+    // from failures() would wait for them without end.
+    let escalated: EscalatedFailure | undefined;
+    const refreshes = new DerivedRefreshes({
+      datasets: this.#declared,
+      connections: this.connections,
+      clock: this.#clock,
+      signal: watching,
+      escalate: (failure) => {
+        escalated = failure;
+        controller.abort();
+      },
+    });
     const passes = interleave(
       this.connections
         .filter(({ steps }) => steps.length > 0)
@@ -282,6 +301,7 @@ export class Pipeline<Target extends DestinationTarget> {
       await events.return(undefined);
       await refreshes.settled();
     }
+    if (escalated !== undefined) throw escalated;
     if (stopped.length > 0)
       throw new WatchError(stopped, stopped.map(errorMessage).join('; '));
   }
@@ -588,7 +608,7 @@ export class Pipeline<Target extends DestinationTarget> {
     return await passChannels.start.runStores(
       new PassStarted(connection),
       async () => {
-        const read = await replicate(
+        const { outcomes: read, escalated } = await replicate(
           source,
           connection.destination,
           connection.checkpoints,
@@ -636,6 +656,8 @@ export class Pipeline<Target extends DestinationTarget> {
           this.#now(),
         );
         passChannels.finish.publish(new PassFinished(connection, outcomes));
+        // The history recorded the copies that it stopped as cancelled.
+        if (escalated !== undefined) throw escalated;
         return Object.freeze({
           kind: 'pass',
           connection,

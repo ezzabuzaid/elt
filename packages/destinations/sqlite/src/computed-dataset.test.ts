@@ -9,7 +9,7 @@ import {
   writeFile,
 } from 'node:fs/promises';
 import { basename, join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
+import { setImmediate, setTimeout as sleep } from 'node:timers/promises';
 
 import { Latch, untilAborted } from '@zukhruf/async';
 import { TemporaryFiles } from '@zukhruf/fs';
@@ -26,6 +26,7 @@ import {
   type DocumentFile,
   DocumentParser,
   DocumentText,
+  EscalatedFailure,
   type FailureType,
   FileStorage,
   Gauge,
@@ -67,11 +68,13 @@ const paced = (version: Version) => ({
 // Rows that name stored files by ref, loaded into raw_files and read through
 // files; rows can change between runs, and every read of them fails while
 // filesGone is set. Its notes come from a second store, which fails every
-// read while notesGone is set, as an app's missing store does.
+// read while notesGone is set, as an app's missing store does, and whose read
+// waits for notesAfter to settle while it is set, as a slow store does.
 class FilesHost {
   rows: readonly { readonly id: string; readonly ref: string }[] = [];
   filesGone = false;
   notesGone = false;
+  notesAfter: (() => Promise<void>) | undefined;
   readonly version = new Version();
   readonly source = new IterableSource({
     identity: 'files',
@@ -105,7 +108,13 @@ class FilesHost {
         primaryKey: ['id'],
         snapshot: () => {
           if (this.notesGone) throw new Error('the notes store is gone');
-          return [];
+          const after = this.notesAfter;
+          return after === undefined
+            ? []
+            : (async function* () {
+                await after();
+                yield* [];
+              })();
         },
         changeSignal: paced(this.version),
       },
@@ -114,11 +123,13 @@ class FilesHost {
 }
 
 // A parser of UTF-8 text files: a real DocumentParser, which records each
-// file it parses, fails on the files named in failing, and handles no file
-// while handles is false.
+// file it parses, fails on the files named in failing, escalates the failure
+// that escalating holds for a file, as MacOSDocumentParser escalates a
+// deprecated pool's, and handles no file while handles is false.
 class TextParser extends DocumentParser {
   readonly parsed: string[] = [];
   readonly failing = new Set<string>();
+  readonly escalating = new Map<string, EscalatedFailure>();
   // Files whose read waits until their latch opens, or until the read stops,
   // as a parser that honors its signal does.
   readonly holding = new Map<string, Latch>();
@@ -130,6 +141,8 @@ class TextParser extends DocumentParser {
     if (held !== undefined) await untilAborted(held.wait(), signal);
     if (this.failing.has(basename(path)))
       throw new Error(`${basename(path)} is damaged`);
+    const escalated = this.escalating.get(basename(path));
+    if (escalated !== undefined) throw escalated;
     const text = await readFile(path, 'utf8');
     return text.trim() === '' ? null : text;
   }
@@ -486,6 +499,184 @@ test('a file the parser fails on is stored failed with why, the run still succee
     { ref: 'a.txt', status: 'computed', content: 'invoice 123', error: null },
     { ref: 'bad.txt', status: 'computed', content: 'contract', error: null },
   ]);
+});
+
+test('under a watch, a file whose parse escalates a failure ends the watch with that failure, before the file gets a row and before the dataset fails', async (t) => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
+  const escalated = new EscalatedFailure(new Error('a newer host runs'));
+  files.parser().escalating.set('a.txt', escalated);
+  const status = `SELECT state, error, pending FROM derived_status WHERE dataset = 'file_text'`;
+  const controller = new AbortController();
+  const kinds: string[] = [];
+  const ended = (async () => {
+    for await (const { kind } of files.pipeline.watch({
+      signal: controller.signal,
+    }))
+      kinds.push(kind);
+  })().then(
+    () => 'the watch ended with no failure',
+    (error: unknown) => error,
+  );
+  // A watch that holds the failure watches on: once the refresh stored what
+  // it made of the file, the test stops it.
+  const held = new AbortController();
+  const holding = waitFor(
+    () => {
+      const [row] = files.read(status);
+      assert.ok(row !== undefined && row.state !== 'refreshing', 'refreshing');
+    },
+    { signal: AbortSignal.any([t.signal, held.signal]), interval: 10 },
+  ).then(() => controller.abort());
+
+  let error;
+  try {
+    error = await ended;
+  } finally {
+    held.abort();
+    controller.abort();
+    await holding.catch((failure: unknown) => {
+      if (failure !== held.signal.reason) throw failure;
+    });
+  }
+
+  assert.equal(error, escalated);
+  // The escalation ends the refresh as a stop does: it stays refreshing with
+  // no error, its file still pending.
+  assert.deepEqual(
+    {
+      kinds,
+      parsed: files.parser().parsed,
+      rows: files.read(text),
+      status: files.read(status),
+    },
+    {
+      kinds: ['pass'],
+      parsed: ['a.txt'],
+      rows: [],
+      status: [{ state: 'refreshing', error: null, pending: 1 }],
+    },
+  );
+});
+
+test('a run whose parse of a file escalates a failure rejects with that failure, not a dataset failure, once its pass ended, and refreshes no more: the file is parsed once and gets no row, and the dataset does not fail', async () => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
+  const escalated = new EscalatedFailure(new Error('a newer host runs'));
+  files.parser().escalating.set('a.txt', escalated);
+
+  const error = await files.pipeline.run().then(
+    () => assert.fail('the run reported no failure'),
+    (error: unknown) => error,
+  );
+
+  assert.equal(error, escalated);
+  // The escalation ends the refresh as a stop does: it stays refreshing with
+  // no error, its file still pending.
+  assert.deepEqual(
+    {
+      parsed: files.parser().parsed,
+      rows: files.read(text),
+      loaded: files.read('SELECT id, ref FROM files'),
+      status: files.read(
+        `SELECT state, error, pending FROM derived_status WHERE dataset = 'file_text'`,
+      ),
+    },
+    {
+      parsed: ['a.txt'],
+      rows: [],
+      loaded: [{ id: '1', ref: 'a.txt' }],
+      status: [{ state: 'refreshing', error: null, pending: 1 }],
+    },
+  );
+});
+
+test('a run whose parse escalates a failure in the refresh that a commit started starts no refresh for a later commit: the file is parsed once, the dataset stays refreshing, and the run rejects with that failure', async (t) => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('a.txt', 'invoice 123');
+  files.host.rows = [{ id: '1', ref: 'a.txt' }];
+  const escalated = new EscalatedFailure(new Error('a newer host runs'));
+  files.parser().escalating.set('a.txt', escalated);
+  // The notes commit after the refresh that the files commit started parsed
+  // the file and escalated. Under a run, no public fact marks the end of that
+  // escalation: it writes no derived_status row, and the run's escalate only
+  // keeps the failure, with no signal aborted. So this order rests on the
+  // refresh's way from the parse's throw to its Escalated state, which takes
+  // only the storage's disposal of the opened file and promise steps, and
+  // ends before the notes copy stages and commits its read.
+  files.host.notesAfter = () =>
+    waitFor(() => assert.deepEqual(files.parser().parsed, ['a.txt']), {
+      signal: t.signal,
+      interval: 10,
+    });
+
+  const error = await files.pipeline.run().then(
+    () => assert.fail('the run reported no failure'),
+    (error: unknown) => error,
+  );
+
+  assert.equal(error, escalated);
+  assert.deepEqual(
+    {
+      parsed: files.parser().parsed,
+      notes: files.read('SELECT count(*) AS n FROM notes'),
+      status: files.read(
+        `SELECT state, error, pending FROM derived_status WHERE dataset = 'file_text'`,
+      ),
+    },
+    {
+      parsed: ['a.txt'],
+      notes: [{ n: 0 }],
+      status: [{ state: 'refreshing', error: null, pending: 1 }],
+    },
+  );
+});
+
+test('under a watch, a file whose parse fails with an error that is not escalated is stored failed with why, and the watch goes on to its next pass', async (t) => {
+  await using scratch = await new TemporaryFiles().directory('elt-computed-');
+  const files = await filesImport(scratch.path);
+  await files.file('bad.txt', 'contract');
+  files.host.rows = [{ id: '1', ref: 'bad.txt' }];
+  files.parser().failing.add('bad.txt');
+  const controller = new AbortController();
+  const watching = files.pipeline.watch({ signal: controller.signal });
+
+  let failed;
+  let next;
+  try {
+    await watching.next();
+    failed = await waitFor(
+      () => {
+        const rows = files.read(text);
+        assert.equal(rows.length, 1);
+        return rows;
+      },
+      { signal: t.signal, interval: 10 },
+    );
+    files.host.version.current += 1;
+    next = await watching.next();
+  } finally {
+    controller.abort();
+    await watching.return(undefined);
+  }
+
+  assert.deepEqual(failed, [
+    {
+      ref: 'bad.txt',
+      status: 'failed',
+      content: null,
+      error: 'bad.txt is damaged',
+    },
+  ]);
+  assert.deepEqual(
+    { done: next.done, kind: next.done ? undefined : next.value.kind },
+    { done: false, kind: 'pass' },
+  );
 });
 
 test('a format the parser stops handling keeps the text read before, and a file it never read is stored empty as unsupported', async () => {
@@ -1180,6 +1371,67 @@ test('a rule call that fails stops the calls after it in its refresh: the call b
     },
   );
 });
+
+// Whichever of two calls beside each other fails first, the escalated failure
+// is the refresh's (ADR 0037).
+void test.each(
+  [
+    ['an ordinary failure first and an escalated failure after it', 'ordinary'],
+    [
+      'an escalated failure first and an ordinary failure after it',
+      'escalated',
+    ],
+  ] as const,
+  ([order, first]) =>
+    test(`a refresh whose calls fail beside each other, ${order}, rejects with the escalated failure: the run rejects with it, not a dataset failure, and the dataset does not fail`, async () => {
+      await using scratch = await new TemporaryFiles().directory(
+        'elt-computed-',
+      );
+      const escalated = new EscalatedFailure(new Error('a newer host runs'));
+      const ordinary = new Error('the model refused a.txt');
+      const [failsFirst, failsAfter] =
+        first === 'ordinary' ? [ordinary, escalated] : [escalated, ordinary];
+      const settled = Promise.withResolvers<void>();
+      // The call of a.txt fails at once; the call of b.txt fails once the
+      // call of a.txt settled and the refresh took that failure, which it does
+      // before the event loop turns.
+      class Failing extends Model {
+        override async compute(inputs: readonly string[]) {
+          this.calls.push([...inputs]);
+          if (inputs.includes('a.txt'))
+            return Promise.reject(failsFirst).finally(() => settled.resolve());
+          await settled.promise;
+          await setImmediate();
+          throw failsAfter;
+        }
+      }
+      const model = new Failing(2);
+      const answers = modelImport(scratch.path, model);
+      answers.host.rows = ['a.txt', 'b.txt'].map((ref, index) => ({
+        id: String(index),
+        ref,
+      }));
+
+      const error = await answers.pipeline.run().then(
+        () => assert.fail('the run reported no failure'),
+        (error: unknown) => error,
+      );
+
+      assert.equal(error, escalated);
+      assert.deepEqual(
+        {
+          calls: model.calls,
+          status: answers.read(
+            `SELECT state, error FROM derived_status WHERE dataset = 'answers'`,
+          ),
+        },
+        {
+          calls: [['a.txt'], ['b.txt']],
+          status: [{ state: 'refreshing', error: null }],
+        },
+      );
+    }),
+);
 
 test('a refresh that its watch stops while the model answers stays refreshing in derived_status, with no error, and the watch yields no dataset failure, as a stop is not the dataset’s failure', async (t) => {
   await using scratch = await new TemporaryFiles().directory('elt-computed-');

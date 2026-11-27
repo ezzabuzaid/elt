@@ -6,6 +6,7 @@ import { toSql } from '@zukhruf/vectors/sqlite';
 import { errorMessage } from '../state/sync-history.ts';
 import type { RefreshTrigger } from './derived-dataset.ts';
 import type { DerivedStatus } from './derived-status.ts';
+import { EscalatedFailure } from './escalated-failure.ts';
 import type { Rule, RuleColumns, RuleValues } from './rule.ts';
 import { TableRule } from './table-rule.ts';
 
@@ -247,8 +248,10 @@ export async function refreshComputed<Input>(
       );
     }
   } catch (error) {
-    // A stop is not the dataset's failure.
-    if (signal?.aborted !== true) await status.failed(errorMessage(error));
+    // A stop is not the dataset's failure, and neither is an escalated
+    // failure (ADR 0037).
+    if (signal?.aborted !== true && !(error instanceof EscalatedFailure))
+      await status.failed(errorMessage(error));
     throw error;
   }
 }
@@ -338,7 +341,9 @@ async function update<Input, Result, Row>(
   });
   // A pool of calls, each taking the next batch once its own committed, so
   // a slow call holds only its place, as a worker pool keeps its other
-  // workers busy. A call that fails stops the pool taking more.
+  // workers busy. A call that fails stops the pool taking more. An escalated
+  // failure of any call is the refresh's, so a failure of another call
+  // beside it does not hide it (ADR 0037).
   const failures: unknown[] = [];
   let next = 0;
   await Promise.all(
@@ -369,7 +374,11 @@ async function update<Input, Result, Row>(
       }
     }),
   );
-  if (failures.length > 0) throw failures[0];
+  if (failures.length > 0)
+    throw (
+      failures.find((failure) => failure instanceof EscalatedFailure) ??
+      failures[0]
+    );
   if (signal?.aborted === true) return;
   await status.current({
     ...counts(await outputs.counts(), inputs),

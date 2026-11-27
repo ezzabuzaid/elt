@@ -9,6 +9,7 @@ import {
   DerivedDatasetError,
   type RefreshTrigger,
 } from './derived-dataset.ts';
+import { EscalatedFailure } from './escalated-failure.ts';
 import type { Target as DestinationTarget } from './target.ts';
 
 // No refresh runs.
@@ -21,6 +22,10 @@ class Running {
     this.done = done;
   }
 }
+
+// A refresh escalated a failure: no refresh runs again, as an actor whose
+// supervisor escalated stays suspended (ADR 0037).
+class Escalated {}
 
 type Kind = RefreshTrigger['kind'];
 
@@ -45,13 +50,17 @@ class Queued {
 // datasets still refresh (ADR 0031). A composite is one dataset in the
 // bulkhead: its first failed member fails it, and the members after that one
 // wait for the next refresh (ADR 0034). A refresh that signal's abort ended
-// is no failure.
+// is no failure. An escalated failure passes the bulkhead: it stops its
+// refresh, refresh() rejects with it, and escalate gets the one of a refresh
+// in the background, after which no copy's request starts a refresh
+// (ADR 0037).
 export class DerivedRefreshes<Target extends DestinationTarget> {
   readonly #datasets: readonly DeclaredDataset<Target>[];
   readonly #connections: readonly Connection<Target>[];
   readonly #clock: PipelineClock;
   readonly #signal: AbortSignal | undefined;
-  #state: Idle | Running | Queued = new Idle();
+  readonly #escalate: (failure: EscalatedFailure) => void;
+  #state: Idle | Running | Queued | Escalated = new Idle();
   // Each dataset's keys that commit refreshes tried since the last pass
   // refresh, for each member of a composite its own; the memory of the
   // passes that run, which ends with them.
@@ -63,16 +72,26 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
   readonly #started: DatasetFailure[] = [];
   readonly #failed = new Cond();
 
-  constructor(
-    datasets: readonly DeclaredDataset<Target>[],
-    connections: readonly Connection<Target>[],
-    clock: PipelineClock,
-    signal: AbortSignal | undefined,
-  ) {
+  constructor({
+    datasets,
+    connections,
+    clock,
+    signal,
+    escalate,
+  }: {
+    datasets: readonly DeclaredDataset<Target>[];
+    connections: readonly Connection<Target>[];
+    clock: PipelineClock;
+    signal: AbortSignal | undefined;
+    // Called once, with the escalated failure of a refresh in the
+    // background, which no caller awaits.
+    escalate: (failure: EscalatedFailure) => void;
+  }) {
     this.#datasets = datasets;
     this.#connections = connections;
     this.#clock = clock;
     this.#signal = signal;
+    this.#escalate = escalate;
   }
 
   // The datasets whose last refresh failed, in declared order.
@@ -85,7 +104,7 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
   }
 
   request(kind: Kind): void {
-    if (this.#datasets.length === 0) return;
+    if (this.#datasets.length === 0 || this.#state instanceof Escalated) return;
     if (this.#state instanceof Idle) {
       const done = new Latch();
       this.#state = new Running(done);
@@ -101,7 +120,7 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
   }
 
   async settled(): Promise<void> {
-    if (this.#state instanceof Idle) return;
+    if (this.#state instanceof Idle || this.#state instanceof Escalated) return;
     await this.#state.done.wait();
   }
 
@@ -154,6 +173,7 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
         } catch (error) {
           // A stop is not the dataset's failure.
           if (this.#signal?.aborted === true) return;
+          if (error instanceof EscalatedFailure) throw error;
           // The refresh that tries it again tries again the inputs that the
           // failed refresh took, which no output records.
           this.#tried.delete(member);
@@ -195,8 +215,13 @@ export class DerivedRefreshes<Target extends DestinationTarget> {
         kind = this.#state.kind;
         this.#state = new Running(done);
       }
+    } catch (error) {
+      if (!(error instanceof EscalatedFailure)) throw error;
+      // In one step, so a caller that sees no refresh run has been told.
+      this.#state = new Escalated();
+      this.#escalate(error);
     } finally {
-      this.#state = new Idle();
+      if (!(this.#state instanceof Escalated)) this.#state = new Idle();
       done.open();
     }
   }

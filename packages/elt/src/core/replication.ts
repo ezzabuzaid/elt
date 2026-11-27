@@ -11,6 +11,7 @@ import type { CopyConfiguration } from './copy-configuration.ts';
 import type { Copy, CopyOutcome } from './copy.ts';
 import type { Destination, Load } from './destination.ts';
 import { entryName, plainObject } from './entry-name.ts';
+import { EscalatedFailure } from './escalated-failure.ts';
 import { FileTransfer } from './file-transfer.ts';
 import type { Partition } from './partition.ts';
 import { CopyProgress, passChannels } from './pass-channels.ts';
@@ -71,6 +72,8 @@ class Replicated<Target extends DestinationTarget> {
   readonly published: () => void;
   readonly files: FileTransfer;
   readonly #source: Source;
+  // Stops the read that the copy is part of.
+  readonly #escalate: (failure: EscalatedFailure) => void;
 
   constructor(
     copy: Copy<Target>,
@@ -78,11 +81,13 @@ class Replicated<Target extends DestinationTarget> {
     source: Source,
     destination: Destination<Target>,
     published: () => void,
+    escalate: (failure: EscalatedFailure) => void,
   ) {
     this.copy = copy;
     this.connection = connection;
     this.published = published;
     this.#source = source;
+    this.#escalate = escalate;
     this.files = new FileTransfer(
       source,
       copy.configuration.fileReads,
@@ -106,8 +111,10 @@ class Replicated<Target extends DestinationTarget> {
 
   // What did not load, of the kind that the side that raised the error says
   // it is: the destination, the checkpoint store or a file storage for what a
-  // call into it threw, the source for every other error.
+  // call into it threw, the source for every other error. An escalated
+  // failure also stops the read (ADR 0037).
   recordFailure(partition: Partition | null, error: unknown): void {
+    if (error instanceof EscalatedFailure) this.#escalate(error);
     this.failures.push(
       error instanceof RaisedFailure
         ? { partition, error: error.error, failureType: error.failureType }
@@ -115,12 +122,16 @@ class Replicated<Target extends DestinationTarget> {
     );
   }
 
+  // A copy that an escalated failure stopped is cancelled with it, as a
+  // stopped run cancels its copies with the reason of its signal.
   outcome(): CopyOutcome<Target> {
     return {
       copy: this.copy,
       ...this.committed,
       failures: this.failures,
-      cancelled: this.cancelled,
+      cancelled:
+        this.cancelled ||
+        this.failures.some(({ error }) => error instanceof EscalatedFailure),
     };
   }
 
@@ -147,13 +158,22 @@ class Replicated<Target extends DestinationTarget> {
   }
 }
 
+// What a read gave: each copy's outcome, and the escalated failure that
+// stopped the read, if one did.
+export type Replication<Target extends DestinationTarget> = {
+  readonly outcomes: CopyOutcome<Target>[];
+  readonly escalated: EscalatedFailure | undefined;
+};
+
 // Airbyte's replication worker: one read covers every copy's stream, each
 // stream's messages go to its own stage, and a checkpoint is saved only after
 // its stage committed. A copy that fails does not stop the others. Once signal
 // aborts, as Airbyte's worker stops a cancelled sync, no further message is
-// applied: each copy still open keeps what it committed and is cancelled.
-// committed is told each time a copy made rows visible in its target: at
-// each commit, and when a reload replaced the target.
+// applied: each copy still open keeps what it committed and is cancelled. An
+// escalated failure stops the read in the same way, as the first error of
+// Go's errgroup cancels the context of the group (ADR 0037). committed is
+// told each time a copy made rows visible in its target: at each commit, and
+// when a reload replaced the target.
 export async function replicate<Target extends DestinationTarget>(
   source: Source,
   destination: Destination<Target>,
@@ -163,9 +183,26 @@ export async function replicate<Target extends DestinationTarget>(
   committed: () => void,
   signal: AbortSignal | undefined,
   clock: PipelineClock,
-): Promise<CopyOutcome<Target>[]> {
+): Promise<Replication<Target>> {
+  let escalated: EscalatedFailure | undefined;
+  const escalation = new AbortController();
+  const reading =
+    signal === undefined
+      ? escalation.signal
+      : AbortSignal.any([signal, escalation.signal]);
   const replications = copies.map(
-    (copy) => new Replicated(copy, connection, source, destination, committed),
+    (copy) =>
+      new Replicated(
+        copy,
+        connection,
+        source,
+        destination,
+        committed,
+        (failure) => {
+          escalated ??= failure;
+          escalation.abort(failure);
+        },
+      ),
   );
   const bindings = new Map<string, CheckpointBinding>();
   for (const { copy } of replications)
@@ -186,7 +223,7 @@ export async function replicate<Target extends DestinationTarget>(
         connection,
         null,
         replications,
-        signal,
+        reading,
         clock,
       );
     else
@@ -197,20 +234,23 @@ export async function replicate<Target extends DestinationTarget>(
           connection,
           run,
           replications,
-          signal,
+          reading,
           clock,
         ),
       );
   } catch (error) {
     for (const replication of replications)
       if (!replication.ended) {
-        replication.cancelled = cancelledBy(signal, error);
+        replication.cancelled = cancelledBy(reading, error);
         fail(replication, error);
       }
   }
   // A broken stream the source never ended settles here, after the read.
   for (const replication of replications) replication.settle();
-  return replications.map((replication) => replication.outcome());
+  return {
+    outcomes: replications.map((replication) => replication.outcome()),
+    escalated,
+  };
 }
 
 async function transfer<Target extends DestinationTarget>(

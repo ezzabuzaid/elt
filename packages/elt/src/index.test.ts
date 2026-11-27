@@ -24,6 +24,7 @@ import {
   DerivedDatasetError,
   Destination,
   DocumentParser,
+  EscalatedFailure,
   type FailureType,
   FileRead,
   FileStorage,
@@ -1214,6 +1215,148 @@ test('a full refresh commits once, and a failing partition commits nothing', asy
     'close',
   ]);
 });
+
+// A run, or a watch until the test ends, of pipeline: each rejects with an
+// escalated failure as itself (ADR 0037).
+const ends = {
+  run: (pipeline: Pipeline<NamedTarget>, _signal: AbortSignal) =>
+    pipeline.run(),
+  watch: (pipeline: Pipeline<NamedTarget>, signal: AbortSignal) =>
+    Array.fromAsync(pipeline.watch({ signal })),
+} as const;
+
+test('a read whose extract throws an escalated failure rejects with it and gives no FAILED status for its stream, so the streams after it are never read', async () => {
+  const escalated = new EscalatedFailure(new Error('a newer host runs'));
+  const source = new ContextSource({ left: [escalated] });
+  const read = source.read(
+    [source.left, source.right].map(
+      (stream) => new Copy(stream, new NamedTarget(stream.name)).configuration,
+    ),
+    { get: async () => null },
+    { clock: globalThis, entries: noEntries },
+  );
+  const statuses: string[] = [];
+
+  const error = await (async () => {
+    for await (const message of read)
+      if (message instanceof StreamStatus)
+        statuses.push(`${message.stream} ${message.status}`);
+  })().then(
+    () => 'ended without the failure',
+    (error: unknown) => error,
+  );
+
+  assert.equal(error, escalated);
+  assert.deepEqual(
+    { statuses, readers: source.readers },
+    { statuses: ['left STARTED'], readers: [{ stream: 'left', context: 1 }] },
+  );
+});
+
+void test.each(['run', 'watch'] as const, (mode) =>
+  test(`a partition whose extract throws an escalated failure ends the read under a ${mode}: the ${mode} rejects with it, the partitions after it are never read, and the history records the pass cancelled, with no partition failed`, async (t) => {
+    const escalated = new EscalatedFailure(new Error('a newer host runs'));
+    class Deprecated extends Sites {
+      protected override async *extract(
+        configuration: CopyConfiguration,
+        state: unknown,
+        partition: Partition | null,
+      ) {
+        const site = String(partition?.site);
+        if (site === 'b') {
+          this.received.push([site, state]);
+          throw escalated;
+        }
+        yield* super.extract(configuration, state, partition);
+      }
+    }
+    const source = new Deprecated();
+    const destination = new DrainingDestination();
+    const history = new MemoryHistory();
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history,
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination,
+          checkpoints: new MemoryCheckpoints(destination.log),
+          steps: [
+            new Copy(source.pages, new NamedTarget('pages'), {
+              id: 'pages',
+              syncMode: 'incremental',
+              destinationSyncMode: 'append',
+            }),
+          ],
+        }),
+      ],
+    });
+
+    const error = await ends[mode](pipeline, t.signal).then(
+      () => assert.fail(`the ${mode} reported no failure`),
+      (error: unknown) => error,
+    );
+
+    assert.equal(error, escalated);
+    assert.deepEqual(
+      { received: source.received, history: history.log },
+      {
+        received: [
+          ['a', null],
+          ['b', null],
+        ],
+        history: ['begin test pages:test', 'finish test cancelled'],
+      },
+    );
+  }),
+);
+
+void test.each(['run', 'watch'] as const, (mode) =>
+  test(`a source that reports a stream FAILED with an escalated failure ends the read under a ${mode}: the ${mode} rejects with it and the stream after it is never read`, async (t) => {
+    const escalated = new EscalatedFailure(new Error('a newer host runs'));
+    // The source reports left's failure in a status, as a source that does
+    // not throw the escalation would, then goes on to read right.
+    class ReportingSource extends ContextSource {
+      override async *read(
+        catalog: readonly CopyConfiguration[],
+        states: ReadonlyMap<string, unknown>,
+        options: SourceReadOptions,
+      ): AsyncGenerator<ReadMessage> {
+        yield new StreamStatus('left', 'STARTED');
+        yield new StreamStatus('left', 'FAILED', null, escalated);
+        yield* super.read(
+          catalog.filter(({ stream }) => stream.name === 'right'),
+          states,
+          options,
+        );
+      }
+    }
+    const source = new ReportingSource();
+    const pipeline = new Pipeline({
+      clock: globalThis,
+      history: new MemoryHistory(),
+      connections: [
+        new Connection({
+          name: 'test',
+          source,
+          destination: new DrainingDestination(),
+          steps: [source.left, source.right].map(
+            (stream) => new Copy(stream, new NamedTarget(stream.name)),
+          ),
+        }),
+      ],
+    });
+
+    const error = await ends[mode](pipeline, t.signal).then(
+      () => assert.fail(`the ${mode} reported no failure`),
+      (error: unknown) => error,
+    );
+
+    assert.equal(error, escalated);
+    assert.deepEqual(source.readers, []);
+  }),
+);
 
 test('a watch opens one read context per batch and holds none while idle', async (t) => {
   const source = new ContextSource();
